@@ -106,13 +106,13 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 				body = s.collect(ctx, report, now)
 			}
 			if err := s.send(ctx, recipient.client, recipient.userID, body); err != nil {
-				log.Printf("[reporting] send report %q to %s failed: %v", report.Name, recipient.userID, err)
+				log.Printf("[reporting] send report %q to %s failed: %v", report.Name, ilink.LogLabel(recipient.userID), err)
 				continue
 			}
 			if err := s.markSent(stateKey, date); err != nil {
 				log.Printf("[reporting] persist report state failed: %v", err)
 			}
-			log.Printf("[reporting] sent report %q to %s", report.Name, recipient.userID)
+			log.Printf("[reporting] sent report %q to %s", report.Name, ilink.LogLabel(recipient.userID))
 		}
 	}
 }

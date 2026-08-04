@@ -27,11 +27,11 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 	card := controlCardFromText(reply)
 	artifact, err := h.visual.Render(ctx, card)
 	if err != nil {
-		log.Printf("[visual] render failed for %s, falling back to text: %v", userID, err)
+		log.Printf("[visual] render failed for %s, falling back to text: %v", ilink.LogLabel(userID), err)
 		return SendTextReply(ctx, client, userID, reply, contextToken, clientID)
 	}
 	if artifact == nil || strings.TrimSpace(artifact.Path) == "" {
-		log.Printf("[visual] renderer returned an empty artifact for %s, falling back to text", userID)
+		log.Printf("[visual] renderer returned an empty artifact for %s, falling back to text", ilink.LogLabel(userID))
 		return SendTextReply(ctx, client, userID, reply, contextToken, clientID)
 	}
 	if artifact.Cleanup != nil {
@@ -39,7 +39,7 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 	}
 
 	if err := SendMediaFromPath(ctx, client, userID, artifact.Path, contextToken); err != nil {
-		log.Printf("[visual] image delivery failed for %s, falling back to text: %v", userID, err)
+		log.Printf("[visual] image delivery failed for %s, falling back to text: %v", ilink.LogLabel(userID), err)
 		return SendTextReply(ctx, client, userID, reply, contextToken, clientID)
 	}
 	if caption := controlCaption(reply, card); caption != "" {

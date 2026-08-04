@@ -106,10 +106,11 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	if msg.MessageState != ilink.MessageStateFinish {
 		return
 	}
+	userLabel := ilink.LogLabel(msg.FromUserID)
 
 	// 只接受扫码绑定账号发来的消息，避免群聊或其他联系人驱动本机 Codex。
 	if ownerUserID := client.OwnerUserID(); ownerUserID != "" && msg.FromUserID != ownerUserID {
-		log.Printf("[handler] rejected message from non-owner user %s", msg.FromUserID)
+		log.Printf("[handler] rejected message from non-owner user %s", userLabel)
 		return
 	}
 
@@ -128,20 +129,20 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	if text == "" {
 		if voiceText := extractVoiceText(msg); voiceText != "" {
 			text = voiceText
-			log.Printf("[handler] voice transcription from %s: %q", msg.FromUserID, truncate(text, 80))
+			log.Printf("[handler] received voice transcription from %s (chars=%d)", userLabel, len([]rune(text)))
 		}
 	}
 	images := extractImages(msg)
 	files := extractFiles(msg)
 	if text == "" && len(images) == 0 && len(files) == 0 {
-		log.Printf("[handler] received non-text message from %s, skipping", msg.FromUserID)
+		log.Printf("[handler] received unsupported message from %s, skipping", userLabel)
 		return
 	}
 
 	if len(images) > 0 || len(files) > 0 {
-		log.Printf("[handler] received from %s: images=%d files=%d text=%q", msg.FromUserID, len(images), len(files), truncate(text, 80))
+		log.Printf("[handler] received from %s (chars=%d images=%d files=%d)", userLabel, len([]rune(text)), len(images), len(files))
 	} else {
-		log.Printf("[handler] received from %s: %q", msg.FromUserID, truncate(text, 80))
+		log.Printf("[handler] received from %s (chars=%d)", userLabel, len([]rune(text)))
 	}
 
 	// Store context token for this user
@@ -156,7 +157,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
 	if reply, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send control result to %s: %v", msg.FromUserID, err)
+			log.Printf("[handler] failed to send control result to %s: %v", userLabel, err)
 		}
 		return
 	}
@@ -171,7 +172,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	if len(images) == 0 && len(files) == 0 && h.saveDir != "" && IsURL(trimmed) {
 		rawURL := ExtractURL(trimmed)
 		if rawURL != "" {
-			log.Printf("[handler] saving URL to linkhoard: %s", rawURL)
+			log.Printf("[handler] saving URL to linkhoard for %s", userLabel)
 			title, err := SaveLinkToLinkhoard(ctx, h.saveDir, rawURL)
 			var reply string
 			if err != nil {
@@ -181,7 +182,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 				reply = fmt.Sprintf("已保存: %s", title)
 			}
 			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-				log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+				log.Printf("[handler] failed to send reply to %s: %v", userLabel, err)
 			}
 			return
 		}
@@ -201,7 +202,7 @@ func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ili
 		activityID := h.startActivity(msg.FromUserID, taskActivitySummary(text, len(images), len(files)))
 		request, cleanup, prepareErr := h.prepareTaskInput(reporter, text, images, files)
 		if prepareErr != nil {
-			log.Printf("[handler] failed to prepare inbound attachments for %s: %v", msg.FromUserID, prepareErr)
+			log.Printf("[handler] failed to prepare inbound attachments for %s: %v", ilink.LogLabel(msg.FromUserID), prepareErr)
 			if h.finishTask(msg.FromUserID, reporter) {
 				h.finishActivity(msg.FromUserID, activityID, ActivityFailed)
 				reply = fmt.Sprintf("附件处理失败：%v", prepareErr)
@@ -218,7 +219,7 @@ func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ili
 		reply, err = h.chatWithCodex(reporter.task.context(), msg.FromUserID, request, reporter.Report)
 		if !h.finishTask(msg.FromUserID, reporter) {
 			h.finishActivity(msg.FromUserID, activityID, ActivityCancelled)
-			log.Printf("[handler] task cancelled for %s", msg.FromUserID)
+			log.Printf("[handler] task cancelled for %s", ilink.LogLabel(msg.FromUserID))
 			return
 		}
 		if err != nil {
@@ -228,7 +229,7 @@ func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ili
 			h.finishActivity(msg.FromUserID, activityID, ActivitySucceeded)
 		}
 	} else {
-		log.Printf("[handler] codex is unavailable for %s", msg.FromUserID)
+		log.Printf("[handler] codex is unavailable for %s", ilink.LogLabel(msg.FromUserID))
 		reply = "Codex 当前不可用，请稍后重试。"
 	}
 
@@ -303,7 +304,7 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 	}
 	for _, attachmentPath := range artifacts.Paths {
 		if err := SendMediaFromPath(ctx, client, msg.FromUserID, attachmentPath, msg.ContextToken); err != nil {
-			log.Printf("[handler] failed to send attachment to %s: %v", msg.FromUserID, err)
+			log.Printf("[handler] failed to send attachment to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 			failed = append(failed, filepath.Base(attachmentPath)+"（上传失败）")
 			continue
 		}
@@ -314,17 +315,17 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 
 	visualized, visualErr := h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
 	if visualErr != nil {
-		log.Printf("[visual] failed to send long reply to %s: %v", msg.FromUserID, visualErr)
+		log.Printf("[visual] failed to send long reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
 	}
 	if !visualized {
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+			log.Printf("[handler] failed to send reply to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 		}
 	}
 
 	for _, imgURL := range imageURLs {
 		if err := SendMediaFromURL(ctx, client, msg.FromUserID, imgURL, msg.ContextToken); err != nil {
-			log.Printf("[handler] failed to send image to %s: %v", msg.FromUserID, err)
+			log.Printf("[handler] failed to send image to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 		}
 	}
 }
@@ -342,7 +343,7 @@ func (h *Handler) chatWithCodex(ctx context.Context, userID string, request code
 		return "", fmt.Errorf("session manager is not initialized")
 	}
 	info := h.codex.Info()
-	log.Printf("[handler] dispatching to codex (%s) for %s", info, userID)
+	log.Printf("[handler] dispatching to codex (%s) for %s", info, ilink.LogLabel(userID))
 
 	start := time.Now()
 	thread, err := h.sessions.EnsureActive(ctx, userID, threadAgent, suggestedSessionName(request))
@@ -365,7 +366,7 @@ func (h *Handler) chatWithCodex(ctx context.Context, userID string, request code
 		return "", err
 	}
 
-	log.Printf("[handler] codex replied (%s, elapsed=%s): %q", info, elapsed, truncate(reply, 100))
+	log.Printf("[handler] codex replied (%s, elapsed=%s, chars=%d)", info, elapsed, len([]rune(reply)))
 	return reply, nil
 }
 
@@ -418,7 +419,7 @@ func (h *Handler) beginTask(ctx context.Context, client *ilink.Client, msg ilink
 
 func (h *Handler) sendActiveTaskStatus(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, task *activeTask) {
 	if err := h.sendControlReply(ctx, client, msg.FromUserID, task.busySummary(), msg.ContextToken, NewClientID()); err != nil {
-		log.Printf("[handler] failed to send active task status to %s: %v", msg.FromUserID, err)
+		log.Printf("[handler] failed to send active task status to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 	}
 }
 

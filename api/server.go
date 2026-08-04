@@ -106,14 +106,14 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "send text failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("[api] sent text to %s: %q", req.To, req.Text)
+		log.Printf("[api] sent text to %s", ilink.LogLabel(req.To))
 
 		// Extract and send any markdown images embedded in text
 		for _, imgURL := range messaging.ExtractImageURLs(req.Text) {
 			if err := messaging.SendMediaFromURL(ctx, client, req.To, imgURL, ""); err != nil {
 				log.Printf("[api] send extracted image failed: %v", err)
 			} else {
-				log.Printf("[api] sent extracted image to %s: %s", req.To, imgURL)
+				log.Printf("[api] sent extracted image to %s", ilink.LogLabel(req.To))
 			}
 		}
 	}
@@ -125,7 +125,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "send media failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("[api] sent media to %s: %s", req.To, req.MediaURL)
+		log.Printf("[api] sent media to %s", ilink.LogLabel(req.To))
 	}
 
 	w.Header().Set("Content-Type", "application/json")

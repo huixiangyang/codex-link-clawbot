@@ -203,7 +203,7 @@ func (r *progressReporter) run() {
 		case <-messageTimer.C:
 			if message, ok := unsentProgress(latest, sentMessages); ok {
 				if err := SendTextReply(r.ctx, r.client, r.userID, message, r.contextToken, NewClientID()); err != nil {
-					log.Printf("[progress] failed to send progress to %s: %v", r.userID, err)
+					log.Printf("[progress] failed to send progress to %s: %v", ilink.LogLabel(r.userID), err)
 				} else {
 					sentMessages[message] = struct{}{}
 				}
@@ -230,7 +230,7 @@ func (r *progressReporter) sendTyping() {
 	// 网络请求异步执行，避免一次 typing 超时阻塞阶段事件和文字进度调度。
 	go func() {
 		if err := SendTypingState(r.ctx, r.client, r.userID, r.contextToken); err != nil && r.ctx.Err() == nil {
-			log.Printf("[progress] failed to refresh typing for %s: %v", r.userID, err)
+			log.Printf("[progress] failed to refresh typing for %s: %v", ilink.LogLabel(r.userID), err)
 		}
 	}()
 }

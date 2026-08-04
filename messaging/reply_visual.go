@@ -107,7 +107,7 @@ func (h *Handler) sendCachedVisualReply(ctx context.Context, client *ilink.Clien
 		return true
 	}
 	if err := SendTextReply(ctx, client, msg.FromUserID, cached.Text, msg.ContextToken, clientID); err != nil {
-		log.Printf("[visual] failed to send cached text reply to %s: %v", msg.FromUserID, err)
+		log.Printf("[visual] failed to send cached text reply to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 	}
 	return true
 }
@@ -115,6 +115,6 @@ func (h *Handler) sendCachedVisualReply(ctx context.Context, client *ilink.Clien
 func (h *Handler) sendVisualReplyExpired(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, clientID string) {
 	reply := "最近的阅读卡片原文已过期或不存在。请重新发送原问题，新的长回复会再次保留 30 分钟。"
 	if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-		log.Printf("[visual] failed to send expired text notice to %s: %v", msg.FromUserID, err)
+		log.Printf("[visual] failed to send expired text notice to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 	}
 }

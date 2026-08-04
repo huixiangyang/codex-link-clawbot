@@ -64,7 +64,7 @@ func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName
 
 	cdnMediaType, itemType := classifyMedia(contentType, source)
 
-	log.Printf("[media] uploading %s (%s, %d bytes) for %s", source, contentType, len(data), toUserID)
+	log.Printf("[media] uploading %s (%d bytes) for %s", contentType, len(data), ilink.LogLabel(toUserID))
 
 	uploaded, err := UploadFileToCDN(ctx, client, data, toUserID, cdnMediaType)
 	if err != nil {
@@ -127,7 +127,7 @@ func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName
 		return fmt.Errorf("send media failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)
 	}
 
-	log.Printf("[media] sent %s to %s from %s", contentType, toUserID, source)
+	log.Printf("[media] sent %s to %s", contentType, ilink.LogLabel(toUserID))
 	return nil
 }
 

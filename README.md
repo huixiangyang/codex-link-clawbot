@@ -137,6 +137,7 @@ curl -X POST http://127.0.0.1:18011/api/send \
 - `~/.weclaw/task-history.json` uses a strict schema, atomic replacement, mode `0600`, and a 20-record per-owner limit.
 - Global Codex thread results are intersected with the local ownership index before display.
 - Raw terminal output, commands, diffs, and environment variables are never forwarded as progress messages.
+- Runtime logs use stable SHA-256-derived labels instead of raw WeChat user/bot IDs and record only message lengths, never prompt or reply previews.
 - Visual rendering disables page networking and scripts, enforces a restrictive CSP, and deletes each protected HTML/profile/PNG directory after delivery.
 
 ## Development

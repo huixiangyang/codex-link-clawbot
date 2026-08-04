@@ -213,12 +213,12 @@ func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handle
 	restartDelay := 3 * time.Second
 
 	for {
-		log.Printf("[%s] Starting monitor...", creds.ILinkBotID)
+		log.Printf("[%s] Starting monitor...", ilink.LogLabel(creds.ILinkBotID))
 
 		client := ilink.NewClient(creds)
 		monitor, err := ilink.NewMonitor(client, handler.HandleMessage)
 		if err != nil {
-			log.Printf("[%s] Failed to create monitor: %v", creds.ILinkBotID, err)
+			log.Printf("[%s] Failed to create monitor: %v", ilink.LogLabel(creds.ILinkBotID), err)
 		} else {
 			err = monitor.Run(ctx)
 		}
@@ -228,7 +228,7 @@ func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handle
 			return
 		}
 
-		log.Printf("[%s] Monitor stopped: %v, restarting in %s", creds.ILinkBotID, err, restartDelay)
+		log.Printf("[%s] Monitor stopped: %v, restarting in %s", ilink.LogLabel(creds.ILinkBotID), err, restartDelay)
 		select {
 		case <-time.After(restartDelay):
 		case <-ctx.Done():
