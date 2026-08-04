@@ -1,6 +1,9 @@
 package messaging
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestExtractImageURLs(t *testing.T) {
 	text := "check ![img](https://example.com/a.png) and ![](https://example.com/b.jpg)"
@@ -69,5 +72,12 @@ func TestStripQuery(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("stripQuery(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestReadAllLimitedRejectsOversizedBody(t *testing.T) {
+	_, err := readAllLimited(strings.NewReader("12345"), 4)
+	if err == nil {
+		t.Fatal("readAllLimited() error = nil, want size limit error")
 	}
 }

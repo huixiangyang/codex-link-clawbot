@@ -102,13 +102,16 @@ func (a *CLIAgent) SetCwd(cwd string) {
 	a.cwd = cwd
 }
 
-// Chat sends a message to the CLI agent and returns the response.
-func (a *CLIAgent) Chat(ctx context.Context, conversationID string, message string) (string, error) {
+// Chat sends structured input to the CLI agent and returns the response.
+func (a *CLIAgent) Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error) {
+	if len(request.LocalImages) > 0 {
+		return "", fmt.Errorf("CLI agent %q does not support image input", a.name)
+	}
 	switch a.name {
 	case "codex":
-		return a.chatCodex(ctx, message)
+		return a.chatCodex(ctx, request.Text)
 	default:
-		return a.chatClaude(ctx, conversationID, message)
+		return a.chatClaude(ctx, conversationID, request.Text)
 	}
 }
 

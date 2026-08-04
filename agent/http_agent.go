@@ -82,10 +82,13 @@ func (a *HTTPAgent) ResetSession(_ context.Context, conversationID string) (stri
 	return "", nil
 }
 
-// Chat sends a message to the OpenAI-compatible API and returns the response.
-func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, message string) (string, error) {
+// Chat sends structured input to the OpenAI-compatible API and returns the response.
+func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error) {
+	if len(request.LocalImages) > 0 {
+		return "", fmt.Errorf("HTTP agent does not support local image input")
+	}
 	a.mu.Lock()
-	messages := a.buildMessages(conversationID, message)
+	messages := a.buildMessages(conversationID, request.Text)
 	a.mu.Unlock()
 
 	reqBody := map[string]interface{}{
@@ -145,7 +148,7 @@ func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, message str
 	// Save to history
 	a.mu.Lock()
 	a.history[conversationID] = append(a.history[conversationID],
-		ChatMessage{Role: "user", Content: message},
+		ChatMessage{Role: "user", Content: request.Text},
 		ChatMessage{Role: "assistant", Content: reply},
 	)
 	// Trim history

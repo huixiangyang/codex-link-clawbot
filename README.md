@@ -66,6 +66,8 @@ Send these as WeChat messages:
 | `/claude` | Switch default agent to Claude |
 | `/cwd /path/to/project` | Switch workspace directory |
 | `/new` | Start a new conversation (clear session) |
+| `/status` | Show current task status |
+| `/cancel` | Cancel the current task |
 | `/info` | Show current agent info |
 | `/help` | Show help message |
 
@@ -101,6 +103,8 @@ Switching default agent is persisted to config — survives restarts.
 ## Media Messages
 
 WeClaw supports sending images, videos, files, and voice messages to/from WeChat.
+
+**Images sent from WeChat:** In Codex App Server mode, WeClaw downloads and decrypts the image, then sends the text and local image in one multimodal turn. Image-only messages receive a default analysis prompt and do not require `save_dir`. Each message may contain up to four JPEG, PNG, GIF, or WebP images, with a 20 MiB limit per image. Private temporary files are deleted when the task completes or is cancelled. Agents without image-input support return an explicit error instead of silently dropping the image.
 
 **Voice messages:** When you send a voice message in WeChat, WeClaw automatically uses WeChat's speech-to-text transcription and forwards the text to the AI agent. Duplicate voice message events are automatically deduplicated.
 

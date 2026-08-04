@@ -12,7 +12,6 @@ import (
 
 	"github.com/fastclaw-ai/weclaw/agent"
 	"github.com/fastclaw-ai/weclaw/ilink"
-	"github.com/google/uuid"
 )
 
 // AgentFactory creates an agent by config name. Returns nil if the name is unknown.
@@ -39,9 +38,11 @@ type Handler struct {
 	customAliases map[string]string      // custom alias -> agent name (from config)
 	factory       AgentFactory
 	saveDefault   SaveDefaultFunc
-	contextTokens sync.Map   // map[userID]contextToken
-	saveDir       string     // directory to save images/files to
-	seenMsgs      sync.Map   // map[int64]time.Time — dedup by message_id
+	contextTokens sync.Map // map[userID]contextToken
+	saveDir       string   // Linkhoard archive directory
+	seenMsgs      sync.Map // map[int64]time.Time — dedup by message_id
+	activeTasks   sync.Map // map[userID]*activeTask — 同一用户只允许一个活动任务
+	progress      ProgressConfig
 }
 
 // NewHandler creates a new message handler.
@@ -51,10 +52,16 @@ func NewHandler(factory AgentFactory, saveDefault SaveDefaultFunc) *Handler {
 		agentWorkDirs: make(map[string]string),
 		factory:       factory,
 		saveDefault:   saveDefault,
+		progress:      DefaultProgressConfig(),
 	}
 }
 
-// SetSaveDir sets the directory for saving images and files.
+// SetProgressConfig 设置微信长任务的输入状态和文字进度节奏。
+func (h *Handler) SetProgressConfig(progress ProgressConfig) {
+	h.progress = progress
+}
+
+// SetSaveDir sets the Linkhoard archive directory.
 func (h *Handler) SetSaveDir(dir string) {
 	h.saveDir = dir
 }
@@ -267,6 +274,12 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		return
 	}
 
+	// 只接受扫码绑定账号发来的消息，避免群聊或其他联系人驱动本机 Codex。
+	if ownerUserID := client.OwnerUserID(); ownerUserID != "" && msg.FromUserID != ownerUserID {
+		log.Printf("[handler] rejected message from non-owner user %s", msg.FromUserID)
+		return
+	}
+
 	// Deduplicate by message_id to avoid processing the same message multiple times
 	// (voice messages may trigger multiple finish-state updates)
 	if msg.MessageID != 0 {
@@ -285,27 +298,62 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			log.Printf("[handler] voice transcription from %s: %q", msg.FromUserID, truncate(text, 80))
 		}
 	}
-	if text == "" {
-		// Check for image message
-		if img := extractImage(msg); img != nil && h.saveDir != "" {
-			h.handleImageSave(ctx, client, msg, img)
-			return
-		}
+	images := extractImages(msg)
+	if text == "" && len(images) == 0 {
 		log.Printf("[handler] received non-text message from %s, skipping", msg.FromUserID)
 		return
 	}
 
-	log.Printf("[handler] received from %s: %q", msg.FromUserID, truncate(text, 80))
+	if len(images) > 0 {
+		log.Printf("[handler] received from %s: %d image(s), text=%q", msg.FromUserID, len(images), truncate(text, 80))
+	} else {
+		log.Printf("[handler] received from %s: %q", msg.FromUserID, truncate(text, 80))
+	}
 
 	// Store context token for this user
 	h.contextTokens.Store(msg.FromUserID, msg.ContextToken)
 
-	// Generate a clientID for this reply (used to correlate typing → finish)
+	trimmed := strings.TrimSpace(text)
 	clientID := NewClientID()
 
+	// 控制命令必须优先于忙碌拦截，否则运行中的任务既无法取消也无法查询。
+	if trimmed == "/cancel" {
+		reply := h.cancelActiveTask(msg.FromUserID)
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send cancel result to %s: %v", msg.FromUserID, err)
+		}
+		return
+	}
+	if trimmed == "/status" {
+		reply := h.buildTaskStatus(msg.FromUserID)
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send task status to %s: %v", msg.FromUserID, err)
+		}
+		return
+	}
+	if trimmed == "/info" {
+		reply := h.buildStatus()
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+		}
+		return
+	}
+	if trimmed == "/help" {
+		reply := buildHelpText()
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+		}
+		return
+	}
+
+	// 任务运行期间普通消息直接返回快照，避免 /new 等命令并发改写线程状态。
+	if active, ok := h.activeTasks.Load(msg.FromUserID); ok {
+		h.sendActiveTaskStatus(ctx, client, msg, active.(*activeTask))
+		return
+	}
+
 	// Intercept URLs: save to Linkhoard directly without AI agent
-	trimmed := strings.TrimSpace(text)
-	if h.saveDir != "" && IsURL(trimmed) {
+	if len(images) == 0 && h.saveDir != "" && IsURL(trimmed) {
 		rawURL := ExtractURL(trimmed)
 		if rawURL != "" {
 			log.Printf("[handler] saving URL to linkhoard: %s", rawURL)
@@ -324,20 +372,8 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		}
 	}
 
-	// Built-in commands (no typing needed)
-	if trimmed == "/info" {
-		reply := h.buildStatus()
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-		}
-		return
-	} else if trimmed == "/help" {
-		reply := buildHelpText()
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-		}
-		return
-	} else if trimmed == "/new" || trimmed == "/clear" {
+	// 会改变会话状态的内置命令只允许在空闲时执行。
+	if trimmed == "/new" || trimmed == "/clear" {
 		reply := h.resetDefaultSession(ctx, msg.FromUserID)
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
@@ -356,12 +392,12 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 
 	// No command prefix -> send to default agent
 	if len(agentNames) == 0 {
-		h.sendToDefaultAgent(ctx, client, msg, text, clientID)
+		h.sendToDefaultAgent(ctx, client, msg, text, images, clientID)
 		return
 	}
 
 	// No message -> switch default agent (only first name)
-	if message == "" {
+	if message == "" && len(images) == 0 {
 		if len(agentNames) == 1 && h.isKnownAgent(agentNames[0]) {
 			reply := h.switchDefault(ctx, agentNames[0])
 			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
@@ -369,7 +405,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			}
 		} else if len(agentNames) == 1 && !h.isKnownAgent(agentNames[0]) {
 			// Unknown agent -> forward to default
-			h.sendToDefaultAgent(ctx, client, msg, text, clientID)
+			h.sendToDefaultAgent(ctx, client, msg, text, images, clientID)
 		} else {
 			reply := "Usage: specify one agent to switch, or add a message to broadcast"
 			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
@@ -388,34 +424,21 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	}
 	if len(knownNames) == 0 {
 		// No known agents -> forward entire text to default agent
-		h.sendToDefaultAgent(ctx, client, msg, text, clientID)
+		h.sendToDefaultAgent(ctx, client, msg, text, images, clientID)
 		return
 	}
 
-	// Send typing indicator
-	go func() {
-		if typingErr := SendTypingState(ctx, client, msg.FromUserID, msg.ContextToken); typingErr != nil {
-			log.Printf("[handler] failed to send typing state: %v", typingErr)
-		}
-	}()
-
 	if len(knownNames) == 1 {
 		// Single agent
-		h.sendToNamedAgent(ctx, client, msg, knownNames[0], message, clientID)
+		h.sendToNamedAgent(ctx, client, msg, knownNames[0], message, images, clientID)
 	} else {
 		// Multi-agent broadcast: parallel dispatch, send replies as they arrive
-		h.broadcastToAgents(ctx, client, msg, knownNames, message)
+		h.broadcastToAgents(ctx, client, msg, knownNames, message, images)
 	}
 }
 
 // sendToDefaultAgent sends the message to the default agent and replies.
-func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text, clientID string) {
-	go func() {
-		if typingErr := SendTypingState(ctx, client, msg.FromUserID, msg.ContextToken); typingErr != nil {
-			log.Printf("[handler] failed to send typing state: %v", typingErr)
-		}
-	}()
-
+func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, clientID string) {
 	h.mu.RLock()
 	defaultName := h.defaultName
 	h.mu.RUnlock()
@@ -423,30 +446,69 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, 
 	ag := h.getDefaultAgent()
 	var reply string
 	if ag != nil {
+		reporter, ok := h.beginTask(ctx, client, msg)
+		if !ok {
+			return
+		}
+		request, cleanup, prepareErr := h.prepareTaskInput(reporter, text, images)
+		if prepareErr != nil {
+			log.Printf("[handler] failed to prepare image input for %s: %v", msg.FromUserID, prepareErr)
+			if h.finishTask(msg.FromUserID, reporter) {
+				reply = fmt.Sprintf("图片处理失败：%v", prepareErr)
+				h.sendReplyWithMedia(ctx, client, msg, defaultName, reply, clientID)
+			}
+			return
+		}
+		defer cleanup()
+
 		var err error
-		reply, err = h.chatWithAgent(ctx, ag, msg.FromUserID, text)
+		reply, err = h.chatWithAgent(reporter.task.context(), ag, msg.FromUserID, request, reporter.Report)
+		if !h.finishTask(msg.FromUserID, reporter) {
+			log.Printf("[handler] task cancelled for %s", msg.FromUserID)
+			return
+		}
 		if err != nil {
 			reply = fmt.Sprintf("Error: %v", err)
 		}
 	} else {
-		log.Printf("[handler] agent not ready, using echo mode for %s", msg.FromUserID)
-		reply = "[echo] " + text
+		log.Printf("[handler] default agent is unavailable for %s", msg.FromUserID)
+		reply = "Codex 当前不可用，请稍后重试。"
 	}
 
 	h.sendReplyWithMedia(ctx, client, msg, defaultName, reply, clientID)
 }
 
 // sendToNamedAgent sends the message to a specific agent and replies.
-func (h *Handler) sendToNamedAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, name, message, clientID string) {
+func (h *Handler) sendToNamedAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, name, message string, images []*ilink.ImageItem, clientID string) {
+	reporter, ok := h.beginTask(ctx, client, msg)
+	if !ok {
+		return
+	}
+
 	ag, agErr := h.getAgent(ctx, name)
 	if agErr != nil {
 		log.Printf("[handler] agent %q not available: %v", name, agErr)
 		reply := fmt.Sprintf("Agent %q is not available: %v", name, agErr)
-		SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
+		if h.finishTask(msg.FromUserID, reporter) {
+			SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
+		}
 		return
 	}
+	request, cleanup, prepareErr := h.prepareTaskInput(reporter, message, images)
+	if prepareErr != nil {
+		log.Printf("[handler] failed to prepare image input for %s: %v", msg.FromUserID, prepareErr)
+		if h.finishTask(msg.FromUserID, reporter) {
+			SendTextReply(ctx, client, msg.FromUserID, fmt.Sprintf("图片处理失败：%v", prepareErr), msg.ContextToken, clientID)
+		}
+		return
+	}
+	defer cleanup()
 
-	reply, err := h.chatWithAgent(ctx, ag, msg.FromUserID, message)
+	reply, err := h.chatWithAgent(reporter.task.context(), ag, msg.FromUserID, request, reporter.Report)
+	if !h.finishTask(msg.FromUserID, reporter) {
+		log.Printf("[handler] task cancelled for %s", msg.FromUserID)
+		return
+	}
 	if err != nil {
 		reply = fmt.Sprintf("Error: %v", err)
 	}
@@ -455,7 +517,21 @@ func (h *Handler) sendToNamedAgent(ctx context.Context, client *ilink.Client, ms
 
 // broadcastToAgents sends the message to multiple agents in parallel.
 // Each reply is sent as a separate message with the agent name prefix.
-func (h *Handler) broadcastToAgents(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, names []string, message string) {
+func (h *Handler) broadcastToAgents(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, names []string, message string, images []*ilink.ImageItem) {
+	reporter, ok := h.beginTask(ctx, client, msg)
+	if !ok {
+		return
+	}
+	request, cleanup, prepareErr := h.prepareTaskInput(reporter, message, images)
+	if prepareErr != nil {
+		log.Printf("[handler] failed to prepare image input for %s: %v", msg.FromUserID, prepareErr)
+		if h.finishTask(msg.FromUserID, reporter) {
+			SendTextReply(ctx, client, msg.FromUserID, fmt.Sprintf("图片处理失败：%v", prepareErr), msg.ContextToken, NewClientID())
+		}
+		return
+	}
+	defer cleanup()
+
 	type result struct {
 		name  string
 		reply string
@@ -470,7 +546,7 @@ func (h *Handler) broadcastToAgents(ctx context.Context, client *ilink.Client, m
 				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err)}
 				return
 			}
-			reply, err := h.chatWithAgent(ctx, ag, msg.FromUserID, message)
+			reply, err := h.chatWithAgent(reporter.task.context(), ag, msg.FromUserID, request, reporter.Report)
 			if err != nil {
 				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err)}
 				return
@@ -482,10 +558,14 @@ func (h *Handler) broadcastToAgents(ctx context.Context, client *ilink.Client, m
 	// Send replies as they arrive
 	for range names {
 		r := <-ch
+		if reporter.task.cancelRequested() {
+			continue
+		}
 		reply := fmt.Sprintf("[%s] %s", r.name, r.reply)
 		clientID := NewClientID()
 		h.sendReplyWithMedia(ctx, client, msg, r.name, reply, clientID)
 	}
+	h.finishTask(msg.FromUserID, reporter)
 }
 
 // sendReplyWithMedia sends a text reply and any extracted image URLs.
@@ -538,12 +618,18 @@ func (h *Handler) allowedAttachmentRoots(agentName string) []string {
 }
 
 // chatWithAgent sends a message to an agent and returns the reply, with logging.
-func (h *Handler) chatWithAgent(ctx context.Context, ag agent.Agent, userID, message string) (string, error) {
+func (h *Handler) chatWithAgent(ctx context.Context, ag agent.Agent, userID string, request agent.ChatRequest, onProgress agent.ProgressHandler) (string, error) {
 	info := ag.Info()
 	log.Printf("[handler] dispatching to agent (%s) for %s", info, userID)
 
 	start := time.Now()
-	reply, err := ag.Chat(ctx, userID, message)
+	var reply string
+	var err error
+	if progressAgent, ok := ag.(agent.ProgressAgent); ok {
+		reply, err = progressAgent.ChatWithProgress(ctx, userID, request, onProgress)
+	} else {
+		reply, err = ag.Chat(ctx, userID, request)
+	}
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -553,6 +639,66 @@ func (h *Handler) chatWithAgent(ctx context.Context, ag agent.Agent, userID, mes
 
 	log.Printf("[handler] agent replied (%s, elapsed=%s): %q", info, elapsed, truncate(reply, 100))
 	return reply, nil
+}
+
+func (h *Handler) prepareTaskInput(reporter *progressReporter, text string, images []*ilink.ImageItem) (agent.ChatRequest, func(), error) {
+	if len(images) > 0 {
+		reporter.Report(agent.ProgressEvent{Kind: agent.ProgressActivity, Text: "正在接收微信图片"})
+	}
+	request, cleanup, err := prepareAgentInput(reporter.task.context(), text, images, "")
+	if err != nil {
+		return agent.ChatRequest{}, cleanup, err
+	}
+	if len(request.LocalImages) > 0 {
+		reporter.Report(agent.ProgressEvent{Kind: agent.ProgressActivity, Text: "图片已接收，正在交给 Codex 分析"})
+	}
+	return request, cleanup, nil
+}
+
+func (h *Handler) beginTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage) (*progressReporter, bool) {
+	task := newActiveTask(ctx)
+	actual, loaded := h.activeTasks.LoadOrStore(msg.FromUserID, task)
+	if loaded {
+		task.finish()
+		h.sendActiveTaskStatus(ctx, client, msg, actual.(*activeTask))
+		return nil, false
+	}
+	return newProgressReporter(task.context(), client, msg.FromUserID, msg.ContextToken, h.progress, task), true
+}
+
+func (h *Handler) sendActiveTaskStatus(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, task *activeTask) {
+	if err := SendTextReply(ctx, client, msg.FromUserID, task.busySummary(), msg.ContextToken, NewClientID()); err != nil {
+		log.Printf("[handler] failed to send active task status to %s: %v", msg.FromUserID, err)
+	}
+}
+
+func (h *Handler) finishTask(userID string, reporter *progressReporter) bool {
+	deliver := reporter.task.finish()
+	reporter.Close()
+	h.activeTasks.CompareAndDelete(userID, reporter.task)
+	return deliver
+}
+
+func (h *Handler) cancelActiveTask(userID string) string {
+	value, ok := h.activeTasks.Load(userID)
+	if !ok {
+		return "当前没有正在执行的任务。"
+	}
+	task := value.(*activeTask)
+	if !task.requestCancel() {
+		if task.cancelRequested() {
+			return "当前任务正在取消，请稍候。"
+		}
+		return "当前没有正在执行的任务。"
+	}
+	return fmt.Sprintf("已请求取消当前任务。\n已运行：%s", formatElapsed(time.Since(task.started)))
+}
+
+func (h *Handler) buildTaskStatus(userID string) string {
+	if value, ok := h.activeTasks.Load(userID); ok {
+		return value.(*activeTask).statusSummary()
+	}
+	return "任务状态：空闲\n" + h.buildStatus()
 }
 
 // switchDefault switches the default agent. Starts it on demand if needed.
@@ -684,16 +830,19 @@ func (h *Handler) buildStatus() string {
 }
 
 func buildHelpText() string {
-	return `Available commands:
-@agent or /agent - Switch default agent
-@agent msg or /agent msg - Send to a specific agent
-@a @b msg - Broadcast to multiple agents
-/new or /clear - Start a new session
-/cwd /path - Switch workspace directory
-/info - Show current agent info
-/help - Show this help message
+	return `可用命令：
+直接发送图片 - 交给 Codex 分析
+/status - 查看当前任务状态
+/cancel - 取消当前任务
+/info - 查看当前 Agent 信息
+/new 或 /clear - 开始新会话
+/cwd /path - 切换工作目录
+/agent - 切换默认 Agent
+/agent 消息 - 发送给指定 Agent
+@a @b 消息 - 同时发送给多个 Agent
+/help - 查看命令列表
 
-Aliases: /cc(claude) /cx(codex) /cs(cursor) /km(kimi) /gm(gemini) /oc(openclaw) /ocd(opencode) /pi(pi) /cp(copilot) /dr(droid) /if(iflow) /kr(kiro) /qw(qwen)`
+快捷别名：/cc(claude) /cx(codex) /cs(cursor) /km(kimi) /gm(gemini) /oc(openclaw) /ocd(opencode) /pi(pi) /cp(copilot) /dr(droid) /if(iflow) /kr(kiro) /qw(qwen)`
 }
 
 func extractText(msg ilink.WeixinMessage) string {
@@ -705,13 +854,14 @@ func extractText(msg ilink.WeixinMessage) string {
 	return ""
 }
 
-func extractImage(msg ilink.WeixinMessage) *ilink.ImageItem {
+func extractImages(msg ilink.WeixinMessage) []*ilink.ImageItem {
+	var images []*ilink.ImageItem
 	for _, item := range msg.ItemList {
 		if item.Type == ilink.ItemTypeImage && item.ImageItem != nil {
-			return item.ImageItem
+			images = append(images, item.ImageItem)
 		}
 	}
-	return nil
+	return images
 }
 
 func extractVoiceText(msg ilink.WeixinMessage) string {
@@ -721,93 +871,4 @@ func extractVoiceText(msg ilink.WeixinMessage) string {
 		}
 	}
 	return ""
-}
-
-func (h *Handler) handleImageSave(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, img *ilink.ImageItem) {
-	clientID := NewClientID()
-	log.Printf("[handler] received image from %s, saving to %s", msg.FromUserID, h.saveDir)
-
-	// Download image data
-	var data []byte
-	var err error
-
-	if img.URL != "" {
-		// Direct URL download
-		data, _, err = downloadFile(ctx, img.URL)
-	} else if img.Media != nil && img.Media.EncryptQueryParam != "" {
-		// CDN encrypted download
-		data, err = DownloadFileFromCDN(ctx, img.Media.EncryptQueryParam, img.Media.AESKey)
-	} else {
-		log.Printf("[handler] image has no URL or media info from %s", msg.FromUserID)
-		return
-	}
-
-	if err != nil {
-		log.Printf("[handler] failed to download image from %s: %v", msg.FromUserID, err)
-		reply := fmt.Sprintf("Failed to save image: %v", err)
-		_ = SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
-		return
-	}
-
-	// Detect extension from content
-	ext := detectImageExt(data)
-
-	// Generate filename with timestamp
-	ts := time.Now().Format("20060102-150405")
-	fileName := fmt.Sprintf("%s%s", ts, ext)
-	filePath := filepath.Join(h.saveDir, fileName)
-
-	// Ensure save directory exists
-	if err := os.MkdirAll(h.saveDir, 0o755); err != nil {
-		log.Printf("[handler] failed to create save dir: %v", err)
-		return
-	}
-
-	// Write image file
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		log.Printf("[handler] failed to write image: %v", err)
-		reply := fmt.Sprintf("Failed to save image: %v", err)
-		_ = SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
-		return
-	}
-
-	// Write sidecar file
-	sidecarPath := filePath + ".sidecar.md"
-	sidecarContent := fmt.Sprintf("---\nid: %s\n---\n", uuid.New().String())
-	if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o644); err != nil {
-		log.Printf("[handler] failed to write sidecar: %v", err)
-	}
-
-	log.Printf("[handler] saved image to %s (%d bytes)", filePath, len(data))
-	reply := fmt.Sprintf("Saved: %s", fileName)
-	if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-		log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-	}
-}
-
-func detectImageExt(data []byte) string {
-	if len(data) < 4 {
-		return ".bin"
-	}
-	// PNG: 89 50 4E 47
-	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-		return ".png"
-	}
-	// JPEG: FF D8 FF
-	if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
-		return ".jpg"
-	}
-	// GIF: 47 49 46
-	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
-		return ".gif"
-	}
-	// WebP: 52 49 46 46 ... 57 45 42 50
-	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[8] == 0x57 && data[9] == 0x45 {
-		return ".webp"
-	}
-	// BMP: 42 4D
-	if data[0] == 0x42 && data[1] == 0x4D {
-		return ".bmp"
-	}
-	return ".jpg" // default to jpg for WeChat images
 }

@@ -106,7 +106,7 @@ func AESKeyToBase64(hexKey string) string {
 }
 
 // DownloadFileFromCDN downloads and decrypts a file from the WeChat CDN.
-func DownloadFileFromCDN(ctx context.Context, encryptQueryParam, aesKeyBase64 string) ([]byte, error) {
+func DownloadFileFromCDN(ctx context.Context, encryptQueryParam, aesKeyBase64 string, maxBytes int64) ([]byte, error) {
 	// Decode AES key: base64 -> hex string -> raw bytes
 	aesKeyHexBytes, err := base64.StdEncoding.DecodeString(aesKeyBase64)
 	if err != nil {
@@ -140,13 +140,20 @@ func DownloadFileFromCDN(ctx context.Context, encryptQueryParam, aesKeyBase64 st
 		return nil, fmt.Errorf("CDN download HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	encrypted, err := io.ReadAll(resp.Body)
+	encrypted, err := readAllLimited(resp.Body, maxBytes+aes.BlockSize)
 	if err != nil {
 		return nil, fmt.Errorf("read CDN response: %w", err)
 	}
 
 	// Decrypt AES-128-ECB
-	return decryptAESECB(encrypted, aesKey)
+	plaintext, err := decryptAESECB(encrypted, aesKey)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(plaintext)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d byte limit", maxBytes)
+	}
+	return plaintext, nil
 }
 
 // decryptAESECB decrypts data encrypted with AES-128-ECB and removes PKCS7 padding.

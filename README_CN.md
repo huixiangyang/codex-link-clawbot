@@ -67,6 +67,8 @@ docker run -it -v ~/.weclaw:/root/.weclaw ghcr.io/fastclaw-ai/weclaw start
 | `/claude`               | 切换默认 Agent 为 Claude |
 | `/cwd /path/to/project` | 切换工作目录             |
 | `/new`                  | 开始新对话（清除会话）   |
+| `/status`               | 查看当前任务状态         |
+| `/cancel`               | 取消当前任务             |
 | `/info`                 | 查看当前 Agent 信息      |
 | `/help`                 | 查看帮助信息             |
 
@@ -99,9 +101,21 @@ docker run -it -v ~/.weclaw:/root/.weclaw ghcr.io/fastclaw-ai/weclaw start
 
 切换默认 Agent 会写入配置文件，重启后仍然生效。
 
+### 长任务进度与并发保护
+
+Codex App Server 模式会把阶段说明、计划更新和工具活动转换成微信端进度：任务开始后持续刷新“正在输入”，超过首条延迟后发送文字状态。单次任务内相同的文字详情只发送一次；没有新状态时仅刷新“正在输入”，不会重复推送旧详情。终端原始输出不会转发到微信。
+
+同一个微信用户同一时间只能运行一个 Codex turn。任务进行中再次发消息时，WeClaw 会立即返回当前状态和已运行时间，不会创建并发 turn，也不会覆盖原任务的事件通道。当前消息不会排队，任务结束后需要重新发送。
+
+任务运行期间仍可使用 `/status` 查询当前阶段，或使用 `/cancel` 中断本次 Codex turn。取消命令会调用 Codex App Server 的 `turn/interrupt`，取消后的迟到结果和错误不会继续推送到微信。
+
+详细机制、配置和本机部署方式见 [微信长任务进度桥接](docs/wechat-progress.md)。
+
 ## 富媒体消息
 
 WeClaw 支持收发图片、视频、文件和语音消息。
+
+**微信图片输入：** Codex App Server 模式会下载并解密微信图片，把文字和图片作为同一个多模态 turn 发送给 Codex。纯图片消息会自动补充图片分析指令，不需要配置 `save_dir`。单条消息最多 4 张、单张最大 20 MiB，仅接受 JPEG、PNG、GIF 和 WebP；临时文件使用私有权限，并在任务完成或取消后删除。不支持图片输入的 Agent 会明确返回错误，不会静默忽略图片。
 
 **语音消息：** 在微信中发送语音消息时，WeClaw 会自动使用微信的语音转文字功能，将转写后的文本发送给 AI Agent。重复的语音消息事件会自动去重。
 
@@ -159,6 +173,12 @@ curl -X POST http://127.0.0.1:18011/api/send \
 ```json
 {
   "default_agent": "claude",
+  "progress": {
+    "enabled": true,
+    "typing_interval_seconds": 8,
+    "first_message_delay_seconds": 15,
+    "message_interval_seconds": 45
+  },
   "agents": {
     "claude": {
       "type": "acp",

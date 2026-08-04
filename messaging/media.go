@@ -127,6 +127,10 @@ func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName
 }
 
 func downloadFile(ctx context.Context, url string) ([]byte, string, error) {
+	return downloadFileLimited(ctx, url, 100<<20)
+}
+
+func downloadFileLimited(ctx context.Context, url string, maxBytes int64) ([]byte, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
@@ -145,7 +149,7 @@ func downloadFile(ctx context.Context, url string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readAllLimited(resp.Body, maxBytes)
 	if err != nil {
 		return nil, "", err
 	}
@@ -156,6 +160,20 @@ func downloadFile(ctx context.Context, url string) ([]byte, string, error) {
 	}
 
 	return data, contentType, nil
+}
+
+func readAllLimited(reader io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("maximum download size must be positive")
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d byte limit", maxBytes)
+	}
+	return data, nil
 }
 
 func classifyMedia(contentType, url string) (cdnMediaType int, itemType int) {

@@ -164,12 +164,17 @@ type codexTurnStartParams struct {
 type codexUserInput struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 type codexTurnEvent struct {
-	Kind  string
-	Delta string
-	Text  string
+	Kind      string
+	Delta     string
+	Text      string
+	ItemID    string
+	Phase     string
+	Completed int
+	Total     int
 }
 
 func detectACPProtocol(command string, args []string) string {
@@ -358,8 +363,17 @@ func (a *ACPAgent) ResetSession(ctx context.Context, conversationID string) (str
 	return sessionID, nil
 }
 
-// Chat sends a message and returns the full response.
-func (a *ACPAgent) Chat(ctx context.Context, conversationID string, message string) (string, error) {
+// Chat sends structured input and returns the final response.
+func (a *ACPAgent) Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error) {
+	return a.chat(ctx, conversationID, request, nil)
+}
+
+// ChatWithProgress sends structured input and exposes safe progress updates.
+func (a *ACPAgent) ChatWithProgress(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
+	return a.chat(ctx, conversationID, request, onProgress)
+}
+
+func (a *ACPAgent) chat(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
 	if !a.started {
 		if err := a.Start(ctx); err != nil {
 			return "", err
@@ -368,7 +382,10 @@ func (a *ACPAgent) Chat(ctx context.Context, conversationID string, message stri
 
 	// Route to codex app-server protocol if applicable
 	if a.protocol == protocolCodexAppServer {
-		return a.chatCodexAppServer(ctx, conversationID, message)
+		return a.chatCodexAppServer(ctx, conversationID, request, onProgress)
+	}
+	if len(request.LocalImages) > 0 {
+		return "", fmt.Errorf("ACP protocol %q does not support image input", a.protocol)
 	}
 
 	// Get or create session
@@ -405,7 +422,7 @@ func (a *ACPAgent) Chat(ctx context.Context, conversationID string, message stri
 	go func() {
 		result, err := a.rpc(ctx, "session/prompt", promptParams{
 			SessionID: sessionID,
-			Prompt:    []promptEntry{{Type: "text", Text: message}},
+			Prompt:    []promptEntry{{Type: "text", Text: request.Text}},
 		})
 		if result != nil {
 			log.Printf("[acp] prompt result (session=%s): %s", sessionID, string(result))
@@ -531,7 +548,7 @@ func (a *ACPAgent) getOrCreateThread(ctx context.Context, conversationID string)
 	return threadResult.Thread.ID, true, nil
 }
 
-func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string, message string) (string, error) {
+func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
 	threadID, isNew, err := a.getOrCreateThread(ctx, conversationID)
 	if err != nil {
 		return "", fmt.Errorf("thread error: %w", err)
@@ -562,40 +579,134 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string
 		a.notifyMu.Unlock()
 	}()
 
-	// Start turn (call returns quickly with turn info, actual content comes via events)
-	go func() {
-		_, err := a.rpc(ctx, "turn/start", codexTurnStartParams{
-			ThreadID:       threadID,
-			ApprovalPolicy: "never",
-			Input:          []codexUserInput{{Type: "text", Text: message}},
-			SandboxPolicy:  map[string]interface{}{"type": "dangerFullAccess"},
-			Model:          a.model,
-			Cwd:            a.cwd,
-		})
-		if err != nil {
-			// If call itself fails, signal via turn channel
-			turnCh <- &codexTurnEvent{Kind: "error", Text: err.Error()}
+	// turn/start 会立即返回 turn ID；取消时必须携带它调用 turn/interrupt。
+	// 短暂脱离任务取消信号，确保即使用户立刻取消也能拿到 turn ID 后完成中断。
+	input := make([]codexUserInput, 0, 1+len(request.LocalImages))
+	if text := strings.TrimSpace(request.Text); text != "" {
+		input = append(input, codexUserInput{Type: "text", Text: text})
+	}
+	for _, imagePath := range request.LocalImages {
+		imagePath = strings.TrimSpace(imagePath)
+		if imagePath != "" {
+			input = append(input, codexUserInput{Type: "localImage", Path: imagePath})
 		}
-	}()
+	}
+	if len(input) == 0 {
+		return "", fmt.Errorf("turn input is empty")
+	}
 
-	// Collect text from events until turn/completed
-	var textParts []string
+	startCtx, cancelStart := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	startResult, err := a.rpc(startCtx, "turn/start", codexTurnStartParams{
+		ThreadID:       threadID,
+		ApprovalPolicy: "never",
+		Input:          input,
+		SandboxPolicy:  map[string]interface{}{"type": "dangerFullAccess"},
+		Model:          a.model,
+		Cwd:            a.cwd,
+	})
+	cancelStart()
+	if err != nil {
+		return "", fmt.Errorf("start turn: %w", err)
+	}
+	var started struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if err := json.Unmarshal(startResult, &started); err != nil {
+		return "", fmt.Errorf("parse turn/start result: %w", err)
+	}
+	if started.Turn.ID == "" {
+		return "", fmt.Errorf("turn/start returned empty turn id")
+	}
+	turnID := started.Turn.ID
+
+	// Codex 会把阶段说明和最终答案都作为 agentMessage 发出。
+	// 必须按 phase 分流，否则微信端会把所有中间说明拼进最终回复。
+	type messageState struct {
+		phase string
+		text  strings.Builder
+	}
+	messages := make(map[string]*messageState)
+	var messageOrder []string
+	var finalParts []string
+
+	getMessage := func(itemID string) *messageState {
+		state, ok := messages[itemID]
+		if ok {
+			return state
+		}
+		state = &messageState{}
+		messages[itemID] = state
+		messageOrder = append(messageOrder, itemID)
+		return state
+	}
+	report := func(event ProgressEvent) {
+		if onProgress != nil {
+			onProgress(event)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			a.interruptCodexTurn(threadID, turnID)
 			return "", ctx.Err()
 		case evt := <-turnCh:
 			if evt.Kind == "error" {
 				return "", fmt.Errorf("turn error: %s", evt.Text)
 			}
-			if evt.Delta != "" {
-				textParts = append(textParts, evt.Delta)
-			}
-			if evt.Text != "" {
-				textParts = append(textParts, evt.Text)
-			}
-			if evt.Kind == "completed" {
-				result := strings.TrimSpace(strings.Join(textParts, ""))
+
+			switch evt.Kind {
+			case "message_started":
+				state := getMessage(evt.ItemID)
+				state.phase = evt.Phase
+				if evt.Text != "" {
+					state.text.WriteString(evt.Text)
+				}
+			case "message_delta":
+				getMessage(evt.ItemID).text.WriteString(evt.Delta)
+			case "message_completed":
+				state := getMessage(evt.ItemID)
+				if evt.Phase != "" {
+					state.phase = evt.Phase
+				}
+				text := strings.TrimSpace(evt.Text)
+				if text == "" {
+					text = strings.TrimSpace(state.text.String())
+				}
+				if text == "" {
+					break
+				}
+				if state.phase == "commentary" {
+					report(ProgressEvent{Kind: ProgressCommentary, Text: text})
+				} else {
+					finalParts = append(finalParts, text)
+				}
+			case "plan":
+				report(ProgressEvent{
+					Kind:      ProgressPlan,
+					Text:      evt.Text,
+					Completed: evt.Completed,
+					Total:     evt.Total,
+				})
+			case "activity":
+				report(ProgressEvent{Kind: ProgressActivity, Text: evt.Text})
+			case "completed":
+				result := strings.TrimSpace(strings.Join(finalParts, "\n\n"))
+				if result == "" {
+					// phase 缺失时仅选择最后一条非 commentary 消息作为最终答案。
+					for i := len(messageOrder) - 1; i >= 0; i-- {
+						state := messages[messageOrder[i]]
+						if state.phase == "commentary" {
+							continue
+						}
+						result = strings.TrimSpace(state.text.String())
+						if result != "" {
+							break
+						}
+					}
+				}
 				if result == "" {
 					return "", fmt.Errorf("agent returned empty response")
 				}
@@ -603,6 +714,21 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string
 			}
 		}
 	}
+}
+
+func (a *ACPAgent) interruptCodexTurn(threadID, turnID string) {
+	interruptCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := a.rpc(interruptCtx, "turn/interrupt", map[string]string{
+		"threadId": threadID,
+		"turnId":   turnID,
+	})
+	if err != nil {
+		log.Printf("[acp] failed to interrupt turn (thread=%s, turn=%s): %v", threadID, turnID, err)
+		return
+	}
+	log.Printf("[acp] interrupted turn (thread=%s, turn=%s)", threadID, turnID)
 }
 
 func (a *ACPAgent) rpc(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
@@ -728,11 +854,20 @@ func (a *ACPAgent) readLoop() {
 			a.handleCodexItemDelta(msg.Params)
 		case "item/started":
 			a.handleCodexItemStarted(msg.Params)
+		case "item/completed":
+			a.handleCodexItemCompleted(msg.Params)
+		case "turn/plan/updated":
+			a.handleCodexPlanUpdated(msg.Params)
+		case "item/commandExecution/outputDelta", "item/commandExecution/terminalInteraction":
+			// 高频终端碎片仅视为已知事件；命令开始事件已经提供安全活动状态。
+			// 这里绝不解析或转发原始输出，避免泄漏终端内容并挤占计划更新。
+		case "turn/diff/updated":
+			a.handleCodexActivity(msg.Params, "正在应用本机变更")
 		case "turn/started", "turn/completed":
 			a.handleCodexTurnEvent(msg.Method, msg.Params)
 		case "codex/event/agent_message", "codex/event/task_complete",
 			"codex/event/item_completed", "codex/event/token_count",
-			"item/completed", "thread/tokenUsage/updated",
+			"thread/started", "thread/tokenUsage/updated",
 			"account/rateLimits/updated", "thread/status/changed":
 			// Known events we don't need to act on
 		case "turn/approval/request":
@@ -840,35 +975,98 @@ func (a *ACPAgent) handleCodexItemDelta(params json.RawMessage) {
 		return
 	}
 
-	a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Delta: p.Delta})
+	a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "message_delta", ItemID: p.ItemID, Delta: p.Delta})
 }
 
 // handleCodexItemStarted handles "item/started" events.
-// When type=agentMessage, extracts text from content array.
 func (a *ACPAgent) handleCodexItemStarted(params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
 		Item     struct {
-			Type    string `json:"type"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Text  string `json:"text"`
+			Phase string `json:"phase"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
 
-	if p.Item.Type != "agentMessage" {
+	switch p.Item.Type {
+	case "agentMessage":
+		a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{
+			Kind: "message_started", ItemID: p.Item.ID, Phase: p.Item.Phase, Text: p.Item.Text,
+		})
+	case "commandExecution":
+		a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "activity", Text: "正在执行本机操作"})
+	case "fileChange":
+		a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "activity", Text: "正在写入本机变更"})
+	}
+}
+
+// handleCodexItemCompleted 使用完整 item 文本结束消息，避免依赖碎片拼接。
+func (a *ACPAgent) handleCodexItemCompleted(params json.RawMessage) {
+	var p struct {
+		ThreadID string `json:"threadId"`
+		Item     struct {
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Text  string `json:"text"`
+			Phase string `json:"phase"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
 
-	for _, c := range p.Item.Content {
-		if c.Type == "text" && c.Text != "" {
-			a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Text: c.Text})
+	if p.Item.Type == "agentMessage" {
+		a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{
+			Kind: "message_completed", ItemID: p.Item.ID, Phase: p.Item.Phase, Text: p.Item.Text,
+		})
+	}
+}
+
+// handleCodexPlanUpdated 将计划压缩成适合微信展示的一行阶段状态。
+func (a *ACPAgent) handleCodexPlanUpdated(params json.RawMessage) {
+	var p struct {
+		ThreadID string `json:"threadId"`
+		Plan     []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return
+	}
+
+	completed := 0
+	current := ""
+	for _, step := range p.Plan {
+		if step.Status == "completed" {
+			completed++
+		}
+		if step.Status == "inProgress" {
+			current = strings.TrimSpace(step.Step)
 		}
 	}
+	if current == "" && completed == len(p.Plan) && len(p.Plan) > 0 {
+		current = "计划步骤已全部完成"
+	}
+	a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{
+		Kind: "plan", Text: current, Completed: completed, Total: len(p.Plan),
+	})
+}
+
+// handleCodexActivity 只报告安全的活动标签，原始命令输出绝不进入聊天端。
+func (a *ACPAgent) handleCodexActivity(params json.RawMessage, text string) {
+	var p struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return
+	}
+	a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "activity", Text: text})
 }
 
 // handleCodexTurnEvent handles "turn/started" and "turn/completed" notifications.

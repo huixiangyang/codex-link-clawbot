@@ -91,6 +91,27 @@ func TestDefaultConfigInitializesAgentsMap(t *testing.T) {
 	if cfg.Agents == nil {
 		t.Fatal("DefaultConfig() Agents = nil, want initialized map")
 	}
+	if !cfg.Progress.Enabled || cfg.Progress.TypingIntervalSeconds != 8 || cfg.Progress.FirstMessageDelaySeconds != 15 || cfg.Progress.MessageIntervalSeconds != 45 {
+		t.Fatalf("unexpected default progress config: %#v", cfg.Progress)
+	}
+}
+
+func TestBuildAliasMapRejectsTaskControlCommands(t *testing.T) {
+	aliases := BuildAliasMap(map[string]AgentConfig{
+		"codex": {
+			Aliases: []string{"status", "cancel", "work"},
+		},
+	})
+
+	if _, ok := aliases["status"]; ok {
+		t.Fatal("status must remain reserved for task control")
+	}
+	if _, ok := aliases["cancel"]; ok {
+		t.Fatal("cancel must remain reserved for task control")
+	}
+	if got := aliases["work"]; got != "codex" {
+		t.Fatalf("ordinary alias = %q, want codex", got)
+	}
 }
 
 func TestLoadEnvOverridesTopLevelOnly(t *testing.T) {

@@ -54,6 +54,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return runDaemon()
 	}
 
+	cleanupPID, err := registerForegroundPID()
+	if err != nil {
+		return err
+	}
+	defer cleanupPID()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -79,7 +85,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if config.DetectAndConfigure(cfg) {
+	// 已显式配置 Agent 时不再自动发现，确保微信只路由到指定的 Codex。
+	if len(cfg.Agents) == 0 && config.DetectAndConfigure(cfg) {
 		if err := config.Save(cfg); err != nil {
 			log.Printf("Warning: failed to save auto-detected config: %v", err)
 		} else {
@@ -128,6 +135,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetAgentMetas(metas)
 	handler.SetAgentWorkDirs(workDirs)
+	handler.SetProgressConfig(messaging.ProgressConfig{
+		Enabled:           cfg.Progress.Enabled,
+		TypingInterval:    time.Duration(cfg.Progress.TypingIntervalSeconds) * time.Second,
+		FirstMessageDelay: time.Duration(cfg.Progress.FirstMessageDelaySeconds) * time.Second,
+		MessageInterval:   time.Duration(cfg.Progress.MessageIntervalSeconds) * time.Second,
+	})
 
 	// Load custom aliases from agent configs
 	handler.SetCustomAliases(config.BuildAliasMap(cfg.Agents))
@@ -135,23 +148,20 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Set save directory for images/files if configured
 	if cfg.SaveDir != "" {
 		handler.SetSaveDir(cfg.SaveDir)
-		log.Printf("Image save directory: %s", cfg.SaveDir)
+		log.Printf("Linkhoard archive directory: %s", cfg.SaveDir)
 	}
 
-	// Start default agent initialization in background so monitors can start immediately
-	go func() {
-		if cfg.DefaultAgent == "" {
-			log.Println("No default agent configured, staying in echo mode")
-			return
-		}
-		log.Printf("Initializing default agent %q in background...", cfg.DefaultAgent)
-		ag := createAgentByName(ctx, cfg, cfg.DefaultAgent)
-		if ag == nil {
-			log.Printf("Failed to initialize default agent %q, staying in echo mode", cfg.DefaultAgent)
-		} else {
-			handler.SetDefaultAgent(cfg.DefaultAgent, ag)
-		}
-	}()
+	// 默认 Agent 必须先完成握手，健康端点和微信轮询随后才开放。
+	// 启动失败直接退出交给 systemd 重试，不再以 echo 模式接收真实用户消息。
+	if cfg.DefaultAgent == "" {
+		return fmt.Errorf("default agent is required")
+	}
+	log.Printf("Initializing default agent %q...", cfg.DefaultAgent)
+	ag := createAgentByName(ctx, cfg, cfg.DefaultAgent)
+	if ag == nil {
+		return fmt.Errorf("failed to initialize default agent %q", cfg.DefaultAgent)
+	}
+	handler.SetDefaultAgent(cfg.DefaultAgent, ag)
 
 	// Start HTTP API server for sending messages
 	var clients []*ilink.Client
@@ -170,7 +180,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Start monitors immediately — they will use echo mode until agent is ready
+	// Agent 就绪后才启动消息轮询。
 	log.Printf("Starting message bridge for %d account(s)...", len(accounts))
 
 	var wg sync.WaitGroup
@@ -347,6 +357,26 @@ func logFile() string {
 	return filepath.Join(weclawDir(), "weclaw.log")
 }
 
+// registerForegroundPID 让 systemd 前台模式也拥有准确的状态文件。
+// 清理时核对 PID，避免旧进程误删新实例写入的状态。
+func registerForegroundPID() (func(), error) {
+	if err := os.MkdirAll(weclawDir(), 0o700); err != nil {
+		return nil, fmt.Errorf("create weclaw dir: %w", err)
+	}
+	pid := os.Getpid()
+	pidText := fmt.Sprintf("%d", pid)
+	if err := os.WriteFile(pidFile(), []byte(pidText), 0o600); err != nil {
+		return nil, fmt.Errorf("write pid file: %w", err)
+	}
+
+	return func() {
+		data, err := os.ReadFile(pidFile())
+		if err == nil && string(data) == pidText {
+			_ = os.Remove(pidFile())
+		}
+	}, nil
+}
+
 // runDaemon spawns weclaw start (without --daemon) as a background process.
 func runDaemon() error {
 	// Kill any existing weclaw processes before starting a new one
@@ -381,7 +411,7 @@ func runDaemon() error {
 
 	// Save PID
 	pid := cmd.Process.Pid
-	os.WriteFile(pidFile(), []byte(fmt.Sprintf("%d", pid)), 0o644)
+	os.WriteFile(pidFile(), []byte(fmt.Sprintf("%d", pid)), 0o600)
 
 	// Detach — don't wait
 	cmd.Process.Release()

@@ -14,18 +14,19 @@ import (
 )
 
 const (
-	defaultBaseURL     = "https://ilinkai.weixin.qq.com"
-	longPollTimeout    = 35 * time.Second
-	sendTimeout        = 15 * time.Second
+	defaultBaseURL  = "https://ilinkai.weixin.qq.com"
+	longPollTimeout = 35 * time.Second
+	sendTimeout     = 15 * time.Second
 )
 
 // Client is an iLink HTTP API client.
 type Client struct {
-	baseURL    string
-	botToken   string
-	botID      string
-	httpClient *http.Client
-	wechatUIN  string
+	baseURL     string
+	botToken    string
+	botID       string
+	ownerUserID string
+	httpClient  *http.Client
+	wechatUIN   string
 }
 
 // NewClient creates a new iLink API client.
@@ -35,11 +36,12 @@ func NewClient(creds *Credentials) *Client {
 		baseURL = defaultBaseURL
 	}
 	return &Client{
-		baseURL:    baseURL,
-		botToken:   creds.BotToken,
-		botID:      creds.ILinkBotID,
-		httpClient: &http.Client{},
-		wechatUIN:  generateWechatUIN(),
+		baseURL:     baseURL,
+		botToken:    creds.BotToken,
+		botID:       creds.ILinkBotID,
+		ownerUserID: creds.ILinkUserID,
+		httpClient:  &http.Client{},
+		wechatUIN:   generateWechatUIN(),
 	}
 }
 
@@ -55,6 +57,12 @@ func NewUnauthenticatedClient() *Client {
 // BotID returns the bot's user ID.
 func (c *Client) BotID() string {
 	return c.botID
+}
+
+// OwnerUserID 返回扫码绑定微信账号的 iLink 用户标识。
+// 消息入口用它限制只有绑定者本人可以驱动本机 Codex。
+func (c *Client) OwnerUserID() string {
+	return c.ownerUserID
 }
 
 // GetUpdates performs a long-poll for new messages.

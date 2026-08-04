@@ -12,8 +12,42 @@ import (
 type Config struct {
 	DefaultAgent string                 `json:"default_agent"`
 	APIAddr      string                 `json:"api_addr,omitempty"`
-	SaveDir      string                 `json:"save_dir,omitempty"`
+	SaveDir      string                 `json:"save_dir,omitempty"` // Linkhoard archive directory
+	Progress     ProgressConfig         `json:"progress"`
 	Agents       map[string]AgentConfig `json:"agents"`
+}
+
+// ProgressConfig 控制长任务在微信端的进度提示和保活节奏。
+type ProgressConfig struct {
+	Enabled                  bool `json:"enabled"`
+	TypingIntervalSeconds    int  `json:"typing_interval_seconds"`
+	FirstMessageDelaySeconds int  `json:"first_message_delay_seconds"`
+	MessageIntervalSeconds   int  `json:"message_interval_seconds"`
+}
+
+func defaultProgressConfig() ProgressConfig {
+	return ProgressConfig{
+		Enabled:                  true,
+		TypingIntervalSeconds:    8,
+		FirstMessageDelaySeconds: 15,
+		MessageIntervalSeconds:   45,
+	}
+}
+
+func (c ProgressConfig) validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.TypingIntervalSeconds < 3 || c.TypingIntervalSeconds > 30 {
+		return fmt.Errorf("progress.typing_interval_seconds must be between 3 and 30")
+	}
+	if c.FirstMessageDelaySeconds < 5 || c.FirstMessageDelaySeconds > 120 {
+		return fmt.Errorf("progress.first_message_delay_seconds must be between 5 and 120")
+	}
+	if c.MessageIntervalSeconds < 15 || c.MessageIntervalSeconds > 300 {
+		return fmt.Errorf("progress.message_interval_seconds must be between 15 and 300")
+	}
+	return nil
 }
 
 // AgentConfig holds configuration for a single agent.
@@ -37,7 +71,8 @@ type AgentConfig struct {
 func BuildAliasMap(agents map[string]AgentConfig) map[string]string {
 	// Built-in commands that cannot be overridden
 	reserved := map[string]bool{
-		"info": true, "help": true, "new": true, "clear": true, "cwd": true,
+		"status": true, "cancel": true, "info": true, "help": true,
+		"new": true, "clear": true, "cwd": true,
 	}
 
 	m := make(map[string]string)
@@ -67,7 +102,8 @@ func BuildAliasMap(agents map[string]AgentConfig) map[string]string {
 // DefaultConfig returns an empty configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Agents: make(map[string]AgentConfig),
+		Progress: defaultProgressConfig(),
+		Agents:   make(map[string]AgentConfig),
 	}
 }
 
@@ -103,6 +139,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Agents == nil {
 		cfg.Agents = make(map[string]AgentConfig)
+	}
+	if err := cfg.Progress.validate(); err != nil {
+		return nil, err
 	}
 
 	loadEnv(cfg)
