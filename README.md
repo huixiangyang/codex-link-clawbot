@@ -103,6 +103,8 @@ Controls also accept direct natural-language phrases, including `新建会话 �
 
 The main card always identifies its bridge version. The runtime center adds bridge uptime and API listen address alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
 
+The task-history center keeps the newest 20 Codex turns per bound owner. It shows safe first-line summaries, start/end times, duration, and `running`, `succeeded`, `failed`, `cancelled`, or restart-interrupted outcomes. It never stores answer bodies, terminal output, attachment names, or private paths.
+
 Successful create, switch, rename, archive, and restore results remain actionable: they link back to the current detail, list, or session center without requiring another `/`. Any ordinary text still leaves that short-lived result state and goes directly to Codex.
 
 When `scheduled_reports` is configured, the main menu adds a read-only scheduled-inspection center. It shows today's delivery state, the next run, timezone, project directory, systemd service, and health endpoint for each plan. Direct phrases such as `定时巡检` and `报告计划` open it without navigating the menu. Scheduling configuration and forced execution deliberately remain unavailable from WeChat.
@@ -132,6 +134,7 @@ curl -X POST http://127.0.0.1:18011/api/send \
 
 - Turns use `approvalPolicy: never` and `dangerFullAccess`. The bound owner can drive Codex on the host; bind only a trusted personal account.
 - `~/.weclaw/session-index.json` uses the strict v2 schema, atomic replacement, and mode `0600`.
+- `~/.weclaw/task-history.json` uses a strict schema, atomic replacement, mode `0600`, and a 20-record per-owner limit.
 - Global Codex thread results are intersected with the local ownership index before display.
 - Raw terminal output, commands, diffs, and environment variables are never forwarded as progress messages.
 - Visual rendering disables page networking and scripts, enforces a restrictive CSP, and deletes each protected HTML/profile/PNG directory after delivery.

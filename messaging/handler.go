@@ -29,6 +29,7 @@ type Handler struct {
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
 	reports             ScheduledReportProvider
+	activities          *ActivityStore
 	bridgeVersion       string
 	apiAddr             string
 	startedAt           time.Time
@@ -47,6 +48,10 @@ func (h *Handler) SetVisualRenderer(renderer controlVisualRenderer) {
 // SetScheduledReportProvider 注入只读巡检状态，不允许微信修改调度配置。
 func (h *Handler) SetScheduledReportProvider(provider ScheduledReportProvider) {
 	h.reports = provider
+}
+
+func (h *Handler) SetActivityStore(store *ActivityStore) {
+	h.activities = store
 }
 
 // SetBridgeInfo 设置部署身份；运行期间保持不变，可安全用于微信状态快照。
@@ -193,12 +198,16 @@ func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ili
 		if !ok {
 			return
 		}
+		activityID := h.startActivity(msg.FromUserID, taskActivitySummary(text, len(images), len(files)))
 		request, cleanup, prepareErr := h.prepareTaskInput(reporter, text, images, files)
 		if prepareErr != nil {
 			log.Printf("[handler] failed to prepare inbound attachments for %s: %v", msg.FromUserID, prepareErr)
 			if h.finishTask(msg.FromUserID, reporter) {
+				h.finishActivity(msg.FromUserID, activityID, ActivityFailed)
 				reply = fmt.Sprintf("附件处理失败：%v", prepareErr)
 				h.sendReplyWithMedia(ctx, client, msg, reply, "", clientID)
+			} else {
+				h.finishActivity(msg.FromUserID, activityID, ActivityCancelled)
 			}
 			return
 		}
@@ -208,11 +217,15 @@ func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ili
 		var err error
 		reply, err = h.chatWithCodex(reporter.task.context(), msg.FromUserID, request, reporter.Report)
 		if !h.finishTask(msg.FromUserID, reporter) {
+			h.finishActivity(msg.FromUserID, activityID, ActivityCancelled)
 			log.Printf("[handler] task cancelled for %s", msg.FromUserID)
 			return
 		}
 		if err != nil {
+			h.finishActivity(msg.FromUserID, activityID, ActivityFailed)
 			reply = fmt.Sprintf("Error: %v", err)
+		} else {
+			h.finishActivity(msg.FromUserID, activityID, ActivitySucceeded)
 		}
 	} else {
 		log.Printf("[handler] codex is unavailable for %s", msg.FromUserID)
@@ -220,6 +233,63 @@ func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ili
 	}
 
 	h.sendReplyWithMedia(ctx, client, msg, reply, artifactDir, clientID)
+}
+
+func (h *Handler) startActivity(userID, summary string) string {
+	if h.activities == nil {
+		return ""
+	}
+	id, err := h.activities.Start(userID, summary)
+	if err != nil {
+		log.Printf("[activity] failed to start task record: %v", err)
+		return ""
+	}
+	return id
+}
+
+func (h *Handler) finishActivity(userID, id string, status ActivityStatus) {
+	if h.activities == nil || id == "" {
+		return
+	}
+	if err := h.activities.Finish(userID, id, status); err != nil {
+		log.Printf("[activity] failed to finish task record: %v", err)
+	}
+}
+
+func taskActivitySummary(text string, imageCount, fileCount int) string {
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		text = text[:index]
+	}
+	text = normalizeSessionLine(text, 72)
+	text = sanitizeActivitySummary(text)
+	if text == "" {
+		switch {
+		case imageCount > 0 && fileCount > 0:
+			text = fmt.Sprintf("附件分析 · %d 张图片 · %d 个文件", imageCount, fileCount)
+		case imageCount > 0:
+			text = fmt.Sprintf("图片分析 · %d 张", imageCount)
+		case fileCount > 0:
+			text = fmt.Sprintf("文件分析 · %d 个", fileCount)
+		default:
+			text = "Codex 任务"
+		}
+		return text
+	}
+	if imageCount > 0 {
+		text += fmt.Sprintf(" · %d 张图片", imageCount)
+	}
+	if fileCount > 0 {
+		text += fmt.Sprintf(" · %d 个文件", fileCount)
+	}
+	return normalizeSessionLine(text, 120)
+}
+
+func sanitizeActivitySummary(summary string) string {
+	summary = activityURLPattern.ReplaceAllString(summary, "[链接]")
+	summary = activityWindowsPathPattern.ReplaceAllString(summary, "[本机路径]")
+	summary = activityUnixPathPattern.ReplaceAllString(summary, "[本机路径]")
+	return strings.Join(strings.Fields(summary), " ")
 }
 
 // sendReplyWithMedia 发送最终文字、远程图片和本次 turn 的专属交付物。

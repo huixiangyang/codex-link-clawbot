@@ -146,6 +146,8 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantWarning
 	case strings.HasPrefix(text, "运行中心"):
 		return visual.VariantSystem
+	case strings.HasPrefix(text, "任务记录") || strings.HasPrefix(text, "任务详情"):
+		return visual.VariantProgress
 	case strings.HasPrefix(text, "会话中心") || strings.HasPrefix(text, "当前会话\n") ||
 		strings.HasPrefix(text, "会话列表") || strings.HasPrefix(text, "会话详情") ||
 		strings.HasPrefix(text, "归档会话详情") || strings.HasPrefix(text, "选择会话") ||

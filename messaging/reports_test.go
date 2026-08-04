@@ -26,7 +26,7 @@ func TestScheduledReportsAppearInMainMenuAndPaginate(t *testing.T) {
 	handler.SetScheduledReportProvider(statuses)
 
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"5  定时巡检", "6  使用说明"} {
+	for _, want := range []string{"6  定时巡检", "7  使用说明"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
@@ -64,7 +64,7 @@ func TestScheduledReportsAppearInMainMenuAndPaginate(t *testing.T) {
 func TestScheduledReportsStayHiddenWithoutConfiguration(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	if strings.Contains(main, "定时巡检") || !strings.Contains(main, "5  使用说明") {
+	if strings.Contains(main, "定时巡检") || !strings.Contains(main, "6  使用说明") {
 		t.Fatalf("empty report menu = %q", main)
 	}
 	result := controlReply(t, handler, "owner-1", "定时巡检")

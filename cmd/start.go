@@ -114,6 +114,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize session manager: %w", err)
 	}
 	handler.SetSessionManager(sessionManager)
+	activityStore, err := messaging.NewActivityStore("")
+	if err != nil {
+		return fmt.Errorf("initialize task history: %w", err)
+	}
+	handler.SetActivityStore(activityStore)
 
 	handler.SetProgressConfig(messaging.ProgressConfig{
 		Enabled:           cfg.Progress.Enabled,

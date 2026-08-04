@@ -185,7 +185,7 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"WeClaw", "版本：dev", "1  会话", "3  运行中心", "5  使用说明", "回复数字"} {
+	for _, want := range []string{"WeClaw", "版本：dev", "1  会话", "3  任务记录", "4  运行中心", "6  使用说明", "回复数字"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}

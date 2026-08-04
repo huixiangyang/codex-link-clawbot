@@ -56,6 +56,8 @@ const (
 	actionTaskStatus          controlAction = "task_status"
 	actionConfirmCancelTask   controlAction = "confirm_cancel_task"
 	actionCancelTask          controlAction = "cancel_task"
+	actionActivityPage        controlAction = "activity_page"
+	actionActivityDetail      controlAction = "activity_detail"
 	actionRuntimeInfo         controlAction = "runtime_info"
 	actionPromptWorkingDir    controlAction = "prompt_working_dir"
 	actionScheduledReports    controlAction = "scheduled_reports"
@@ -124,6 +126,9 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 
 	if isOneOf(text, "状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了") {
 		return h.openTaskStatus(userID), true
+	}
+	if isOneOf(text, "任务记录", "最近任务", "任务历史", "历史任务") {
+		return h.openActivities(userID, 1), true
 	}
 	if isOneOf(text, "运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息") {
 		return h.openRuntimeInfo(userID), true
@@ -367,6 +372,10 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.confirmCancelTask(userID)
 	case actionCancelTask:
 		return h.cancelActiveTask(userID)
+	case actionActivityPage:
+		return h.openActivities(userID, option.Page)
+	case actionActivityDetail:
+		return h.openActivityDetail(userID, option.Value, option.Page)
 	case actionRuntimeInfo:
 		return h.openRuntimeInfo(userID)
 	case actionPromptWorkingDir:
@@ -399,6 +408,7 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 	options := []controlOption{
 		{Label: "会话", Action: actionSessionMenu},
 		{Label: "任务状态", Action: actionTaskStatus},
+		{Label: "任务记录", Action: actionActivityPage, Page: 1},
 		{Label: "运行中心", Action: actionRuntimeInfo},
 		{Label: "工作目录", Action: actionPromptWorkingDir},
 	}
@@ -412,6 +422,9 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		"版本：" + h.bridgeVersion,
 		"会话：" + currentName,
 		"状态：" + taskState,
+	}
+	if h.activities != nil {
+		lines = append(lines, fmt.Sprintf("记录：%d 条", len(h.activities.List(userID))))
 	}
 	if len(statuses) > 0 {
 		lines = append(lines, fmt.Sprintf("巡检：%d 项", len(statuses)))
@@ -429,6 +442,7 @@ func (h *Handler) openTaskStatus(userID string) string {
 	} else {
 		options = append(options, controlOption{Label: "运行中心", Action: actionRuntimeInfo})
 	}
+	options = append(options, controlOption{Label: "任务记录", Action: actionActivityPage, Page: 1})
 	prompt := h.buildTaskStatus(userID) + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
 	return prompt + "\n\n回复数字操作，0 返回。"
@@ -988,7 +1002,7 @@ func controlNavigationOption(text string, options []controlOption) (controlOptio
 		return controlOption{}, false
 	}
 	for _, option := range options {
-		if option.Action != actionSessionPage && option.Action != actionScheduledReports {
+		if option.Action != actionSessionPage && option.Action != actionScheduledReports && option.Action != actionActivityPage {
 			continue
 		}
 		if forward && strings.HasPrefix(option.Label, "下一页") {

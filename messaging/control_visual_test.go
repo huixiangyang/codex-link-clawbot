@@ -115,6 +115,20 @@ func TestControlCardFromBrowsableSessionDetail(t *testing.T) {
 	}
 }
 
+func TestControlCardFromTaskHistory(t *testing.T) {
+	reply := "任务记录\n\n页码：1 / 2\n记录：8\n完成：6\n异常：2\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
+	card := controlCardFromText(reply)
+	if card.Variant != visual.VariantProgress || card.Title != "任务记录" {
+		t.Fatalf("activity card identity = %#v", card)
+	}
+	if len(card.Facts) != 4 || card.Facts[3].Label != "异常" {
+		t.Fatalf("activity card facts = %#v", card.Facts)
+	}
+	if len(card.Options) != 3 || card.Options[2].Label != "下一页 · 2/2" {
+		t.Fatalf("activity card options = %#v", card.Options)
+	}
+}
+
 func TestHandleMessageSendsVisualControlCardAndCaption(t *testing.T) {
 	imagePath := filepath.Join(t.TempDir(), "card.png")
 	if err := os.WriteFile(imagePath, []byte("test-png"), 0o600); err != nil {
