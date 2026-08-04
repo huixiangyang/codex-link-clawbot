@@ -18,6 +18,7 @@ import (
 	"github.com/fastclaw-ai/weclaw/ilink"
 	"github.com/fastclaw-ai/weclaw/messaging"
 	"github.com/fastclaw-ai/weclaw/reporting"
+	"github.com/fastclaw-ai/weclaw/session"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
@@ -115,6 +116,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return config.Save(cfg)
 		},
 	)
+	sessionManager, err := session.NewManager("")
+	if err != nil {
+		return fmt.Errorf("initialize session manager: %w", err)
+	}
+	handler.SetSessionManager(sessionManager)
 
 	// Populate agent metas for /status
 	var metas []messaging.AgentMeta

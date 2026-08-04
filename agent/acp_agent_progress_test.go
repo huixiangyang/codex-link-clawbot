@@ -61,10 +61,11 @@ func TestHandleCodexActivityDoesNotExposeRawOutput(t *testing.T) {
 
 func TestChatCodexAppServerSeparatesCommentaryAndFinalAnswer(t *testing.T) {
 	a := &ACPAgent{
-		started:  true,
-		protocol: protocolCodexAppServer,
-		threads:  map[string]string{"user-1": "thread-1"},
-		turnCh:   make(map[string]chan *codexTurnEvent),
+		started:       true,
+		protocol:      protocolCodexAppServer,
+		loadedThreads: map[string]bool{"thread-1": true},
+		threadStatus:  make(map[string]ThreadStatus),
+		turnCh:        make(map[string]chan *codexTurnEvent),
 	}
 	a.rpcCall = func(_ context.Context, method string, _ interface{}) (json.RawMessage, error) {
 		if method != "turn/start" {
@@ -96,7 +97,7 @@ func TestChatCodexAppServerSeparatesCommentaryAndFinalAnswer(t *testing.T) {
 	}
 
 	var progress []ProgressEvent
-	reply, err := a.ChatWithProgress(context.Background(), "user-1", ChatRequest{Text: "开始改造"}, func(event ProgressEvent) {
+	reply, err := a.ChatThreadWithProgress(context.Background(), "thread-1", ChatRequest{Text: "开始改造"}, func(event ProgressEvent) {
 		progress = append(progress, event)
 	})
 	if err != nil {
@@ -112,10 +113,11 @@ func TestChatCodexAppServerSeparatesCommentaryAndFinalAnswer(t *testing.T) {
 
 func TestChatCodexAppServerSendsTextAndLocalImages(t *testing.T) {
 	a := &ACPAgent{
-		started:  true,
-		protocol: protocolCodexAppServer,
-		threads:  map[string]string{"user-1": "thread-1"},
-		turnCh:   make(map[string]chan *codexTurnEvent),
+		started:       true,
+		protocol:      protocolCodexAppServer,
+		loadedThreads: map[string]bool{"thread-1": true},
+		threadStatus:  make(map[string]ThreadStatus),
+		turnCh:        make(map[string]chan *codexTurnEvent),
 	}
 	a.rpcCall = func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
 		if method != "turn/start" {
@@ -145,7 +147,7 @@ func TestChatCodexAppServerSendsTextAndLocalImages(t *testing.T) {
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
 	}
 
-	reply, err := a.Chat(context.Background(), "user-1", ChatRequest{
+	reply, err := a.ChatThread(context.Background(), "thread-1", ChatRequest{
 		Text:        "分析这两张截图",
 		LocalImages: []string{"/tmp/one.png", "/tmp/two.jpg"},
 	})
@@ -187,10 +189,11 @@ func TestLegacyACPRejectsLocalImages(t *testing.T) {
 
 func TestChatCodexAppServerInterruptsCancelledTurn(t *testing.T) {
 	a := &ACPAgent{
-		started:  true,
-		protocol: protocolCodexAppServer,
-		threads:  map[string]string{"user-1": "thread-1"},
-		turnCh:   make(map[string]chan *codexTurnEvent),
+		started:       true,
+		protocol:      protocolCodexAppServer,
+		loadedThreads: map[string]bool{"thread-1": true},
+		threadStatus:  make(map[string]ThreadStatus),
+		turnCh:        make(map[string]chan *codexTurnEvent),
 	}
 	interrupted := false
 	a.rpcCall = func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
@@ -212,7 +215,7 @@ func TestChatCodexAppServerInterruptsCancelledTurn(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := a.ChatWithProgress(ctx, "user-1", ChatRequest{Text: "执行任务"}, nil)
+	_, err := a.ChatThreadWithProgress(ctx, "thread-1", ChatRequest{Text: "执行任务"}, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("ChatWithProgress() error = %v, want context canceled", err)
 	}

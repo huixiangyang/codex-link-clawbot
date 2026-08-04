@@ -29,10 +29,6 @@ func (a *imageCaptureAgent) Chat(_ context.Context, _ string, request agent.Chat
 	return "已收到图片", nil
 }
 
-func (a *imageCaptureAgent) ResetSession(context.Context, string) (string, error) {
-	return "", nil
-}
-
 func (a *imageCaptureAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{Name: "capture", Type: "test"}
 }

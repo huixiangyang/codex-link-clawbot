@@ -66,10 +66,17 @@ docker run -it -v ~/.weclaw:/root/.weclaw ghcr.io/fastclaw-ai/weclaw start
 | `/cc 解释一下这段代码`  | 通过别名发送             |
 | `/claude`               | 切换默认 Agent 为 Claude |
 | `/cwd /path/to/project` | 切换工作目录             |
-| `/new`                  | 开始新对话（清除会话）   |
 | `/status`               | 查看当前任务状态         |
 | `/cancel`               | 取消当前任务             |
 | `/info`                 | 查看当前 Agent 信息      |
+| `/sessions [页码]`      | 查看当前用户的会话列表   |
+| `/session`              | 查看当前 Codex 会话      |
+| `/session new [名称]`   | 创建并切换到新会话       |
+| `/session use <短编号>` | 切换会话                 |
+| `/session rename <名称>` | 重命名当前会话          |
+| `/session archive [短编号]` | 归档会话             |
+| `/sessions archived [页码]` | 查看已归档会话       |
+| `/session restore <短编号>` | 恢复已归档会话       |
 | `/help`                 | 查看帮助信息             |
 
 ### 快捷别名
@@ -100,6 +107,16 @@ docker run -it -v ~/.weclaw:/root/.weclaw ghcr.io/fastclaw-ai/weclaw start
 然后 `/ai 你好` 或 `/c 你好` 就会路由到 claude。
 
 切换默认 Agent 会写入配置文件，重启后仍然生效。
+
+### Codex 会话管理
+
+Codex App Server 会话现在使用显式、持久化的 thread。WeClaw 只在 `~/.weclaw/session-index.json` 保存微信用户与 thread 的归属关系以及当前选择；名称、预览、工作目录、时间和运行状态仍以 Codex 为准。索引使用私有文件权限，即使提供完整 thread ID，其他微信用户也不能打开不属于自己的会话。
+
+当前会话在服务重启后继续生效。列表使用 thread ID 末尾生成的稳定 8 位短编号，并展示执行中、等待确认、空闲、未加载或异常状态。任务运行时仍可读取 `/session` 和 `/sessions`；创建、切换、重命名、归档和恢复会被忙碌保护拦截，直到当前 turn 结束。
+
+旧 `/new` 和 `/clear` 已删除，统一使用 `/session new`。旧版内存映射不会自动兼容导入；Codex 历史仍保留在磁盘，但只有明确写入当前微信用户归属索引后才会展示。
+
+状态模型、命令行为、重启规则和安全边界见 [Codex 会话管理](docs/session-management.md)。
 
 ### 长任务进度与并发保护
 

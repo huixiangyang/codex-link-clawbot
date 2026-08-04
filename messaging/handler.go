@@ -2,16 +2,19 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fastclaw-ai/weclaw/agent"
 	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/fastclaw-ai/weclaw/session"
 )
 
 // AgentFactory creates an agent by config name. Returns nil if the name is unknown.
@@ -43,6 +46,12 @@ type Handler struct {
 	seenMsgs      sync.Map // map[int64]time.Time — dedup by message_id
 	activeTasks   sync.Map // map[userID]*activeTask — 同一用户只允许一个活动任务
 	progress      ProgressConfig
+	sessions      *session.Manager
+}
+
+// SetSessionManager 注入显式 Codex 会话管理器。
+func (h *Handler) SetSessionManager(manager *session.Manager) {
+	h.sessions = manager
 }
 
 // NewHandler creates a new message handler.
@@ -153,6 +162,15 @@ func (h *Handler) getDefaultAgent() agent.Agent {
 		return nil
 	}
 	return h.agents[h.defaultName]
+}
+
+func (h *Handler) getDefaultAgentEntry() (string, agent.Agent) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.defaultName == "" {
+		return "", nil
+	}
+	return h.defaultName, h.agents[h.defaultName]
 }
 
 // isKnownAgent checks if a name corresponds to a configured agent.
@@ -346,8 +364,22 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		}
 		return
 	}
+	if trimmed == "/session" || trimmed == "/sessions" || strings.HasPrefix(trimmed, "/sessions ") {
+		reply := h.handleSessionReadCommand(ctx, msg.FromUserID, trimmed)
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send session result to %s: %v", msg.FromUserID, err)
+		}
+		return
+	}
+	if trimmed == "/new" || trimmed == "/clear" {
+		reply := "该命令已删除。请使用 /session new 创建新会话。"
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send removed-command notice to %s: %v", msg.FromUserID, err)
+		}
+		return
+	}
 
-	// 任务运行期间普通消息直接返回快照，避免 /new 等命令并发改写线程状态。
+	// 任务运行期间普通消息直接返回快照，避免切换、归档等命令并发改写线程状态。
 	if active, ok := h.activeTasks.Load(msg.FromUserID); ok {
 		h.sendActiveTaskStatus(ctx, client, msg, active.(*activeTask))
 		return
@@ -374,10 +406,10 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	}
 
 	// 会改变会话状态的内置命令只允许在空闲时执行。
-	if trimmed == "/new" || trimmed == "/clear" {
-		reply := h.resetDefaultSession(ctx, msg.FromUserID)
+	if strings.HasPrefix(trimmed, "/session ") {
+		reply := h.handleSessionMutationCommand(ctx, msg.FromUserID, trimmed)
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+			log.Printf("[handler] failed to send session mutation result to %s: %v", msg.FromUserID, err)
 		}
 		return
 	} else if strings.HasPrefix(trimmed, "/cwd") {
@@ -440,7 +472,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 
 // sendToDefaultAgent sends the message to the default agent and replies.
 func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) {
-	ag := h.getDefaultAgent()
+	agentName, ag := h.getDefaultAgentEntry()
 	var reply, artifactDir string
 	if ag != nil {
 		reporter, ok := h.beginTask(ctx, client, msg)
@@ -460,7 +492,7 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, 
 		artifactDir = request.ArtifactDir
 
 		var err error
-		reply, err = h.chatWithAgent(reporter.task.context(), ag, msg.FromUserID, request, reporter.Report)
+		reply, err = h.chatWithAgent(reporter.task.context(), agentName, ag, msg.FromUserID, request, reporter.Report)
 		if !h.finishTask(msg.FromUserID, reporter) {
 			log.Printf("[handler] task cancelled for %s", msg.FromUserID)
 			return
@@ -502,7 +534,7 @@ func (h *Handler) sendToNamedAgent(ctx context.Context, client *ilink.Client, ms
 	}
 	defer cleanup()
 
-	reply, err := h.chatWithAgent(reporter.task.context(), ag, msg.FromUserID, request, reporter.Report)
+	reply, err := h.chatWithAgent(reporter.task.context(), name, ag, msg.FromUserID, request, reporter.Report)
 	if !h.finishTask(msg.FromUserID, reporter) {
 		log.Printf("[handler] task cancelled for %s", msg.FromUserID)
 		return
@@ -551,7 +583,7 @@ func (h *Handler) broadcastToAgents(ctx context.Context, client *ilink.Client, m
 				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err), artifactDir: turnRequest.ArtifactDir}
 				return
 			}
-			reply, err := h.chatWithAgent(reporter.task.context(), ag, msg.FromUserID, turnRequest, reporter.Report)
+			reply, err := h.chatWithAgent(reporter.task.context(), n, ag, msg.FromUserID, turnRequest, reporter.Report)
 			if err != nil {
 				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err), artifactDir: turnRequest.ArtifactDir}
 				return
@@ -605,14 +637,30 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 }
 
 // chatWithAgent sends a message to an agent and returns the reply, with logging.
-func (h *Handler) chatWithAgent(ctx context.Context, ag agent.Agent, userID string, request agent.ChatRequest, onProgress agent.ProgressHandler) (string, error) {
+func (h *Handler) chatWithAgent(ctx context.Context, agentName string, ag agent.Agent, userID string, request agent.ChatRequest, onProgress agent.ProgressHandler) (string, error) {
 	info := ag.Info()
 	log.Printf("[handler] dispatching to agent (%s) for %s", info, userID)
 
 	start := time.Now()
 	var reply string
 	var err error
-	if progressAgent, ok := ag.(agent.ProgressAgent); ok {
+	if threadAgent, ok := ag.(agent.ThreadAgent); ok {
+		if h.sessions == nil {
+			return "", fmt.Errorf("session manager is not initialized")
+		}
+		thread, sessionErr := h.sessions.EnsureActive(ctx, userID, agentName, threadAgent)
+		if sessionErr != nil {
+			return "", sessionErr
+		}
+		if progressAgent, supportsProgress := ag.(agent.ThreadProgressAgent); supportsProgress {
+			reply, err = progressAgent.ChatThreadWithProgress(ctx, thread.ID, request, onProgress)
+		} else {
+			reply, err = threadAgent.ChatThread(ctx, thread.ID, request)
+		}
+		if touchErr := h.sessions.Touch(userID, agentName, thread.ID, time.Now().Unix()); touchErr != nil {
+			log.Printf("[handler] failed to persist session recency (agent=%s, thread=%s): %v", agentName, thread.ID, touchErr)
+		}
+	} else if progressAgent, ok := ag.(agent.ProgressAgent); ok {
 		reply, err = progressAgent.ChatWithProgress(ctx, userID, request, onProgress)
 	} else {
 		reply, err = ag.Chat(ctx, userID, request)
@@ -688,6 +736,260 @@ func (h *Handler) buildTaskStatus(userID string) string {
 	return "任务状态：空闲\n" + h.buildStatus()
 }
 
+func (h *Handler) sessionContext() (string, agent.ThreadAgent, error) {
+	if h.sessions == nil {
+		return "", nil, fmt.Errorf("会话管理器未初始化")
+	}
+	agentName, ag := h.getDefaultAgentEntry()
+	if ag == nil {
+		return "", nil, fmt.Errorf("当前没有可用的 Agent")
+	}
+	threadAgent, ok := ag.(agent.ThreadAgent)
+	if !ok {
+		return "", nil, fmt.Errorf("当前 Agent 不支持 Codex 会话管理")
+	}
+	return agentName, threadAgent, nil
+}
+
+func (h *Handler) handleSessionReadCommand(ctx context.Context, userID, command string) string {
+	agentName, threadAgent, err := h.sessionContext()
+	if err != nil {
+		return err.Error()
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 1 && fields[0] == "/session" {
+		current, currentErr := h.sessions.Current(ctx, userID, agentName, threadAgent)
+		if currentErr != nil {
+			if errors.Is(currentErr, session.ErrNoActive) {
+				return "当前没有会话。\n创建：/session new [名称]"
+			}
+			return formatSessionError(currentErr)
+		}
+		return formatSessionDetail(current)
+	}
+	if len(fields) == 0 || fields[0] != "/sessions" {
+		return sessionCommandUsage()
+	}
+
+	archived := false
+	pageNumber := 1
+	args := fields[1:]
+	if len(args) > 0 && args[0] == "archived" {
+		archived = true
+		args = args[1:]
+	}
+	if len(args) > 1 {
+		return "用法：/sessions [页码] 或 /sessions archived [页码]"
+	}
+	if len(args) == 1 {
+		parsed, parseErr := strconv.Atoi(args[0])
+		if parseErr != nil || parsed <= 0 {
+			return "页码必须是正整数。"
+		}
+		pageNumber = parsed
+	}
+	page, listErr := h.sessions.List(ctx, userID, agentName, threadAgent, archived, pageNumber, session.DefaultPageSize)
+	if listErr != nil {
+		return formatSessionError(listErr)
+	}
+	return formatSessionPage(page, archived)
+}
+
+func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, command string) string {
+	agentName, threadAgent, err := h.sessionContext()
+	if err != nil {
+		return err.Error()
+	}
+	fields := strings.Fields(command)
+	if len(fields) < 2 || fields[0] != "/session" {
+		return sessionCommandUsage()
+	}
+	subcommand := fields[1]
+	argument := strings.TrimSpace(strings.TrimPrefix(command, "/session "+subcommand))
+
+	switch subcommand {
+	case "new":
+		thread, createErr := h.sessions.New(ctx, userID, agentName, threadAgent, argument)
+		if createErr != nil {
+			return formatSessionError(createErr)
+		}
+		return "已创建并切换到新会话。\n" + formatThreadIdentity(thread)
+	case "use":
+		if argument == "" || len(strings.Fields(argument)) != 1 {
+			return "用法：/session use <短编号>"
+		}
+		thread, useErr := h.sessions.Use(ctx, userID, agentName, threadAgent, argument)
+		if useErr != nil {
+			return formatSessionError(useErr)
+		}
+		return "已切换会话。\n" + formatThreadIdentity(thread)
+	case "rename":
+		if argument == "" {
+			return "用法：/session rename <名称>"
+		}
+		thread, renameErr := h.sessions.Rename(ctx, userID, agentName, threadAgent, argument)
+		if renameErr != nil {
+			return formatSessionError(renameErr)
+		}
+		return "会话已重命名。\n" + formatThreadIdentity(thread)
+	case "archive":
+		if len(strings.Fields(argument)) > 1 {
+			return "用法：/session archive [短编号]"
+		}
+		nextActive, archiveErr := h.sessions.Archive(ctx, userID, agentName, threadAgent, argument)
+		if archiveErr != nil {
+			return formatSessionError(archiveErr)
+		}
+		if nextActive == "" {
+			return "会话已归档。\n当前没有可用会话；下一条普通消息会创建新会话。"
+		}
+		return fmt.Sprintf("会话已归档。\n已切换到：%s", session.ShortCode(nextActive))
+	case "restore":
+		if argument == "" || len(strings.Fields(argument)) != 1 {
+			return "用法：/session restore <短编号>"
+		}
+		thread, restoreErr := h.sessions.Restore(ctx, userID, agentName, threadAgent, argument)
+		if restoreErr != nil {
+			return formatSessionError(restoreErr)
+		}
+		return "会话已恢复。\n" + formatThreadIdentity(thread)
+	default:
+		return sessionCommandUsage()
+	}
+}
+
+func formatSessionPage(page session.Page, archived bool) string {
+	kind := "会话"
+	if archived {
+		kind = "已归档会话"
+	}
+	var lines []string
+	lines = append(lines, fmt.Sprintf("%s %d/%d，共 %d 个", kind, page.Number, page.TotalPages, page.Total))
+	if len(page.Items) == 0 {
+		lines = append(lines, "", "暂无会话。")
+		if !archived {
+			lines = append(lines, "创建：/session new [名称]")
+		}
+		return strings.Join(lines, "\n")
+	}
+	for _, item := range page.Items {
+		marker := "    "
+		if item.Current {
+			marker = "当前"
+		}
+		title := threadTitle(item.Info)
+		status := formatThreadStatus(item.Info.Status)
+		if item.Unavailable {
+			status = "无法读取"
+		}
+		lines = append(lines, "", fmt.Sprintf("%s  %s  %s", marker, session.ShortCode(item.Info.ID), status), title)
+		if item.Info.Cwd != "" {
+			lines = append(lines, "目录："+item.Info.Cwd)
+		}
+		if item.Info.UpdatedAt > 0 {
+			lines = append(lines, "更新："+formatSessionTime(item.Info.UpdatedAt))
+		}
+	}
+	if archived {
+		lines = append(lines, "", "恢复：/session restore <短编号>")
+	} else {
+		lines = append(lines, "", "切换：/session use <短编号>")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatSessionDetail(thread session.ManagedThread) string {
+	lines := []string{
+		"当前会话",
+		"名称：" + threadTitle(thread.Info),
+		"短编号：" + session.ShortCode(thread.Info.ID),
+		"完整编号：" + thread.Info.ID,
+		"状态：" + formatThreadStatus(thread.Info.Status),
+	}
+	if thread.Info.Cwd != "" {
+		lines = append(lines, "目录："+thread.Info.Cwd)
+	}
+	if thread.Info.CreatedAt > 0 {
+		lines = append(lines, "创建："+formatSessionTime(thread.Info.CreatedAt))
+	}
+	if thread.Info.UpdatedAt > 0 {
+		lines = append(lines, "更新："+formatSessionTime(thread.Info.UpdatedAt))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatThreadIdentity(thread agent.ThreadInfo) string {
+	return fmt.Sprintf("名称：%s\n短编号：%s\n状态：%s", threadTitle(thread), session.ShortCode(thread.ID), formatThreadStatus(thread.Status))
+}
+
+func threadTitle(thread agent.ThreadInfo) string {
+	if name := strings.TrimSpace(thread.Name); name != "" {
+		return normalizeSessionLine(name, 60)
+	}
+	if preview := strings.TrimSpace(thread.Preview); preview != "" {
+		return normalizeSessionLine(preview, 60)
+	}
+	return "未命名会话"
+}
+
+func normalizeSessionLine(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "..."
+}
+
+func formatThreadStatus(status agent.ThreadStatus) string {
+	switch status.Type {
+	case "active":
+		for _, flag := range status.ActiveFlags {
+			if flag == "waitingOnApproval" {
+				return "等待确认"
+			}
+		}
+		return "执行中"
+	case "idle":
+		return "空闲"
+	case "notLoaded", "":
+		return "未加载"
+	case "systemError":
+		return "异常"
+	default:
+		return status.Type
+	}
+}
+
+func formatSessionTime(timestamp int64) string {
+	return time.Unix(timestamp, 0).Local().Format("2006-01-02 15:04")
+}
+
+func formatSessionError(err error) string {
+	switch {
+	case errors.Is(err, session.ErrNoActive):
+		return "当前没有会话。"
+	case errors.Is(err, session.ErrNotOwned):
+		return "没有找到属于当前微信用户的会话。"
+	case errors.Is(err, session.ErrAmbiguousCode):
+		return "短编号不唯一，请输入更长的编号。"
+	default:
+		return fmt.Sprintf("会话操作失败：%v", err)
+	}
+}
+
+func sessionCommandUsage() string {
+	return `会话命令：
+/sessions [页码]
+/session
+/session new [名称]
+/session use <短编号>
+/session rename <名称>
+/session archive [短编号]
+/sessions archived [页码]
+/session restore <短编号>`
+}
+
 // switchDefault switches the default agent. Starts it on demand if needed.
 // The change is persisted to config file.
 func (h *Handler) switchDefault(ctx context.Context, name string) string {
@@ -715,24 +1017,6 @@ func (h *Handler) switchDefault(ctx context.Context, name string) string {
 	info := ag.Info()
 	log.Printf("[handler] switched default agent: %s -> %s (%s)", old, name, info)
 	return fmt.Sprintf("switch to %s", name)
-}
-
-// resetDefaultSession resets the session for the given userID on the default agent.
-func (h *Handler) resetDefaultSession(ctx context.Context, userID string) string {
-	ag := h.getDefaultAgent()
-	if ag == nil {
-		return "No agent running."
-	}
-	name := ag.Info().Name
-	sessionID, err := ag.ResetSession(ctx, userID)
-	if err != nil {
-		log.Printf("[handler] reset session failed for %s: %v", userID, err)
-		return fmt.Sprintf("Failed to reset session: %v", err)
-	}
-	if sessionID != "" {
-		return fmt.Sprintf("已创建新的%s会话\n%s", name, sessionID)
-	}
-	return fmt.Sprintf("已创建新的%s会话", name)
 }
 
 // handleCwd handles the /cwd command. It updates the working directory for all running agents.
@@ -823,7 +1107,14 @@ func buildHelpText() string {
 /status - 查看当前任务状态
 /cancel - 取消当前任务
 /info - 查看当前 Agent 信息
-/new 或 /clear - 开始新会话
+/sessions [页码] - 查看会话列表
+/session - 查看当前会话
+/session new [名称] - 创建会话
+/session use 短编号 - 切换会话
+/session rename 名称 - 重命名当前会话
+/session archive [短编号] - 归档会话
+/sessions archived [页码] - 查看已归档会话
+/session restore 短编号 - 恢复会话
 /cwd /path - 切换工作目录
 /agent - 切换默认 Agent
 /agent 消息 - 发送给指定 Agent

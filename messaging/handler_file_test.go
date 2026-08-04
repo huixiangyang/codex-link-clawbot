@@ -33,7 +33,6 @@ func (a *fileCaptureAgent) Chat(_ context.Context, _ string, request agent.ChatR
 	return "文件检查完成", nil
 }
 
-func (a *fileCaptureAgent) ResetSession(context.Context, string) (string, error) { return "", nil }
 func (a *fileCaptureAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{Name: "capture", Type: "test"}
 }
@@ -98,7 +97,6 @@ func (a *artifactAgent) Chat(_ context.Context, _ string, request agent.ChatRequ
 	return "补丁已经生成。", nil
 }
 
-func (a *artifactAgent) ResetSession(context.Context, string) (string, error) { return "", nil }
 func (a *artifactAgent) Info() agent.AgentInfo {
 	return agent.AgentInfo{Name: "artifact", Type: "test"}
 }

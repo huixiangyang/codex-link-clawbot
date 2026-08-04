@@ -73,15 +73,6 @@ func (a *HTTPAgent) Info() AgentInfo {
 // SetCwd is a no-op for HTTP agents (they have no working directory).
 func (a *HTTPAgent) SetCwd(_ string) {}
 
-// ResetSession clears the conversation history for the given conversationID.
-// HTTP agents have no server-side session ID, so an empty string is returned.
-func (a *HTTPAgent) ResetSession(_ context.Context, conversationID string) (string, error) {
-	a.mu.Lock()
-	delete(a.history, conversationID)
-	a.mu.Unlock()
-	return "", nil
-}
-
 // Chat sends structured input to the OpenAI-compatible API and returns the response.
 func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error) {
 	if len(request.LocalImages) > 0 {

@@ -65,7 +65,7 @@ write_status "服务已恢复，新 PID=${new_pid}，版本=${version}"
 
 account_file="$(find /root/.weclaw/accounts -maxdepth 1 -type f -name '*-im-bot.json' -print -quit)"
 owner_user_id="$(jq -r '.ilink_user_id' "${account_file}")"
-payload="$(jq -nc --arg to "${owner_user_id}" --arg text '微信桥接已切换到进度版，服务与主动发送链路均已恢复。下一条耗时任务将显示阶段进度。' '{to:$to,text:$text}')"
+payload="$(jq -nc --arg to "${owner_user_id}" --arg text '微信桥接已完成会话管理升级。会话列表、切换、状态、归档与重启恢复已经启用，服务和主动发送链路正常。发送 /sessions 开始使用。' '{to:$to,text:$text}')"
 
 curl --silent --fail --max-time 15 \
   --header 'Content-Type: application/json' \

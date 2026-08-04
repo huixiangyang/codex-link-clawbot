@@ -31,7 +31,8 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 
 - `/status`：随时返回任务状态、已运行时间和当前阶段；空闲时返回默认 Agent 信息。
 - `/cancel`：取消当前任务。Codex App Server 模式会使用当前 `threadId` 和 `turnId` 调用 `turn/interrupt`；CLI 与 HTTP 模式通过任务上下文终止当前进程或请求。
-- `/info` 与 `/help`：任务运行期间仍可查询；`/new`、`/cwd` 和 Agent 切换等状态变更命令会继续被忙碌保护拦截。
+- `/info`、`/help`、`/session` 与 `/sessions`：任务运行期间仍可查询。
+- `/session new|use|rename|archive|restore`、`/cwd` 和 Agent 切换等状态变更命令会继续被忙碌保护拦截。
 
 取消请求发出后，原任务的文字进度、最终答案和迟到错误都不再推送。任务完成与取消通过同一状态锁原子决胜，避免“已确认取消”后仍发送最终答案；重复发送 `/cancel` 只返回“正在取消”，不会重复提交中断。
 
@@ -72,7 +73,7 @@ systemd 使用 `Restart=always` 自动拉起桥接器，标准输出和错误继
 验证命令：
 
 ```bash
-go test -race ./agent ./messaging ./config ./reporting
+go test -race ./agent ./messaging ./session ./config ./reporting
 go test ./...
 go vet ./...
 systemctl --user status weclaw.service

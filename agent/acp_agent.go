@@ -26,14 +26,15 @@ type ACPAgent struct {
 	env          map[string]string
 	protocol     string // "legacy_acp" or "codex_app_server"
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	scanner  *bufio.Scanner
-	started  bool
-	nextID   atomic.Int64
-	sessions map[string]string // conversationID -> sessionID (legacy ACP)
-	threads  map[string]string // conversationID -> threadID (codex app-server)
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	scanner       *bufio.Scanner
+	started       bool
+	nextID        atomic.Int64
+	sessions      map[string]string // conversationID -> sessionID (legacy ACP)
+	loadedThreads map[string]bool   // 当前 app-server 进程已加载的显式线程
+	threadStatus  map[string]ThreadStatus
 
 	// pending tracks in-flight JSON-RPC requests
 	pendingMu sync.Mutex
@@ -201,18 +202,19 @@ func NewACPAgent(cfg ACPAgentConfig) *ACPAgent {
 	}
 	protocol := detectACPProtocol(cfg.Command, cfg.Args)
 	return &ACPAgent{
-		command:      cfg.Command,
-		args:         cfg.Args,
-		model:        cfg.Model,
-		systemPrompt: cfg.SystemPrompt,
-		cwd:          cfg.Cwd,
-		env:          cfg.Env,
-		protocol:     protocol,
-		sessions:     make(map[string]string),
-		threads:      make(map[string]string),
-		pending:      make(map[int64]chan *rpcResponse),
-		notifyCh:     make(map[string]chan *sessionUpdate),
-		turnCh:       make(map[string]chan *codexTurnEvent),
+		command:       cfg.Command,
+		args:          cfg.Args,
+		model:         cfg.Model,
+		systemPrompt:  cfg.SystemPrompt,
+		cwd:           cfg.Cwd,
+		env:           cfg.Env,
+		protocol:      protocol,
+		sessions:      make(map[string]string),
+		loadedThreads: make(map[string]bool),
+		threadStatus:  make(map[string]ThreadStatus),
+		pending:       make(map[int64]chan *rpcResponse),
+		notifyCh:      make(map[string]chan *sessionUpdate),
+		turnCh:        make(map[string]chan *codexTurnEvent),
 	}
 }
 
@@ -326,6 +328,8 @@ func (a *ACPAgent) Stop() {
 	a.cmd.Process.Kill()
 	a.cmd.Wait()
 	a.started = false
+	a.loadedThreads = make(map[string]bool)
+	a.threadStatus = make(map[string]ThreadStatus)
 }
 
 // SetCwd changes the working directory for subsequent sessions.
@@ -333,34 +337,6 @@ func (a *ACPAgent) SetCwd(cwd string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.cwd = cwd
-}
-
-// ResetSession clears the existing session for the given conversationID and
-// immediately creates a new one, returning the new session ID.
-func (a *ACPAgent) ResetSession(ctx context.Context, conversationID string) (string, error) {
-	if a.protocol == protocolCodexAppServer {
-		a.mu.Lock()
-		delete(a.threads, conversationID)
-		a.mu.Unlock()
-		log.Printf("[acp] thread reset (conversation=%s), creating new thread", conversationID)
-
-		threadID, _, err := a.getOrCreateThread(ctx, conversationID)
-		if err != nil {
-			return "", fmt.Errorf("create new thread: %w", err)
-		}
-		return threadID, nil
-	}
-
-	a.mu.Lock()
-	delete(a.sessions, conversationID)
-	a.mu.Unlock()
-	log.Printf("[acp] session reset (conversation=%s), creating new session", conversationID)
-
-	sessionID, _, err := a.getOrCreateSession(ctx, conversationID)
-	if err != nil {
-		return "", fmt.Errorf("create new session: %w", err)
-	}
-	return sessionID, nil
 }
 
 // Chat sends structured input and returns the final response.
@@ -382,7 +358,7 @@ func (a *ACPAgent) chat(ctx context.Context, conversationID string, request Chat
 
 	// Route to codex app-server protocol if applicable
 	if a.protocol == protocolCodexAppServer {
-		return a.chatCodexAppServer(ctx, conversationID, request, onProgress)
+		return "", fmt.Errorf("codex app-server requires an explicit thread id")
 	}
 	if len(request.LocalImages) > 0 {
 		return "", fmt.Errorf("ACP protocol %q does not support image input", a.protocol)
@@ -511,15 +487,11 @@ func (a *ACPAgent) getOrCreateSession(ctx context.Context, conversationID string
 
 // --- Codex app-server protocol ---
 
-func (a *ACPAgent) getOrCreateThread(ctx context.Context, conversationID string) (string, bool, error) {
-	a.mu.Lock()
-	tid, exists := a.threads[conversationID]
-	a.mu.Unlock()
-
-	if exists {
-		return tid, false, nil
+// StartThread 创建一个持久化 Codex 线程，归属关系由上层会话管理器保存。
+func (a *ACPAgent) StartThread(ctx context.Context) (ThreadInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadInfo{}, err
 	}
-
 	params := map[string]interface{}{
 		"approvalPolicy": "never",
 		"cwd":            a.cwd,
@@ -530,32 +502,211 @@ func (a *ACPAgent) getOrCreateThread(ctx context.Context, conversationID string)
 	}
 	result, err := a.rpc(ctx, "thread/start", params)
 	if err != nil {
-		return "", false, err
+		return ThreadInfo{}, err
 	}
-
 	var threadResult struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
+		Thread ThreadInfo `json:"thread"`
 	}
 	if err := json.Unmarshal(result, &threadResult); err != nil {
-		return "", false, fmt.Errorf("parse thread/start result: %w", err)
+		return ThreadInfo{}, fmt.Errorf("parse thread/start result: %w", err)
 	}
 	if threadResult.Thread.ID == "" {
-		return "", false, fmt.Errorf("thread/start returned empty thread id")
+		return ThreadInfo{}, fmt.Errorf("thread/start returned empty thread id")
 	}
-
 	a.mu.Lock()
-	a.threads[conversationID] = threadResult.Thread.ID
+	a.loadedThreads[threadResult.Thread.ID] = true
+	a.threadStatus[threadResult.Thread.ID] = threadResult.Thread.Status
 	a.mu.Unlock()
-
-	return threadResult.Thread.ID, true, nil
+	return threadResult.Thread, nil
 }
 
-func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
-	threadID, isNew, err := a.getOrCreateThread(ctx, conversationID)
+// ResumeThread 从磁盘加载线程并订阅其事件。
+func (a *ACPAgent) ResumeThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadInfo{}, err
+	}
+	if strings.TrimSpace(threadID) == "" {
+		return ThreadInfo{}, fmt.Errorf("thread id is required")
+	}
+	params := map[string]interface{}{
+		"threadId":       threadID,
+		"approvalPolicy": "never",
+		"cwd":            a.cwd,
+		"sandbox":        "danger-full-access",
+	}
+	if a.model != "" {
+		params["model"] = a.model
+	}
+	result, err := a.rpc(ctx, "thread/resume", params)
 	if err != nil {
-		return "", fmt.Errorf("thread error: %w", err)
+		return ThreadInfo{}, err
+	}
+	thread, err := decodeCodexThread(result, "thread/resume")
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	a.mu.Lock()
+	a.loadedThreads[thread.ID] = true
+	a.threadStatus[thread.ID] = thread.Status
+	a.mu.Unlock()
+	return thread, nil
+}
+
+// ReadThread 只读取线程摘要，不加载完整 turn 历史。
+func (a *ACPAgent) ReadThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadInfo{}, err
+	}
+	result, err := a.rpc(ctx, "thread/read", map[string]interface{}{
+		"threadId":     threadID,
+		"includeTurns": false,
+	})
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	thread, err := decodeCodexThread(result, "thread/read")
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	a.mu.Lock()
+	// thread/read 已返回服务端当前状态，覆盖可能过期的通知缓存。
+	a.threadStatus[threadID] = thread.Status
+	a.mu.Unlock()
+	return thread, nil
+}
+
+// ListThreads 查询 Codex 线程页；上层仍必须按 WeClaw 归属索引过滤。
+func (a *ACPAgent) ListThreads(ctx context.Context, options ThreadListOptions) (ThreadPage, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadPage{}, err
+	}
+	params := map[string]interface{}{
+		"archived":      options.Archived,
+		"sortKey":       "recency_at",
+		"sortDirection": "desc",
+	}
+	if options.Cursor != "" {
+		params["cursor"] = options.Cursor
+	}
+	if options.Limit > 0 {
+		params["limit"] = options.Limit
+	}
+	if len(options.SourceKinds) > 0 {
+		params["sourceKinds"] = options.SourceKinds
+	}
+	result, err := a.rpc(ctx, "thread/list", params)
+	if err != nil {
+		return ThreadPage{}, err
+	}
+	var response struct {
+		Data       []ThreadInfo `json:"data"`
+		NextCursor *string      `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return ThreadPage{}, fmt.Errorf("parse thread/list result: %w", err)
+	}
+	page := ThreadPage{Threads: response.Data}
+	if response.NextCursor != nil {
+		page.NextCursor = *response.NextCursor
+	}
+	return page, nil
+}
+
+func (a *ACPAgent) SetThreadName(ctx context.Context, threadID, name string) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	_, err := a.rpc(ctx, "thread/name/set", map[string]string{"threadId": threadID, "name": name})
+	return err
+}
+
+func (a *ACPAgent) ArchiveThread(ctx context.Context, threadID string) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	_, err := a.rpc(ctx, "thread/archive", map[string]string{"threadId": threadID})
+	if err == nil {
+		a.mu.Lock()
+		delete(a.loadedThreads, threadID)
+		delete(a.threadStatus, threadID)
+		a.mu.Unlock()
+	}
+	return err
+}
+
+func (a *ACPAgent) UnarchiveThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadInfo{}, err
+	}
+	result, err := a.rpc(ctx, "thread/unarchive", map[string]string{"threadId": threadID})
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	return decodeCodexThread(result, "thread/unarchive")
+}
+
+func (a *ACPAgent) UnsubscribeThread(ctx context.Context, threadID string) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	_, err := a.rpc(ctx, "thread/unsubscribe", map[string]string{"threadId": threadID})
+	if err == nil {
+		a.mu.Lock()
+		delete(a.loadedThreads, threadID)
+		a.mu.Unlock()
+	}
+	return err
+}
+
+// ChatThread 在已经过归属校验的显式线程中执行一次 turn。
+func (a *ACPAgent) ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error) {
+	return a.chatCodexAppServer(ctx, threadID, request, nil)
+}
+
+func (a *ACPAgent) ChatThreadWithProgress(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
+	return a.chatCodexAppServer(ctx, threadID, request, onProgress)
+}
+
+func (a *ACPAgent) ensureCodexReady(ctx context.Context) error {
+	if a.protocol != protocolCodexAppServer {
+		return fmt.Errorf("agent protocol %q does not support codex threads", a.protocol)
+	}
+	if !a.started {
+		return a.Start(ctx)
+	}
+	return nil
+}
+
+func decodeCodexThread(result json.RawMessage, method string) (ThreadInfo, error) {
+	var response struct {
+		Thread ThreadInfo `json:"thread"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return ThreadInfo{}, fmt.Errorf("parse %s result: %w", method, err)
+	}
+	if response.Thread.ID == "" {
+		return ThreadInfo{}, fmt.Errorf("%s returned empty thread id", method)
+	}
+	return response.Thread, nil
+}
+
+func (a *ACPAgent) ensureThreadLoaded(ctx context.Context, threadID string) error {
+	a.mu.Lock()
+	loaded := a.loadedThreads[threadID]
+	a.mu.Unlock()
+	if loaded {
+		return nil
+	}
+	_, err := a.ResumeThread(ctx, threadID)
+	return err
+}
+
+func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return "", err
+	}
+	if err := a.ensureThreadLoaded(ctx, threadID); err != nil {
+		return "", fmt.Errorf("resume thread: %w", err)
 	}
 
 	pid := 0
@@ -565,11 +716,7 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string
 	}
 	a.mu.Unlock()
 
-	if isNew {
-		log.Printf("[acp] new thread created (pid=%d, thread=%s, conversation=%s)", pid, threadID, conversationID)
-	} else {
-		log.Printf("[acp] reusing thread (pid=%d, thread=%s, conversation=%s)", pid, threadID, conversationID)
-	}
+	log.Printf("[acp] using explicit thread (pid=%d, thread=%s)", pid, threadID)
 
 	// Register turn event channel
 	turnCh := make(chan *codexTurnEvent, 256)
@@ -869,10 +1016,12 @@ func (a *ACPAgent) readLoop() {
 			a.handleCodexActivity(msg.Params, "正在应用本机变更")
 		case "turn/started", "turn/completed":
 			a.handleCodexTurnEvent(msg.Method, msg.Params)
+		case "thread/status/changed":
+			a.handleThreadStatusChanged(msg.Params)
 		case "codex/event/agent_message", "codex/event/task_complete",
 			"codex/event/item_completed", "codex/event/token_count",
 			"thread/started", "thread/tokenUsage/updated",
-			"account/rateLimits/updated", "thread/status/changed":
+			"account/rateLimits/updated":
 			// Known events we don't need to act on
 		case "turn/approval/request":
 			a.handlePermissionRequest(line)
@@ -888,6 +1037,23 @@ func (a *ACPAgent) readLoop() {
 		log.Printf("[acp] read loop error: %v", err)
 	}
 	log.Println("[acp] read loop ended")
+}
+
+func (a *ACPAgent) handleThreadStatusChanged(params json.RawMessage) {
+	var update struct {
+		ThreadID string       `json:"threadId"`
+		Status   ThreadStatus `json:"status"`
+	}
+	if err := json.Unmarshal(params, &update); err != nil || update.ThreadID == "" {
+		log.Printf("[acp] failed to parse thread/status/changed: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.threadStatus[update.ThreadID] = update.Status
+	if update.Status.Type == "notLoaded" {
+		delete(a.loadedThreads, update.ThreadID)
+	}
+	a.mu.Unlock()
 }
 
 func (a *ACPAgent) handleSessionUpdate(params json.RawMessage) {

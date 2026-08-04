@@ -92,6 +92,61 @@ type ProgressAgent interface {
 	ChatWithProgress(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error)
 }
 
+// ThreadStatus 是 Codex App Server 返回的线程运行状态。
+// ActiveFlags 只在 Type 为 active 时存在，例如 waitingOnApproval。
+type ThreadStatus struct {
+	Type        string   `json:"type"`
+	ActiveFlags []string `json:"activeFlags,omitempty"`
+}
+
+// ThreadInfo 是会话管理所需的稳定线程摘要，不包含完整 turn 历史。
+type ThreadInfo struct {
+	ID            string       `json:"id"`
+	SessionID     string       `json:"sessionId"`
+	Name          string       `json:"name"`
+	Preview       string       `json:"preview"`
+	Cwd           string       `json:"cwd"`
+	CreatedAt     int64        `json:"createdAt"`
+	UpdatedAt     int64        `json:"updatedAt"`
+	RecencyAt     *int64       `json:"recencyAt"`
+	ModelProvider string       `json:"modelProvider"`
+	IsPinned      bool         `json:"isPinned"`
+	Status        ThreadStatus `json:"status"`
+}
+
+// ThreadListOptions 控制 Codex 线程分页查询。
+type ThreadListOptions struct {
+	Cursor      string
+	Limit       int
+	Archived    bool
+	SourceKinds []string
+}
+
+// ThreadPage 是 Codex 线程分页结果。
+type ThreadPage struct {
+	Threads    []ThreadInfo
+	NextCursor string
+}
+
+// ThreadAgent 为 Codex App Server 暴露显式线程生命周期。
+// 微信消息层必须先完成归属校验，再把 threadID 交给这些方法。
+type ThreadAgent interface {
+	StartThread(ctx context.Context) (ThreadInfo, error)
+	ResumeThread(ctx context.Context, threadID string) (ThreadInfo, error)
+	ReadThread(ctx context.Context, threadID string) (ThreadInfo, error)
+	ListThreads(ctx context.Context, options ThreadListOptions) (ThreadPage, error)
+	SetThreadName(ctx context.Context, threadID, name string) error
+	ArchiveThread(ctx context.Context, threadID string) error
+	UnarchiveThread(ctx context.Context, threadID string) (ThreadInfo, error)
+	UnsubscribeThread(ctx context.Context, threadID string) error
+	ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error)
+}
+
+// ThreadProgressAgent 是支持结构化任务进度的显式线程 Agent。
+type ThreadProgressAgent interface {
+	ChatThreadWithProgress(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error)
+}
+
 // String returns a human-readable summary for logging.
 func (i AgentInfo) String() string {
 	s := fmt.Sprintf("name=%s, type=%s, model=%s, command=%s", i.Name, i.Type, i.Model, i.Command)
@@ -154,12 +209,6 @@ type Agent interface {
 	// Chat sends structured user input to the agent and returns the response.
 	// conversationID is used to maintain conversation history per user.
 	Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error)
-
-	// ResetSession clears the existing session for the given conversationID and
-	// starts a new one. Returns the new session ID if immediately available
-	// (ACP mode), or an empty string if the ID will be assigned on next Chat
-	// (CLI mode) or is not applicable (HTTP mode).
-	ResetSession(ctx context.Context, conversationID string) (string, error)
 
 	// Info returns metadata about this agent.
 	Info() AgentInfo

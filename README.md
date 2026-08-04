@@ -65,10 +65,17 @@ Send these as WeChat messages:
 | `/cc explain this code` | Send to agent by alias |
 | `/claude` | Switch default agent to Claude |
 | `/cwd /path/to/project` | Switch workspace directory |
-| `/new` | Start a new conversation (clear session) |
 | `/status` | Show current task status |
 | `/cancel` | Cancel the current task |
 | `/info` | Show current agent info |
+| `/sessions [page]` | List owned Codex sessions |
+| `/session` | Show the current Codex session |
+| `/session new [name]` | Create and select a session |
+| `/session use <code>` | Switch to a session |
+| `/session rename <name>` | Rename the current session |
+| `/session archive [code]` | Archive a session |
+| `/sessions archived [page]` | List archived sessions |
+| `/session restore <code>` | Restore an archived session |
 | `/help` | Show help message |
 
 ### Aliases
@@ -99,6 +106,16 @@ You can also define custom aliases per agent in config:
 Then `/ai hello` or `/c hello` will route to claude.
 
 Switching default agent is persisted to config — survives restarts.
+
+### Codex Session Management
+
+Codex App Server sessions are first-class, persistent threads. WeClaw stores only thread ownership and the currently selected thread in `~/.weclaw/session-index.json`; names, previews, working directories, timestamps, and runtime status are read from Codex. The index uses private file permissions and prevents one WeChat user from opening another user's thread, even when a full thread ID is supplied.
+
+The selected thread survives service restarts. Session lists use stable eight-character codes derived from thread IDs, and show `running`, `waiting for approval`, `idle`, `not loaded`, or `error` status. Read-only `/session` and `/sessions` commands remain available while a task is running; create, switch, rename, archive, and restore operations are blocked until the active turn finishes.
+
+The old `/new` and `/clear` commands have been removed. Use `/session new` instead. Legacy in-memory mappings are not imported automatically; their Codex history remains on disk but is excluded until it is explicitly assigned to the owner's index.
+
+See [Codex session management](docs/session-management.md) for the state model, command behavior, restart rules, and security boundaries.
 
 ## Media Messages
 
