@@ -93,17 +93,28 @@ func (h *Handler) sendCachedVisualReply(ctx context.Context, client *ilink.Clien
 	if !isOneOf(text, "文字版", "回复原文", "查看原文", "复制原文", "可复制版本") {
 		return false
 	}
+	// 原文取回是独立控制意图；无论缓存是否存在，都不能落入旧菜单或启动 Codex turn。
+	h.controlStates.Delete(msg.FromUserID)
 	value, ok := h.visualReplies.Load(msg.FromUserID)
 	if !ok {
-		return false
+		h.sendVisualReplyExpired(ctx, client, msg, clientID)
+		return true
 	}
 	cached, ok := value.(*cachedVisualReply)
 	if !ok || cached == nil || time.Now().After(cached.ExpiresAt) {
 		h.visualReplies.CompareAndDelete(msg.FromUserID, value)
-		return false
+		h.sendVisualReplyExpired(ctx, client, msg, clientID)
+		return true
 	}
 	if err := SendTextReply(ctx, client, msg.FromUserID, cached.Text, msg.ContextToken, clientID); err != nil {
 		log.Printf("[visual] failed to send cached text reply to %s: %v", msg.FromUserID, err)
 	}
 	return true
+}
+
+func (h *Handler) sendVisualReplyExpired(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, clientID string) {
+	reply := "最近的阅读卡片原文已过期或不存在。请重新发送原问题，新的长回复会再次保留 30 分钟。"
+	if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+		log.Printf("[visual] failed to send expired text notice to %s: %v", msg.FromUserID, err)
+	}
 }

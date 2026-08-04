@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	controlStateTTL        = 2 * time.Minute
+	controlStateTTL        = 10 * time.Minute
 	controlSessionPageSize = 6
 )
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/visual"
@@ -288,6 +289,7 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 	if caption == nil || !strings.Contains(caption.Text, "文字版") {
 		t.Fatalf("reading caption = %#v", caption)
 	}
+	_ = controlReply(t, handler, "owner-1", "/")
 
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9301, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
@@ -297,12 +299,54 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 	if runtime.chatThreadID != "" {
 		t.Fatalf("copyable text request unexpectedly reached Codex thread %s", runtime.chatThreadID)
 	}
+	if _, exists := handler.controlStates.Load("owner-1"); exists {
+		t.Fatal("copyable text retrieval should clear the previous menu state")
+	}
 	if len(sent) != renderer.documentRenderCalls+2 {
 		t.Fatalf("sent messages after text retrieval = %d", len(sent))
 	}
 	copyItem := sent[len(sent)-1].Msg.ItemList[0].TextItem
 	if copyItem == nil || !strings.Contains(copyItem.Text, "移动端结果") || !strings.Contains(copyItem.Text, "可复制原文") {
 		t.Fatalf("copyable reply = %#v", copyItem)
+	}
+}
+
+func TestExpiredCopyableTextRequestNeverStartsCodexTurn(t *testing.T) {
+	var sent ilink.SendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Errorf("decode expired copy notice: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"ret":0}`))
+	}))
+	defer server.Close()
+
+	handler, runtime := newSessionHandler(t)
+	handler.visualReplies.Store("owner-1", &cachedVisualReply{
+		Text: "已经过期的原文", ExpiresAt: time.Now().Add(-time.Second),
+	})
+	_ = controlReply(t, handler, "owner-1", "/")
+	client := ilink.NewClient(&ilink.Credentials{
+		BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL,
+	})
+	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+		MessageID: 9302, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
+		MessageState: ilink.MessageStateFinish, ContextToken: "context-expired",
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "文字版"}}},
+	})
+	if runtime.chatThreadID != "" {
+		t.Fatalf("expired copy request unexpectedly reached Codex thread %s", runtime.chatThreadID)
+	}
+	if _, exists := handler.controlStates.Load("owner-1"); exists {
+		t.Fatal("expired copy request should clear the previous menu state")
+	}
+	item := sent.Msg.ItemList[0].TextItem
+	if item == nil || !strings.Contains(item.Text, "已过期或不存在") || !strings.Contains(item.Text, "30 分钟") {
+		t.Fatalf("expired copy notice = %#v", item)
 	}
 }
 

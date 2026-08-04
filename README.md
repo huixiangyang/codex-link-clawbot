@@ -97,7 +97,7 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 ## WeChat interaction
 
-The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
+The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation. Menu state expires after ten minutes, and an expired number remains ordinary Codex input.
 
 Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `搜索会话 登录`, `切换会话 登录`, `当前会话`, `会话列表`, `运行中心`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. Explicit switching with a unique match runs immediately; browsing and search results always open a detail card first. Multiple switch candidates become numbered choices, and every archive requires confirmation.
 
@@ -107,7 +107,7 @@ Successful create, switch, rename, archive, and restore results remain actionabl
 
 When `scheduled_reports` is configured, the main menu adds a read-only scheduled-inspection center. It shows today's delivery state, the next run, timezone, project directory, systemd service, and health endpoint for each plan. Direct phrases such as `定时巡检` and `报告计划` open it without navigating the menu. Scheduling configuration and forced execution deliberately remain unavailable from WeChat.
 
-Codex replies at or above `visual.long_reply_min_runes` are parsed into safe heading, paragraph, list, quote, and code blocks, then delivered as at most ten mobile reading cards. Reply with `文字版` within 30 minutes to retrieve the complete copyable text. Excessively large replies, unsupported renderers, and any rendering or upload failure fall back to the full text without losing content.
+Codex replies at or above `visual.long_reply_min_runes` are parsed into safe heading, paragraph, list, quote, and code blocks, then delivered as at most ten mobile reading cards. Reply with `文字版` within 30 minutes to retrieve the complete copyable text. This phrase is always consumed locally: an expired or missing copy returns an explicit notice and never starts a Codex turn or executes an older menu. Excessively large replies, unsupported renderers, and any rendering or upload failure fall back to the full text without losing content.
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected by the control layer and is never forwarded to Codex.
 
