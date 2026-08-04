@@ -12,22 +12,19 @@ func newTestHandler() *Handler {
 	return NewHandler(nil)
 }
 
-func TestBuildHelpText(t *testing.T) {
-	text := buildHelpText()
+func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {
+	text := controlGuide()
 	if text == "" {
-		t.Error("help text is empty")
+		t.Error("guide text is empty")
 	}
-	if !strings.Contains(text, "/info") {
-		t.Error("help text should mention /info")
+	if !strings.Contains(text, "发送 / 打开操作菜单") {
+		t.Error("guide should mention the single menu entry")
 	}
-	if !strings.Contains(text, "/help") {
-		t.Error("help text should mention /help")
+	if !strings.Contains(text, "发送“取消”") {
+		t.Error("guide should mention natural-language cancellation")
 	}
-	if !strings.Contains(text, "/status") {
-		t.Error("help text should mention /status")
-	}
-	if !strings.Contains(text, "/cancel") {
-		t.Error("help text should mention /cancel")
+	if strings.Contains(text, "/status") || strings.Contains(text, "/session") {
+		t.Error("guide must not expose legacy slash commands")
 	}
 }
 
@@ -50,6 +47,21 @@ func TestTaskControlStatusAndCancel(t *testing.T) {
 	}
 	if got := h.cancelActiveTask("user-1"); got != "当前任务正在取消，请稍候。" {
 		t.Fatalf("unexpected duplicate cancellation result: %q", got)
+	}
+}
+
+func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
+	h := newTestHandler()
+	task := newActiveTask(context.Background())
+	h.activeTasks.Store("user-1", task)
+
+	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false)
+	if !handled || !strings.Contains(status, "任务状态：运行中") {
+		t.Fatalf("natural status = %q, handled=%v", status, handled)
+	}
+	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false)
+	if !handled || !strings.Contains(cancelled, "已请求取消当前任务") {
+		t.Fatalf("natural cancellation = %q, handled=%v", cancelled, handled)
 	}
 }
 

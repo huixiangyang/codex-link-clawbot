@@ -120,7 +120,7 @@ func (t *activeTask) busySummary() string {
 	t.mu.RLock()
 	status := t.status
 	t.mu.RUnlock()
-	return fmt.Sprintf("上一项任务仍在执行，已运行 %s。\n当前状态：%s\n为避免覆盖任务事件，本条消息未交给 Codex；任务完成后请重新发送。", formatElapsed(time.Since(t.started)), status)
+	return fmt.Sprintf("上一项任务仍在执行，已运行 %s。\n当前状态：%s\n本条消息未交给 Codex；发送“状态”查看进度，发送“取消”停止任务。", formatElapsed(time.Since(t.started)), status)
 }
 
 type progressReporter struct {

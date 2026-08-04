@@ -82,33 +82,20 @@ Environment overrides:
 
 Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `args`, `endpoint`, and alias fields fail startup and are not migrated at runtime.
 
-## WeChat commands
+## WeChat interaction
 
-| Command | Action |
-| --- | --- |
-| `/status` | Show the current Codex turn and elapsed time |
-| `/cancel` | Interrupt the current turn |
-| `/info` | Show App Server model, PID, and working directory |
-| `/sessions [page]` | List active sessions |
-| `/session` | Show the current session |
-| `/session new [name]` | Create and select a session |
-| `/session use <code>` | Switch sessions |
-| `/session rename <name>` | Rename the current session |
-| `/session archive [code]` | Archive a session |
-| `/sessions archived [page]` | List archived sessions |
-| `/session restore <code>` | Restore a session |
-| `/cwd` | Show the Codex working directory |
-| `/cwd /absolute/path` | Change the directory for later threads and turns |
-| `/help` | Show commands |
+The only public slash entry is `/`. It opens a context-aware numbered menu; reply with a number to continue. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
 
-The old `/new` and `/clear` commands are removed and only point users to `/session new`. Former agent-routing commands have no special meaning.
+Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `切换会话 登录`, `当前会话`, `会话列表`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. A unique match runs immediately, multiple matches become numbered candidates, and archive requires confirmation.
+
+All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected by the control layer and is never forwarded to Codex.
 
 ## Media and proactive delivery
 
 - WeChat images are passed to Codex as `localImage` inputs. Limits: four images, 20 MiB each, JPEG/PNG/GIF/WebP.
 - PDFs, logs, patches, archives, and common source files are treated as untrusted input. The bridge never executes or extracts them.
 - Files Codex writes into the turn-specific outbox are uploaded to WeChat automatically.
-- The private inbox/outbox tree is deleted after completion, failure, or cancellation.
+- The private inbox/outbox tree is deleted after completion, failure, or the natural-language `取消` action.
 
 ```bash
 weclaw send --to "user_id@im.wechat" --text "Build complete"

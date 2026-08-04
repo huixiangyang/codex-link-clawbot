@@ -2,11 +2,16 @@ package messaging
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/session"
 )
 
@@ -119,49 +124,184 @@ func attachTestSessionManager(t *testing.T, handler *Handler) {
 	handler.SetSessionManager(manager)
 }
 
-func TestSessionCommandsCreateListSwitchRenameArchiveRestore(t *testing.T) {
-	handler, _ := newSessionHandler(t)
-	ctx := context.Background()
-	if got := handler.handleSessionReadCommand(ctx, "owner-1", "/session"); !strings.Contains(got, "当前没有会话") {
-		t.Fatalf("initial /session = %q", got)
+func controlReply(t *testing.T, handler *Handler, ownerID, text string) string {
+	t.Helper()
+	reply, handled := handler.handleControlInput(context.Background(), ownerID, text, false)
+	if !handled {
+		t.Fatalf("control input %q was not handled", text)
 	}
-	firstReply := handler.handleSessionMutationCommand(ctx, "owner-1", "/session new 登录排障")
+	return reply
+}
+
+func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	if got := controlReply(t, handler, "owner-1", "当前会话"); !strings.Contains(got, "当前没有会话") {
+		t.Fatalf("initial current session = %q", got)
+	}
+	firstReply := controlReply(t, handler, "owner-1", "新建会话 叫登录排障")
 	if !strings.Contains(firstReply, "已创建并切换") || !strings.Contains(firstReply, "00000001") {
 		t.Fatalf("first new reply = %q", firstReply)
 	}
-	secondReply := handler.handleSessionMutationCommand(ctx, "owner-1", "/session new 发布检查")
+	secondReply := controlReply(t, handler, "owner-1", "创建会话 名为发布检查")
 	if !strings.Contains(secondReply, "00000002") {
 		t.Fatalf("second new reply = %q", secondReply)
 	}
-	list := handler.handleSessionReadCommand(ctx, "owner-1", "/sessions")
-	for _, want := range []string{"会话 1/1，共 2 个", "当前", "发布检查", "登录排障"} {
+	list := controlReply(t, handler, "owner-1", "会话列表")
+	for _, want := range []string{"选择会话", "当前", "发布检查", "登录排障", "回复数字"} {
 		if !strings.Contains(list, want) {
-			t.Fatalf("/sessions missing %q: %q", want, list)
+			t.Fatalf("session picker missing %q: %q", want, list)
 		}
 	}
-	switched := handler.handleSessionMutationCommand(ctx, "owner-1", "/session use 00000001")
+	switched := controlReply(t, handler, "owner-1", "切换会话 登录")
 	if !strings.Contains(switched, "已切换会话") || !strings.Contains(switched, "登录排障") {
 		t.Fatalf("use reply = %q", switched)
 	}
-	renamed := handler.handleSessionMutationCommand(ctx, "owner-1", "/session rename 微信登录修复")
+	renamed := controlReply(t, handler, "owner-1", "重命名当前会话 为微信登录修复")
 	if !strings.Contains(renamed, "会话已重命名") || !strings.Contains(renamed, "微信登录修复") {
 		t.Fatalf("rename reply = %q", renamed)
 	}
-	detail := handler.handleSessionReadCommand(ctx, "owner-1", "/session")
+	detail := controlReply(t, handler, "owner-1", "当前会话")
 	if !strings.Contains(detail, "完整编号") || !strings.Contains(detail, "微信登录修复") {
 		t.Fatalf("detail reply = %q", detail)
 	}
-	archived := handler.handleSessionMutationCommand(ctx, "owner-1", "/session archive")
+	confirm := controlReply(t, handler, "owner-1", "归档当前会话")
+	if !strings.Contains(confirm, "准备归档") || !strings.Contains(confirm, "回复 1 确认") {
+		t.Fatalf("archive confirmation = %q", confirm)
+	}
+	archived := controlReply(t, handler, "owner-1", "1")
 	if !strings.Contains(archived, "会话已归档") || !strings.Contains(archived, "00000002") {
 		t.Fatalf("archive reply = %q", archived)
 	}
-	archivedList := handler.handleSessionReadCommand(ctx, "owner-1", "/sessions archived")
-	if !strings.Contains(archivedList, "已归档会话") || !strings.Contains(archivedList, "微信登录修复") {
+	archivedList := controlReply(t, handler, "owner-1", "已归档会话")
+	if !strings.Contains(archivedList, "恢复会话") || !strings.Contains(archivedList, "微信登录修复") {
 		t.Fatalf("archived list = %q", archivedList)
 	}
-	restored := handler.handleSessionMutationCommand(ctx, "owner-1", "/session restore 00000001")
+	restored := controlReply(t, handler, "owner-1", "1")
 	if !strings.Contains(restored, "会话已恢复") {
 		t.Fatalf("restore reply = %q", restored)
+	}
+}
+
+func TestControlMenuAndNumericNavigation(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	main := controlReply(t, handler, "owner-1", "/")
+	for _, want := range []string{"WeClaw", "1  会话", "5  使用说明", "回复数字"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("main menu missing %q: %q", want, main)
+		}
+	}
+	sessions := controlReply(t, handler, "owner-1", "1")
+	for _, want := range []string{"会话", "切换会话", "新建会话", "归档当前会话"} {
+		if !strings.Contains(sessions, want) {
+			t.Fatalf("session menu missing %q: %q", want, sessions)
+		}
+	}
+	prompt := controlReply(t, handler, "owner-1", "3")
+	if !strings.Contains(prompt, "发送会话名称") {
+		t.Fatalf("new session prompt = %q", prompt)
+	}
+	created := controlReply(t, handler, "owner-1", "菜单创建")
+	if !strings.Contains(created, "菜单创建") {
+		t.Fatalf("created session reply = %q", created)
+	}
+}
+
+func TestHandleMessageRoutesSingleSlashToMenuWithoutStartingCodexTurn(t *testing.T) {
+	var sent ilink.SendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Errorf("decode sent menu: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"ret":0}`))
+	}))
+	defer server.Close()
+
+	handler, runtime := newSessionHandler(t)
+	client := ilink.NewClient(&ilink.Credentials{
+		BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL,
+	})
+	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+		MessageID: 9001, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
+		MessageState: ilink.MessageStateFinish, ContextToken: "context-1",
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
+	})
+
+	if runtime.chatThreadID != "" {
+		t.Fatalf("single slash unexpectedly started Codex thread %s", runtime.chatThreadID)
+	}
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复数字即可") {
+		t.Fatalf("sent menu = %#v", sent.Msg.ItemList)
+	}
+}
+
+func TestSessionCompletionOffersCandidatesThenAcceptsNumber(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	_ = controlReply(t, handler, "owner-1", "新建会话 发布检查")
+	_ = controlReply(t, handler, "owner-1", "新建会话 发布排障")
+	completion := controlReply(t, handler, "owner-1", "切换会话 发布")
+	for _, want := range []string{"选择会话：发布", "发布检查", "发布排障", "回复数字"} {
+		if !strings.Contains(completion, want) {
+			t.Fatalf("completion missing %q: %q", want, completion)
+		}
+	}
+	switched := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(switched, "已切换会话") {
+		t.Fatalf("numeric completion reply = %q", switched)
+	}
+}
+
+func TestSessionCompletionPrefersAnExactTitle(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	_ = controlReply(t, handler, "owner-1", "新建会话 发布")
+	_ = controlReply(t, handler, "owner-1", "新建会话 发布检查")
+	switched := controlReply(t, handler, "owner-1", "切换会话 发布")
+	if !strings.Contains(switched, "已切换会话") || !strings.Contains(switched, "名称：发布\n") {
+		t.Fatalf("exact title should win over substring candidates: %q", switched)
+	}
+}
+
+func TestControlChoiceDoesNotConsumeOrdinaryCodexText(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	_ = controlReply(t, handler, "owner-1", "/")
+	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "请检查项目测试", false); handled || reply != "" {
+		t.Fatalf("ordinary text should leave menu and reach Codex: reply=%q handled=%v", reply, handled)
+	}
+	if _, exists := handler.controlStates.Load("owner-1"); exists {
+		t.Fatal("ordinary text should clear the pending menu")
+	}
+}
+
+func TestExpiredControlStateDoesNotConsumeNumber(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	handler.controlStates.Store("owner-1", &controlState{
+		Mode: controlChoice, Prompt: "expired", ExpiresAt: time.Now().Add(-time.Second),
+		Options: []controlOption{{Label: "会话", Action: actionSessionMenu}},
+	})
+	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false); handled || reply != "" {
+		t.Fatalf("expired state should not consume a number: reply=%q handled=%v", reply, handled)
+	}
+	if _, exists := handler.controlStates.Load("owner-1"); exists {
+		t.Fatal("expired control state was not removed")
+	}
+}
+
+func TestFuzzySessionMatchingSupportsSubsequence(t *testing.T) {
+	items := []session.ManagedThread{{Info: codex.ThreadInfo{ID: "thread-1", Name: "微信登录排障"}}}
+	matches := matchSessions(items, "微登排")
+	if len(matches) != 1 || matches[0].Score != 3 {
+		t.Fatalf("subsequence matches = %#v", matches)
+	}
+}
+
+func TestLegacySlashCommandsAreRejected(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	got := controlReply(t, handler, "owner-1", "/sessions")
+	if !strings.Contains(got, "斜杠命令已取消") || !strings.Contains(got, "发送一个 /") {
+		t.Fatalf("legacy command reply = %q", got)
 	}
 }
 
@@ -178,10 +318,9 @@ func TestChatWithCodexUsesOwnedExplicitThread(t *testing.T) {
 
 func TestSessionCommandsDoNotExposeForeignThreads(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	ctx := context.Background()
-	_ = handler.handleSessionMutationCommand(ctx, "owner-1", "/session new 私有会话")
-	got := handler.handleSessionMutationCommand(ctx, "owner-2", "/session use 00000001")
-	if !strings.Contains(got, "没有找到属于当前微信用户的会话") {
+	_ = controlReply(t, handler, "owner-1", "新建会话 私有会话")
+	got := controlReply(t, handler, "owner-2", "切换会话 00000001")
+	if !strings.Contains(got, "没有找到") {
 		t.Fatalf("foreign use reply = %q", got)
 	}
 }

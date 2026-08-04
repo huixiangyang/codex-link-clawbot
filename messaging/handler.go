@@ -2,12 +2,9 @@ package messaging
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +21,7 @@ type Handler struct {
 	saveDir       string   // Linkhoard archive directory
 	seenMsgs      sync.Map // map[int64]time.Time — dedup by message_id
 	activeTasks   sync.Map // map[userID]*activeTask — 同一用户只允许一个活动任务
+	controlStates sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
 	progress      ProgressConfig
 	sessions      *session.Manager
 }
@@ -115,51 +113,15 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	trimmed := strings.TrimSpace(text)
 	clientID := NewClientID()
 
-	// 控制命令必须优先于忙碌拦截，否则运行中的任务既无法取消也无法查询。
-	if trimmed == "/cancel" {
-		reply := h.cancelActiveTask(msg.FromUserID)
+	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
+	if reply, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send cancel result to %s: %v", msg.FromUserID, err)
-		}
-		return
-	}
-	if trimmed == "/status" {
-		reply := h.buildTaskStatus(msg.FromUserID)
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send task status to %s: %v", msg.FromUserID, err)
-		}
-		return
-	}
-	if trimmed == "/info" {
-		reply := h.buildStatus()
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-		}
-		return
-	}
-	if trimmed == "/help" {
-		reply := buildHelpText()
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-		}
-		return
-	}
-	if trimmed == "/session" || trimmed == "/sessions" || strings.HasPrefix(trimmed, "/sessions ") {
-		reply := h.handleSessionReadCommand(ctx, msg.FromUserID, trimmed)
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send session result to %s: %v", msg.FromUserID, err)
-		}
-		return
-	}
-	if trimmed == "/new" || trimmed == "/clear" {
-		reply := "该命令已删除。请使用 /session new 创建新会话。"
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send removed-command notice to %s: %v", msg.FromUserID, err)
+			log.Printf("[handler] failed to send control result to %s: %v", msg.FromUserID, err)
 		}
 		return
 	}
 
-	// 任务运行期间普通消息直接返回快照，避免切换、归档等命令并发改写线程状态。
+	// 任务运行期间普通消息直接返回快照，避免切换、归档等控制操作并发改写线程状态。
 	if active, ok := h.activeTasks.Load(msg.FromUserID); ok {
 		h.sendActiveTaskStatus(ctx, client, msg, active.(*activeTask))
 		return
@@ -185,25 +147,10 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		}
 	}
 
-	// 会改变会话状态的内置命令只允许在空闲时执行。
-	if strings.HasPrefix(trimmed, "/session ") {
-		reply := h.handleSessionMutationCommand(ctx, msg.FromUserID, trimmed)
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send session mutation result to %s: %v", msg.FromUserID, err)
-		}
-		return
-	} else if strings.HasPrefix(trimmed, "/cwd") {
-		reply := h.handleCwd(trimmed)
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-		}
-		return
-	}
-
 	h.sendToCodex(ctx, client, msg, text, images, files, clientID)
 }
 
-// sendToCodex 把所有非内置命令统一发送到 Codex。
+// sendToCodex 把所有非控制消息统一发送到 Codex。
 func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) {
 	var reply, artifactDir string
 	if h.codex != nil {
@@ -385,292 +332,6 @@ func (h *Handler) sessionContext() (codex.ThreadClient, error) {
 	return threadAgent, nil
 }
 
-func (h *Handler) handleSessionReadCommand(ctx context.Context, userID, command string) string {
-	threadAgent, err := h.sessionContext()
-	if err != nil {
-		return err.Error()
-	}
-	fields := strings.Fields(command)
-	if len(fields) == 1 && fields[0] == "/session" {
-		current, currentErr := h.sessions.Current(ctx, userID, threadAgent)
-		if currentErr != nil {
-			if errors.Is(currentErr, session.ErrNoActive) {
-				return "当前没有会话。\n创建：/session new [名称]"
-			}
-			return formatSessionError(currentErr)
-		}
-		return formatSessionDetail(current)
-	}
-	if len(fields) == 0 || fields[0] != "/sessions" {
-		return sessionCommandUsage()
-	}
-
-	archived := false
-	pageNumber := 1
-	args := fields[1:]
-	if len(args) > 0 && args[0] == "archived" {
-		archived = true
-		args = args[1:]
-	}
-	if len(args) > 1 {
-		return "用法：/sessions [页码] 或 /sessions archived [页码]"
-	}
-	if len(args) == 1 {
-		parsed, parseErr := strconv.Atoi(args[0])
-		if parseErr != nil || parsed <= 0 {
-			return "页码必须是正整数。"
-		}
-		pageNumber = parsed
-	}
-	page, listErr := h.sessions.List(ctx, userID, threadAgent, archived, pageNumber, session.DefaultPageSize)
-	if listErr != nil {
-		return formatSessionError(listErr)
-	}
-	return formatSessionPage(page, archived)
-}
-
-func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, command string) string {
-	threadAgent, err := h.sessionContext()
-	if err != nil {
-		return err.Error()
-	}
-	fields := strings.Fields(command)
-	if len(fields) < 2 || fields[0] != "/session" {
-		return sessionCommandUsage()
-	}
-	subcommand := fields[1]
-	argument := strings.TrimSpace(strings.TrimPrefix(command, "/session "+subcommand))
-
-	switch subcommand {
-	case "new":
-		thread, createErr := h.sessions.New(ctx, userID, threadAgent, argument)
-		if createErr != nil {
-			return formatSessionError(createErr)
-		}
-		return "已创建并切换到新会话。\n" + formatThreadIdentity(thread)
-	case "use":
-		if argument == "" || len(strings.Fields(argument)) != 1 {
-			return "用法：/session use <短编号>"
-		}
-		thread, useErr := h.sessions.Use(ctx, userID, threadAgent, argument)
-		if useErr != nil {
-			return formatSessionError(useErr)
-		}
-		return "已切换会话。\n" + formatThreadIdentity(thread)
-	case "rename":
-		if argument == "" {
-			return "用法：/session rename <名称>"
-		}
-		thread, renameErr := h.sessions.Rename(ctx, userID, threadAgent, argument)
-		if renameErr != nil {
-			return formatSessionError(renameErr)
-		}
-		return "会话已重命名。\n" + formatThreadIdentity(thread)
-	case "archive":
-		if len(strings.Fields(argument)) > 1 {
-			return "用法：/session archive [短编号]"
-		}
-		nextActive, archiveErr := h.sessions.Archive(ctx, userID, threadAgent, argument)
-		if archiveErr != nil {
-			return formatSessionError(archiveErr)
-		}
-		if nextActive == "" {
-			return "会话已归档。\n当前没有可用会话；下一条普通消息会创建新会话。"
-		}
-		return fmt.Sprintf("会话已归档。\n已切换到：%s", session.ShortCode(nextActive))
-	case "restore":
-		if argument == "" || len(strings.Fields(argument)) != 1 {
-			return "用法：/session restore <短编号>"
-		}
-		thread, restoreErr := h.sessions.Restore(ctx, userID, threadAgent, argument)
-		if restoreErr != nil {
-			return formatSessionError(restoreErr)
-		}
-		return "会话已恢复。\n" + formatThreadIdentity(thread)
-	default:
-		return sessionCommandUsage()
-	}
-}
-
-func formatSessionPage(page session.Page, archived bool) string {
-	kind := "会话"
-	if archived {
-		kind = "已归档会话"
-	}
-	var lines []string
-	lines = append(lines, fmt.Sprintf("%s %d/%d，共 %d 个", kind, page.Number, page.TotalPages, page.Total))
-	if len(page.Items) == 0 {
-		lines = append(lines, "", "暂无会话。")
-		if !archived {
-			lines = append(lines, "创建：/session new [名称]")
-		}
-		return strings.Join(lines, "\n")
-	}
-	for _, item := range page.Items {
-		marker := "    "
-		if item.Current {
-			marker = "当前"
-		}
-		title := threadTitle(item.Info)
-		status := formatThreadStatus(item.Info.Status)
-		if item.Unavailable {
-			status = "无法读取"
-		}
-		lines = append(lines, "", fmt.Sprintf("%s  %s  %s", marker, session.ShortCode(item.Info.ID), status), title)
-		if item.Info.Cwd != "" {
-			lines = append(lines, "目录："+item.Info.Cwd)
-		}
-		if item.Info.UpdatedAt > 0 {
-			lines = append(lines, "更新："+formatSessionTime(item.Info.UpdatedAt))
-		}
-	}
-	if archived {
-		lines = append(lines, "", "恢复：/session restore <短编号>")
-	} else {
-		lines = append(lines, "", "切换：/session use <短编号>")
-	}
-	return strings.Join(lines, "\n")
-}
-
-func formatSessionDetail(thread session.ManagedThread) string {
-	lines := []string{
-		"当前会话",
-		"名称：" + threadTitle(thread.Info),
-		"短编号：" + session.ShortCode(thread.Info.ID),
-		"完整编号：" + thread.Info.ID,
-		"状态：" + formatThreadStatus(thread.Info.Status),
-	}
-	if thread.Info.Cwd != "" {
-		lines = append(lines, "目录："+thread.Info.Cwd)
-	}
-	if thread.Info.CreatedAt > 0 {
-		lines = append(lines, "创建："+formatSessionTime(thread.Info.CreatedAt))
-	}
-	if thread.Info.UpdatedAt > 0 {
-		lines = append(lines, "更新："+formatSessionTime(thread.Info.UpdatedAt))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func formatThreadIdentity(thread codex.ThreadInfo) string {
-	return fmt.Sprintf("名称：%s\n短编号：%s\n状态：%s", threadTitle(thread), session.ShortCode(thread.ID), formatThreadStatus(thread.Status))
-}
-
-func threadTitle(thread codex.ThreadInfo) string {
-	if name := strings.TrimSpace(thread.Name); name != "" {
-		return normalizeSessionLine(name, 60)
-	}
-	if preview := strings.TrimSpace(thread.Preview); preview != "" {
-		return normalizeSessionLine(preview, 60)
-	}
-	return "未命名会话"
-}
-
-func normalizeSessionLine(value string, limit int) string {
-	value = strings.Join(strings.Fields(value), " ")
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit]) + "..."
-}
-
-func formatThreadStatus(status codex.ThreadStatus) string {
-	switch status.Type {
-	case "active":
-		for _, flag := range status.ActiveFlags {
-			if flag == "waitingOnApproval" {
-				return "等待确认"
-			}
-		}
-		return "执行中"
-	case "idle":
-		return "空闲"
-	case "notLoaded", "":
-		return "未加载"
-	case "systemError":
-		return "异常"
-	default:
-		return status.Type
-	}
-}
-
-func formatSessionTime(timestamp int64) string {
-	return time.Unix(timestamp, 0).Local().Format("2006-01-02 15:04")
-}
-
-func formatSessionError(err error) string {
-	switch {
-	case errors.Is(err, session.ErrNoActive):
-		return "当前没有会话。"
-	case errors.Is(err, session.ErrNotOwned):
-		return "没有找到属于当前微信用户的会话。"
-	case errors.Is(err, session.ErrAmbiguousCode):
-		return "短编号不唯一，请输入更长的编号。"
-	default:
-		return fmt.Sprintf("会话操作失败：%v", err)
-	}
-}
-
-func sessionCommandUsage() string {
-	return `会话命令：
-/sessions [页码]
-/session
-/session new [名称]
-/session use <短编号>
-/session rename <名称>
-/session archive [短编号]
-/sessions archived [页码]
-/session restore <短编号>`
-}
-
-// handleCwd 查询或修改 Codex 后续 thread/turn 的工作目录。
-func (h *Handler) handleCwd(trimmed string) string {
-	arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/cwd"))
-	if arg == "" {
-		if h.codex == nil {
-			return "Codex 当前不可用。"
-		}
-		return fmt.Sprintf("cwd: %s", h.codex.Info().Cwd)
-	}
-
-	// Expand ~ to home directory
-	if arg == "~" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			arg = home
-		}
-	} else if strings.HasPrefix(arg, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			arg = filepath.Join(home, arg[2:])
-		}
-	}
-
-	// Resolve to absolute path
-	absPath, err := filepath.Abs(arg)
-	if err != nil {
-		return fmt.Sprintf("Invalid path: %v", err)
-	}
-
-	// Verify directory exists
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return fmt.Sprintf("Path not found: %s", absPath)
-	}
-	if !info.IsDir() {
-		return fmt.Sprintf("Not a directory: %s", absPath)
-	}
-
-	if h.codex == nil {
-		return "Codex 当前不可用。"
-	}
-	h.codex.SetCwd(absPath)
-	log.Printf("[handler] updated codex cwd: %s", absPath)
-
-	return fmt.Sprintf("cwd: %s", absPath)
-}
-
 // buildStatus 返回唯一 Codex 运行时摘要。
 func (h *Handler) buildStatus() string {
 	if h.codex == nil {
@@ -682,25 +343,6 @@ func (h *Handler) buildStatus() string {
 		model = "使用 Codex 默认配置"
 	}
 	return fmt.Sprintf("Codex：运行中\n协议：App Server\n模型：%s\n工作目录：%s\nPID：%d", model, info.Cwd, info.PID)
-}
-
-func buildHelpText() string {
-	return `可用命令：
-直接发送图片 - 交给 Codex 分析
-直接发送 PDF、代码、压缩包或日志 - 交给 Codex 检查
-/status - 查看当前任务状态
-/cancel - 取消当前任务
-/info - 查看 Codex 运行信息
-/sessions [页码] - 查看会话列表
-/session - 查看当前会话
-/session new [名称] - 创建会话
-/session use 短编号 - 切换会话
-/session rename 名称 - 重命名当前会话
-/session archive [短编号] - 归档会话
-/sessions archived [页码] - 查看已归档会话
-/session restore 短编号 - 恢复会话
-/cwd /path - 切换工作目录
-/help - 查看命令列表`
 }
 
 func extractText(msg ilink.WeixinMessage) string {
