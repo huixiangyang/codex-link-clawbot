@@ -29,6 +29,14 @@ type Page struct {
 	Total      int
 }
 
+// Stats 是本地所有权索引的轻量管理概览，不读取或暴露 Codex 全局线程。
+type Stats struct {
+	Active     int
+	Archived   int
+	HasCurrent bool
+	CurrentID  string
+}
+
 // Manager 把微信用户归属与 Codex 线程生命周期组合成一个事务边界。
 type Manager struct {
 	store *Store
@@ -43,15 +51,25 @@ func NewManager(path string) (*Manager, error) {
 	return &Manager{store: store, now: time.Now}, nil
 }
 
-func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex.ThreadClient) (codex.ThreadInfo, error) {
+func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex.ThreadClient, suggestedName string) (codex.ThreadInfo, error) {
+	suggestedName, err := normalizeName(suggestedName)
+	if err != nil {
+		return codex.ThreadInfo{}, err
+	}
 	if threadID, ok := m.store.Active(ownerID); ok {
-		thread, err := client.ReadThread(ctx, threadID)
-		if err != nil {
-			return codex.ThreadInfo{}, fmt.Errorf("read active session %s: %w", ShortCode(threadID), err)
+		thread, readErr := client.ReadThread(ctx, threadID)
+		if readErr != nil {
+			return codex.ThreadInfo{}, fmt.Errorf("read active session %s: %w", ShortCode(threadID), readErr)
+		}
+		// 对历史未命名会话做一次尽力命名；命名失败不能阻断用户的正常 turn。
+		if strings.TrimSpace(thread.Name) == "" && suggestedName != "" {
+			if nameErr := client.SetThreadName(ctx, threadID, suggestedName); nameErr == nil {
+				thread.Name = suggestedName
+			}
 		}
 		return thread, nil
 	}
-	return m.New(ctx, ownerID, client, "")
+	return m.New(ctx, ownerID, client, suggestedName)
 }
 
 func (m *Manager) Current(ctx context.Context, ownerID string, client codex.ThreadClient) (ManagedThread, error) {
@@ -64,6 +82,16 @@ func (m *Manager) Current(ctx context.Context, ownerID string, client codex.Thre
 		return ManagedThread{}, fmt.Errorf("read current session: %w", err)
 	}
 	return ManagedThread{Info: thread, Current: true}, nil
+}
+
+func (m *Manager) Stats(ownerID string) Stats {
+	active, archived, currentID, hasCurrent := m.store.Counts(ownerID)
+	return Stats{
+		Active:     active,
+		Archived:   archived,
+		HasCurrent: hasCurrent,
+		CurrentID:  currentID,
+	}
 }
 
 func (m *Manager) New(ctx context.Context, ownerID string, client codex.ThreadClient, name string) (codex.ThreadInfo, error) {

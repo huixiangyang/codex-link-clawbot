@@ -16,15 +16,18 @@ import (
 
 // Handler processes incoming WeChat messages and dispatches replies.
 type Handler struct {
-	codex         codex.Runtime
-	contextTokens sync.Map // map[userID]contextToken
-	saveDir       string   // Linkhoard archive directory
-	seenMsgs      sync.Map // map[int64]time.Time — dedup by message_id
-	activeTasks   sync.Map // map[userID]*activeTask — 同一用户只允许一个活动任务
-	controlStates sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
-	progress      ProgressConfig
-	sessions      *session.Manager
-	visual        controlVisualRenderer
+	codex               codex.Runtime
+	contextTokens       sync.Map // map[userID]contextToken
+	saveDir             string   // Linkhoard archive directory
+	seenMsgs            sync.Map // map[int64]time.Time — dedup by message_id
+	activeTasks         sync.Map // map[userID]*activeTask — 同一用户只允许一个活动任务
+	controlStates       sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
+	progress            ProgressConfig
+	sessions            *session.Manager
+	visual              controlVisualRenderer
+	visualReplies       sync.Map // map[userID]*cachedVisualReply — 最近一条可取回的视觉长回复
+	visualReplyEnabled  bool
+	visualReplyMinRunes int
 }
 
 // SetSessionManager 注入显式 Codex 会话管理器。
@@ -40,8 +43,10 @@ func (h *Handler) SetVisualRenderer(renderer controlVisualRenderer) {
 // NewHandler 创建只路由到 Codex 的微信消息处理器。
 func NewHandler(codex codex.Runtime) *Handler {
 	return &Handler{
-		codex:    codex,
-		progress: DefaultProgressConfig(),
+		codex:               codex,
+		progress:            DefaultProgressConfig(),
+		visualReplyEnabled:  true,
+		visualReplyMinRunes: 900,
 	}
 }
 
@@ -118,6 +123,9 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 
 	trimmed := strings.TrimSpace(text)
 	clientID := NewClientID()
+	if len(images) == 0 && len(files) == 0 && h.sendCachedVisualReply(ctx, client, msg, trimmed, clientID) {
+		return
+	}
 
 	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
 	if reply, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
@@ -213,8 +221,14 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 
 	reply = appendArtifactSummary(reply, sentPaths, failed)
 
-	if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-		log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+	visualized, visualErr := h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
+	if visualErr != nil {
+		log.Printf("[visual] failed to send long reply to %s: %v", msg.FromUserID, visualErr)
+	}
+	if !visualized {
+		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
+		}
 	}
 
 	for _, imgURL := range imageURLs {
@@ -240,7 +254,7 @@ func (h *Handler) chatWithCodex(ctx context.Context, userID string, request code
 	log.Printf("[handler] dispatching to codex (%s) for %s", info, userID)
 
 	start := time.Now()
-	thread, err := h.sessions.EnsureActive(ctx, userID, threadAgent)
+	thread, err := h.sessions.EnsureActive(ctx, userID, threadAgent, suggestedSessionName(request))
 	if err != nil {
 		return "", err
 	}
@@ -262,6 +276,28 @@ func (h *Handler) chatWithCodex(ctx context.Context, userID string, request code
 
 	log.Printf("[handler] codex replied (%s, elapsed=%s): %q", info, elapsed, truncate(reply, 100))
 	return reply, nil
+}
+
+func suggestedSessionName(request codex.ChatRequest) string {
+	text := strings.TrimSpace(request.Text)
+	if text != "" {
+		if index := strings.IndexByte(text, '\n'); index >= 0 {
+			text = text[:index]
+		}
+		text = strings.Join(strings.Fields(text), " ")
+		return truncateRunes(text, 36)
+	}
+	if len(request.LocalImages) > 0 {
+		return "图片分析"
+	}
+	if len(request.LocalFiles) > 0 {
+		name := strings.TrimSpace(request.LocalFiles[0].Name)
+		if name != "" {
+			return truncateRunes("文件分析 · "+name, 36)
+		}
+		return "文件分析"
+	}
+	return ""
 }
 
 func (h *Handler) prepareTaskInput(reporter *progressReporter, text string, images []*ilink.ImageItem, files []*ilink.FileItem) (codex.ChatRequest, func(), error) {
@@ -290,7 +326,7 @@ func (h *Handler) beginTask(ctx context.Context, client *ilink.Client, msg ilink
 }
 
 func (h *Handler) sendActiveTaskStatus(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, task *activeTask) {
-	if err := SendTextReply(ctx, client, msg.FromUserID, task.busySummary(), msg.ContextToken, NewClientID()); err != nil {
+	if err := h.sendControlReply(ctx, client, msg.FromUserID, task.busySummary(), msg.ContextToken, NewClientID()); err != nil {
 		log.Printf("[handler] failed to send active task status to %s: %v", msg.FromUserID, err)
 	}
 }

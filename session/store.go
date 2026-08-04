@@ -140,6 +140,23 @@ func (s *Store) Active(ownerID string) (string, bool) {
 	return state.ActiveThreadID, true
 }
 
+func (s *Store) Counts(ownerID string) (active, archived int, currentID string, hasCurrent bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state := findOwner(s.index, ownerID)
+	if state == nil {
+		return 0, 0, "", false
+	}
+	for _, thread := range state.Threads {
+		if thread.Archived {
+			archived++
+		} else {
+			active++
+		}
+	}
+	return active, archived, state.ActiveThreadID, state.ActiveThreadID != ""
+}
+
 func (s *Store) Owns(ownerID, threadID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

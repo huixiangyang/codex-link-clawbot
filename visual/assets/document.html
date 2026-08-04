@@ -1,0 +1,79 @@
+{{define "document.html"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
+    body {
+      position: relative; color: #f3f5f1;
+      background:
+        radial-gradient(circle at 89% 8%, rgba(63, 89, 255, .28), transparent 27%),
+        radial-gradient(circle at 4% 94%, rgba(19, 220, 173, .14), transparent 30%),
+        linear-gradient(148deg, #080a0f 0%, #0c1019 58%, #07090d 100%);
+      font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .grid { position: absolute; inset: 0; opacity: .14; background-image: linear-gradient(rgba(255,255,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px); background-size: 72px 72px; mask-image: linear-gradient(to bottom, black, transparent 94%); }
+    .grain { position: absolute; inset: 0; opacity: .1; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.86' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.2'/%3E%3C/svg%3E"); }
+    .frame { position: relative; z-index: 1; min-height: 100%; padding: 64px 68px 52px; display: flex; flex-direction: column; }
+    .topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 48px; }
+    .brand { display: flex; align-items: center; gap: 18px; }
+    .mark { width: 56px; height: 56px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 18px; background: rgba(255,255,255,.05); }
+    .mark svg { width: 29px; height: 29px; fill: none; stroke: #75ffca; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .kicker { color: rgba(243,245,241,.58); font-size: 19px; font-weight: 650; letter-spacing: .17em; }
+    .page-chip { min-width: 94px; padding: 13px 17px; border: 1px solid rgba(117,255,202,.25); border-radius: 999px; color: #75ffca; background: rgba(117,255,202,.07); font: 650 19px/1 "Noto Sans Mono CJK SC", monospace; text-align: center; }
+    .hero { margin-bottom: 38px; }
+    h1 { margin: 0; max-width: 900px; font-size: 66px; font-weight: 720; line-height: 1.12; letter-spacing: -.045em; text-wrap: balance; }
+    .subtitle { margin-top: 18px; color: #88a1ff; font-size: 19px; font-weight: 650; letter-spacing: .13em; }
+    .progress { margin-top: 31px; height: 3px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.08); }
+    .progress span { display: block; height: 100%; width: {{.ProgressPercent}}%; background: linear-gradient(90deg, #75ffca, #8298ff); box-shadow: 0 0 20px rgba(117,255,202,.55); }
+    .content { display: grid; gap: 22px; }
+    .heading { margin-top: 10px; color: #fff; font-size: 39px; font-weight: 680; line-height: 1.35; letter-spacing: -.025em; }
+    .heading.H2 { font-size: 35px; color: #dce3ff; }
+    .heading.H3 { font-size: 31px; color: #b9c6f7; }
+    .paragraph { color: rgba(243,245,241,.84); font-size: 29px; font-weight: 440; line-height: 1.65; overflow-wrap: anywhere; }
+    .list { display: grid; grid-template-columns: 45px 1fr; gap: 12px; color: rgba(243,245,241,.87); font-size: 28px; line-height: 1.56; }
+    .bullet-mark { width: 10px; height: 10px; margin: 17px 0 0 8px; border: 2px solid #75ffca; border-radius: 50%; box-shadow: 0 0 13px rgba(117,255,202,.4); }
+    .order-mark { color: #75ffca; font: 650 25px/1.7 "Noto Sans Mono CJK SC", monospace; text-align: center; }
+    .quote { padding: 22px 26px; border-left: 4px solid #8298ff; border-radius: 0 18px 18px 0; color: rgba(232,236,255,.82); background: rgba(130,152,255,.08); font-size: 27px; line-height: 1.58; overflow-wrap: anywhere; }
+    .code { position: relative; padding: 48px 28px 26px; border: 1px solid rgba(255,255,255,.11); border-radius: 22px; color: #d9e6dc; background: rgba(2,5,8,.62); font: 24px/1.55 "Noto Sans Mono CJK SC", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .code:before { content: attr(data-language); position: absolute; top: 16px; left: 28px; color: rgba(117,255,202,.58); font-size: 16px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
+    .rule { height: 1px; margin: 8px 0; background: linear-gradient(90deg, rgba(117,255,202,.7), rgba(130,152,255,.25), transparent); }
+    .footer { margin-top: auto; padding-top: 34px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+    .footer-copy { max-width: 790px; color: rgba(243,245,241,.46); font-size: 20px; line-height: 1.5; }
+    .footer-index { color: rgba(243,245,241,.24); font: 20px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .08em; }
+  </style>
+</head>
+<body>
+  <div class="grid"></div><div class="grain"></div>
+  <main class="frame">
+    <header class="topline">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg></div>
+        <div class="kicker">{{.Kicker}}</div>
+      </div>
+      <div class="page-chip">{{.PageNumber}} / {{.TotalPages}}</div>
+    </header>
+    <section class="hero">
+      <h1>{{.Title}}</h1>
+      <div class="subtitle">{{.Subtitle}}</div>
+      <div class="progress"><span></span></div>
+    </section>
+    <section class="content">
+      {{range .Blocks}}
+        {{if eq .Kind "heading"}}<div class="heading {{.Prefix}}">{{.Text}}</div>
+        {{else if eq .Kind "bullet"}}<div class="list"><div class="bullet-mark"></div><div>{{.Text}}</div></div>
+        {{else if eq .Kind "ordered"}}<div class="list"><div class="order-mark">{{.Prefix}}</div><div>{{.Text}}</div></div>
+        {{else if eq .Kind "quote"}}<div class="quote">{{.Text}}</div>
+        {{else if eq .Kind "code"}}<div class="code" data-language="{{if .Language}}{{.Language}}{{else}}CODE{{end}}">{{.Text}}</div>
+        {{else if eq .Kind "rule"}}<div class="rule"></div>
+        {{else}}<div class="paragraph">{{.Text}}</div>{{end}}
+      {{end}}
+    </section>
+    <footer class="footer"><div class="footer-copy">{{.Footer}}</div><div class="footer-index">CODEX / {{.PageNumber}}</div></footer>
+  </main>
+</body>
+</html>{{end}}

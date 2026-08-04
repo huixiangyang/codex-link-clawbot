@@ -17,11 +17,23 @@ import (
 )
 
 type fakeControlVisualRenderer struct {
-	path        string
-	err         error
-	card        visual.Card
-	cleanedUp   bool
-	renderCalls int
+	path                string
+	err                 error
+	documentErr         error
+	card                visual.Card
+	documents           []visual.Document
+	cleanedUp           bool
+	renderCalls         int
+	documentRenderCalls int
+}
+
+func (r *fakeControlVisualRenderer) RenderDocument(_ context.Context, document visual.Document) (*visual.Artifact, error) {
+	r.documentRenderCalls++
+	r.documents = append(r.documents, document)
+	if r.documentErr != nil {
+		return nil, r.documentErr
+	}
+	return &visual.Artifact{Path: r.path, Width: 1080, Height: document.Height, Cleanup: func() { r.cleanedUp = true }}, nil
 }
 
 func (r *fakeControlVisualRenderer) Render(_ context.Context, card visual.Card) (*visual.Artifact, error) {
@@ -182,5 +194,101 @@ func TestVisualUploadFailureFallsBackToFullTextAndCleansArtifact(t *testing.T) {
 	}
 	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复数字") {
 		t.Fatalf("upload fallback message = %#v", sent.Msg.ItemList)
+	}
+}
+
+func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "document.png")
+	if err := os.WriteFile(imagePath, []byte("test-png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	renderer := &fakeControlVisualRenderer{path: imagePath}
+	var sent []ilink.SendMessageRequest
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ilink/bot/getuploadurl":
+			_, _ = fmt.Fprintf(w, `{"ret":0,"upload_full_url":%q}`, server.URL+"/upload")
+		case "/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("X-Encrypted-Param", "download-token")
+			_, _ = w.Write([]byte("ok"))
+		case "/ilink/bot/sendmessage":
+			var request ilink.SendMessageRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode long reply message: %v", err)
+			}
+			sent = append(sent, request)
+			_, _ = w.Write([]byte(`{"ret":0}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	handler, runtime := newSessionHandler(t)
+	handler.SetVisualRenderer(renderer)
+	handler.SetVisualReplyConfig(true, 20)
+	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL})
+	reply := "# 移动端结果\n\n" + strings.Repeat("这是一段适合手机阅读并且需要保留可复制原文的 Codex 回复。", 16)
+	handler.sendReplyWithMedia(context.Background(), client, ilink.WeixinMessage{FromUserID: "owner-1", ContextToken: "context-long"}, reply, "", "client-long")
+
+	if renderer.documentRenderCalls == 0 || len(renderer.documents) == 0 || !renderer.cleanedUp {
+		t.Fatalf("document renderer state = calls:%d documents:%d cleanup:%v", renderer.documentRenderCalls, len(renderer.documents), renderer.cleanedUp)
+	}
+	if len(sent) != renderer.documentRenderCalls+1 {
+		t.Fatalf("sent messages = %d, want %d pages and caption", len(sent), renderer.documentRenderCalls)
+	}
+	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
+		t.Fatalf("reading page message = %#v", item)
+	}
+	caption := sent[len(sent)-1].Msg.ItemList[0].TextItem
+	if caption == nil || !strings.Contains(caption.Text, "文字版") {
+		t.Fatalf("reading caption = %#v", caption)
+	}
+
+	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+		MessageID: 9301, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
+		MessageState: ilink.MessageStateFinish, ContextToken: "context-copy",
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "文字版"}}},
+	})
+	if runtime.chatThreadID != "" {
+		t.Fatalf("copyable text request unexpectedly reached Codex thread %s", runtime.chatThreadID)
+	}
+	if len(sent) != renderer.documentRenderCalls+2 {
+		t.Fatalf("sent messages after text retrieval = %d", len(sent))
+	}
+	copyItem := sent[len(sent)-1].Msg.ItemList[0].TextItem
+	if copyItem == nil || !strings.Contains(copyItem.Text, "移动端结果") || !strings.Contains(copyItem.Text, "可复制原文") {
+		t.Fatalf("copyable reply = %#v", copyItem)
+	}
+}
+
+func TestLongReplyRenderFailureFallsBackToFullText(t *testing.T) {
+	renderer := &fakeControlVisualRenderer{documentErr: fmt.Errorf("document renderer unavailable")}
+	var sent ilink.SendMessageRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+			t.Errorf("decode long reply fallback: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"ret":0}`))
+	}))
+	defer server.Close()
+
+	handler, _ := newSessionHandler(t)
+	handler.SetVisualRenderer(renderer)
+	handler.SetVisualReplyConfig(true, 20)
+	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL})
+	reply := strings.Repeat("长回复必须在渲染失败时完整退回文字。", 20)
+	handler.sendReplyWithMedia(context.Background(), client, ilink.WeixinMessage{FromUserID: "owner-1"}, reply, "", "fallback-long")
+	if renderer.documentRenderCalls != 1 {
+		t.Fatalf("document render calls = %d", renderer.documentRenderCalls)
+	}
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "完整退回文字") {
+		t.Fatalf("long reply fallback = %#v", sent.Msg.ItemList)
 	}
 }

@@ -106,6 +106,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("initialize visual control cards: %w", visualErr)
 		}
 		handler.SetVisualRenderer(visualRenderer)
+		handler.SetVisualReplyConfig(cfg.Visual.LongReplies, cfg.Visual.LongReplyMinRunes)
 		log.Printf("Visual control cards enabled (browser=%s)", visualRenderer.BrowserCommand())
 	}
 	sessionManager, err := session.NewManager("")

@@ -66,7 +66,9 @@ weclaw restart
   },
   "visual": {
     "enabled": true,
-    "browser_command": ""
+    "browser_command": "",
+    "long_replies": true,
+    "long_reply_min_runes": 900
   },
   "codex": {
     "command": "codex",
@@ -95,9 +97,11 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 ## WeChat interaction
 
-The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
+The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
 
 Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `切换会话 登录`, `当前会话`, `会话列表`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. A unique match runs immediately, multiple matches become numbered candidates, and archive requires confirmation.
+
+Codex replies at or above `visual.long_reply_min_runes` are parsed into safe heading, paragraph, list, quote, and code blocks, then delivered as at most ten mobile reading cards. Reply with `文字版` within 30 minutes to retrieve the complete copyable text. Excessively large replies, unsupported renderers, and any rendering or upload failure fall back to the full text without losing content.
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected by the control layer and is never forwarded to Codex.
 
@@ -140,6 +144,7 @@ More details:
 - [Long-running task progress](docs/wechat-progress.md)
 - [Attachments, artifacts, and reports](docs/attachments-and-reports.md)
 - [Visual control cards](docs/visual-controls.md)
+- [Acceptance checklist](docs/acceptance.md)
 
 ## License
 

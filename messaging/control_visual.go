@@ -136,7 +136,7 @@ func controlCardVariant(text string) visual.Variant {
 	switch {
 	case strings.HasPrefix(text, "WeClaw"):
 		return visual.VariantHome
-	case strings.HasPrefix(text, "准备归档"):
+	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消"):
 		return visual.VariantWarning
 	case strings.HasPrefix(text, "已") || strings.Contains(text, "已切换") || strings.Contains(text, "已恢复") ||
 		strings.Contains(text, "已重命名") || strings.Contains(text, "已归档"):
@@ -144,7 +144,7 @@ func controlCardVariant(text string) visual.Variant {
 	case strings.Contains(text, "失败") || strings.Contains(text, "不可用") || strings.Contains(text, "不存在") ||
 		strings.Contains(text, "无法读取") || strings.Contains(text, "必须") || strings.Contains(text, "失效") ||
 		strings.Contains(text, "暂时不能") || strings.Contains(text, "没有找到") || strings.Contains(text, "当前没有") ||
-		strings.Contains(text, "还没有"):
+		strings.Contains(text, "还没有") || strings.Contains(text, "本条消息未交给"):
 		return visual.VariantWarning
 	case strings.HasPrefix(text, "任务状态") || strings.Contains(text, "已运行：") || strings.Contains(text, "进度"):
 		return visual.VariantProgress
@@ -221,7 +221,8 @@ func controlFact(line string) (string, string, bool) {
 
 func isControlInstruction(line string) bool {
 	return strings.HasPrefix(line, "回复") || strings.HasPrefix(line, "发送新的") ||
-		strings.HasPrefix(line, "发送会话名称") || strings.HasPrefix(line, "请输入")
+		strings.HasPrefix(line, "发送会话名称") || strings.HasPrefix(line, "请输入") ||
+		strings.Contains(line, "发送“状态”")
 }
 
 func controlCaption(reply string, card visual.Card) string {

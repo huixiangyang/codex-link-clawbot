@@ -45,8 +45,8 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if !cfg.Progress.Enabled || cfg.Progress.TypingIntervalSeconds != 8 || cfg.Progress.FirstMessageDelaySeconds != 15 || cfg.Progress.MessageIntervalSeconds != 45 {
 		t.Fatalf("unexpected default progress config: %#v", cfg.Progress)
 	}
-	if !cfg.Visual.Enabled {
-		t.Fatal("visual control cards should be enabled by default")
+	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
+		t.Fatalf("unexpected default visual config: %#v", cfg.Visual)
 	}
 }
 
@@ -78,6 +78,16 @@ func TestVisualConfigRejectsRelativeBrowserCommand(t *testing.T) {
 	}
 }
 
+func TestVisualConfigRejectsUnsafeLongReplyThreshold(t *testing.T) {
+	for _, threshold := range []int{299, 5001} {
+		cfg := DefaultConfig()
+		cfg.Visual.LongReplyMinRunes = threshold
+		if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "long_reply_min_runes") {
+			t.Fatalf("threshold %d validation error = %v", threshold, err)
+		}
+	}
+}
+
 func TestLoadKeepsVisualDefaultWhenOlderConfigOmitsSection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -97,8 +107,8 @@ func TestLoadKeepsVisualDefaultWhenOlderConfigOmitsSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Visual.Enabled {
-		t.Fatal("omitted visual section should preserve the enabled default")
+	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
+		t.Fatalf("omitted visual section should preserve defaults: %#v", cfg.Visual)
 	}
 }
 

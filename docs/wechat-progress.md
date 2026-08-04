@@ -29,7 +29,7 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 
 ## 任务控制
 
-- 发送“状态”随时以视觉卡片返回任务状态、已运行时间和当前阶段；空闲时同时展示 Codex 运行信息。
+- 发送“状态”随时以视觉卡片返回任务状态、已运行时间和当前阶段；卡片可继续刷新，活动任务可进入二次确认取消；空闲时同时展示 Codex 运行信息。
 - 发送“取消”使用当前 `threadId` 和 `turnId` 调用 `turn/interrupt`。
 - 单独发送 `/` 打开视觉数字菜单；任务运行期间仍可查询运行信息和会话状态。
 - 新建、切换、重命名、归档、恢复和工作目录修改继续被忙碌保护拦截。
@@ -50,7 +50,9 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
   },
   "visual": {
     "enabled": true,
-    "browser_command": ""
+    "browser_command": "",
+    "long_replies": true,
+    "long_reply_min_runes": 900
   }
 }
 ```
@@ -62,6 +64,7 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 - `message_interval_seconds`：15–300 秒，只控制检查和发送新文字详情的节奏，不会触发重复保活。
 - 配置越界时服务拒绝启动，不做静默纠正。
 - `visual.browser_command` 为空时自动发现 Playwright Chromium 或系统 Google Chrome；设置时必须使用绝对路径。Snap Chromium 不受支持。
+- `visual.long_reply_min_runes`：300–5000 个 Unicode 字符，达到阈值的最终回复进入视觉阅读模式；超过 10 张卡片或 40000 字符时保持完整文字发送。
 
 ## 本机部署
 

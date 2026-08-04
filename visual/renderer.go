@@ -81,7 +81,7 @@ type Renderer struct {
 	sem     chan struct{}
 }
 
-//go:embed assets/card.html
+//go:embed assets/*.html
 var assets embed.FS
 
 func NewRenderer(cfg Config) (*Renderer, error) {
@@ -108,7 +108,7 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 2
 	}
-	tmpl, err := template.New("card.html").ParseFS(assets, "assets/card.html")
+	tmpl, err := template.New("visual").ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse visual card template: %w", err)
 	}
@@ -125,6 +125,24 @@ func (r *Renderer) BrowserCommand() string {
 }
 
 func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
+	card = normalizeCard(card)
+	htmlBytes, err := r.renderHTML(card)
+	if err != nil {
+		return nil, err
+	}
+	return r.renderArtifact(ctx, "card-*", card.Height, htmlBytes)
+}
+
+func (r *Renderer) RenderDocument(ctx context.Context, document Document) (*Artifact, error) {
+	document = normalizeDocument(document)
+	htmlBytes, err := r.renderDocumentHTML(document)
+	if err != nil {
+		return nil, err
+	}
+	return r.renderArtifact(ctx, "document-*", document.Height, htmlBytes)
+}
+
+func (r *Renderer) renderArtifact(ctx context.Context, pattern string, height int, htmlBytes []byte) (*Artifact, error) {
 	select {
 	case r.sem <- struct{}{}:
 		defer func() { <-r.sem }()
@@ -132,8 +150,7 @@ func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
 		return nil, ctx.Err()
 	}
 
-	card = normalizeCard(card)
-	dir, err := os.MkdirTemp(r.rootDir, "card-*")
+	dir, err := os.MkdirTemp(r.rootDir, pattern)
 	if err != nil {
 		return nil, fmt.Errorf("create visual render directory: %w", err)
 	}
@@ -145,11 +162,6 @@ func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
 	if err := os.Mkdir(profileDir, 0o700); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("create chromium profile: %w", err)
-	}
-	htmlBytes, err := r.renderHTML(card)
-	if err != nil {
-		cleanup()
-		return nil, err
 	}
 	if err := os.WriteFile(htmlPath, htmlBytes, 0o600); err != nil {
 		cleanup()
@@ -172,7 +184,7 @@ func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
 		"--hide-scrollbars",
 		"--host-resolver-rules=MAP * ~NOTFOUND",
 		"--user-data-dir=" + profileDir,
-		fmt.Sprintf("--window-size=%d,%d", CanvasWidth, card.Height),
+		fmt.Sprintf("--window-size=%d,%d", CanvasWidth, height),
 		"--screenshot=" + pngPath,
 		(&url.URL{Scheme: "file", Path: htmlPath}).String(),
 	}
@@ -216,9 +228,9 @@ func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
 		cleanup()
 		return nil, fmt.Errorf("decode rendered card: %w", decodeErr)
 	}
-	if imageConfig.Width != CanvasWidth || imageConfig.Height != card.Height {
+	if imageConfig.Width != CanvasWidth || imageConfig.Height != height {
 		cleanup()
-		return nil, fmt.Errorf("rendered card dimensions are %dx%d, expected %dx%d", imageConfig.Width, imageConfig.Height, CanvasWidth, card.Height)
+		return nil, fmt.Errorf("rendered image dimensions are %dx%d, expected %dx%d", imageConfig.Width, imageConfig.Height, CanvasWidth, height)
 	}
 	return &Artifact{Path: pngPath, Width: imageConfig.Width, Height: imageConfig.Height, Cleanup: cleanup}, nil
 }
@@ -227,6 +239,14 @@ func (r *Renderer) renderHTML(card Card) ([]byte, error) {
 	var output bytes.Buffer
 	if err := r.tmpl.ExecuteTemplate(&output, "card.html", card); err != nil {
 		return nil, fmt.Errorf("execute visual card template: %w", err)
+	}
+	return output.Bytes(), nil
+}
+
+func (r *Renderer) renderDocumentHTML(document Document) ([]byte, error) {
+	var output bytes.Buffer
+	if err := r.tmpl.ExecuteTemplate(&output, "document.html", document); err != nil {
+		return nil, fmt.Errorf("execute visual document template: %w", err)
 	}
 	return output.Bytes(), nil
 }
@@ -255,6 +275,31 @@ func normalizeCard(card Card) Card {
 		card.Height = maxCanvasHeight
 	}
 	return card
+}
+
+func normalizeDocument(document Document) Document {
+	if strings.TrimSpace(document.Kicker) == "" {
+		document.Kicker = "WECLAW / READING MODE"
+	}
+	if strings.TrimSpace(document.Title) == "" {
+		document.Title = "Codex 回复"
+	}
+	if document.PageNumber <= 0 {
+		document.PageNumber = 1
+	}
+	if document.TotalPages < document.PageNumber {
+		document.TotalPages = document.PageNumber
+	}
+	if document.ProgressPercent <= 0 || document.ProgressPercent > 100 {
+		document.ProgressPercent = document.PageNumber * 100 / document.TotalPages
+	}
+	if document.Height < minCanvasHeight {
+		document.Height = minCanvasHeight
+	}
+	if document.Height > maxCanvasHeight {
+		document.Height = maxCanvasHeight
+	}
+	return document
 }
 
 func ResolveBrowser(explicit string) (string, error) {

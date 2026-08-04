@@ -206,6 +206,83 @@ func TestControlMenuAndNumericNavigation(t *testing.T) {
 	}
 }
 
+func TestSessionPickerPaginatesAndAcceptsNaturalNavigation(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	for index := 1; index <= 14; index++ {
+		_ = controlReply(t, handler, "owner-1", fmt.Sprintf("新建会话 会话 %02d", index))
+	}
+
+	first := controlReply(t, handler, "owner-1", "会话列表")
+	for _, want := range []string{"页码：1 / 3", "总数：14", "下一页 · 2/3", "会话 14", "会话 09"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("first session page missing %q: %q", want, first)
+		}
+	}
+	second := controlReply(t, handler, "owner-1", "下一页")
+	for _, want := range []string{"页码：2 / 3", "上一页 · 1/3", "下一页 · 3/3", "会话 08", "会话 03"} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("second session page missing %q: %q", want, second)
+		}
+	}
+	third := controlReply(t, handler, "owner-1", "下页")
+	for _, want := range []string{"页码：3 / 3", "上一页 · 2/3", "会话 02", "会话 01"} {
+		if !strings.Contains(third, want) {
+			t.Fatalf("third session page missing %q: %q", want, third)
+		}
+	}
+	if strings.Contains(third, "  下一页 ·") {
+		t.Fatalf("last session page unexpectedly has next navigation: %q", third)
+	}
+	previous := controlReply(t, handler, "owner-1", "上一页")
+	if !strings.Contains(previous, "页码：2 / 3") {
+		t.Fatalf("previous page navigation = %q", previous)
+	}
+}
+
+func TestCurrentSessionDetailOffersQuickManagement(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	_ = controlReply(t, handler, "owner-1", "新建会话 视觉管理")
+	detail := controlReply(t, handler, "owner-1", "当前会话")
+	for _, want := range []string{"当前会话", "视觉管理", "1  重命名当前会话", "2  切换其他会话", "3  归档当前会话"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("session detail missing %q: %q", want, detail)
+		}
+	}
+	renamePrompt := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(renamePrompt, "发送新的会话名称") {
+		t.Fatalf("detail rename prompt = %q", renamePrompt)
+	}
+	renamed := controlReply(t, handler, "owner-1", "移动端管理")
+	if !strings.Contains(renamed, "会话已重命名") || !strings.Contains(renamed, "移动端管理") {
+		t.Fatalf("detail rename result = %q", renamed)
+	}
+}
+
+func TestTaskStatusOffersRefreshAndConfirmedCancellation(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	task := newActiveTask(context.Background())
+	handler.activeTasks.Store("owner-1", task)
+	defer func() {
+		task.finish()
+		handler.activeTasks.Delete("owner-1")
+	}()
+
+	status := controlReply(t, handler, "owner-1", "状态")
+	for _, want := range []string{"任务状态：运行中", "1  刷新状态", "2  取消当前任务"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("task status missing %q: %q", want, status)
+		}
+	}
+	confirm := controlReply(t, handler, "owner-1", "2")
+	if !strings.Contains(confirm, "准备取消当前任务") || !strings.Contains(confirm, "1  确认取消任务") {
+		t.Fatalf("task cancel confirmation = %q", confirm)
+	}
+	cancelled := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(cancelled, "已请求取消当前任务") || !task.cancelRequested() {
+		t.Fatalf("task cancel result = %q requested=%v", cancelled, task.cancelRequested())
+	}
+}
+
 func TestHandleMessageRoutesSingleSlashToMenuWithoutStartingCodexTurn(t *testing.T) {
 	var sent ilink.SendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,6 +390,40 @@ func TestChatWithCodexUsesOwnedExplicitThread(t *testing.T) {
 	}
 	if threadAgent.chatThreadID == "" {
 		t.Fatal("ChatThread() did not receive an explicit thread id")
+	}
+	if threadAgent.threads[threadAgent.chatThreadID].Name != "检查项目" {
+		t.Fatalf("automatic session name = %q", threadAgent.threads[threadAgent.chatThreadID].Name)
+	}
+}
+
+func TestSuggestedSessionNameUsesOnlyCleanUserInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		request codex.ChatRequest
+		want    string
+	}{
+		{name: "first line", request: codex.ChatRequest{Text: "检查发布流程\n[WeClaw 交付物回传]\n/private/path"}, want: "检查发布流程"},
+		{name: "image", request: codex.ChatRequest{LocalImages: []string{"/private/image.png"}}, want: "图片分析"},
+		{name: "file", request: codex.ChatRequest{LocalFiles: []codex.LocalFile{{Name: "release.patch"}}}, want: "文件分析 · release.patch"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := suggestedSessionName(test.request); got != test.want {
+				t.Fatalf("suggestedSessionName() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestThreadPreviewHidesInternalPromptSections(t *testing.T) {
+	preview := "用户的真实问题\n\n[WeClaw 交付物回传]\n/root/.weclaw/turns/private/outbox"
+	thread := codex.ThreadInfo{Preview: preview}
+	if got := threadSearchTitle(thread); got != "用户的真实问题" {
+		t.Fatalf("threadSearchTitle() = %q", got)
+	}
+	markerOnly := codex.ThreadInfo{Preview: "[WeClaw 入站文件]\n/private/file"}
+	if got := threadSearchTitle(markerOnly); got != "未命名会话" {
+		t.Fatalf("marker-only threadSearchTitle() = %q", got)
 	}
 }
 

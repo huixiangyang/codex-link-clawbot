@@ -161,6 +161,25 @@ func TestManagerPersistsSelectionAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestEnsureActiveNamesAnExistingUnnamedSession(t *testing.T) {
+	manager, err := NewManager(t.TempDir() + "/session-index.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeThreadClient()
+	unnamed, err := manager.New(context.Background(), "owner-1", client, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := manager.EnsureActive(context.Background(), "owner-1", client, "发布检查")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ID != unnamed.ID || active.Name != "发布检查" || client.threads[unnamed.ID].Name != "发布检查" {
+		t.Fatalf("EnsureActive() = %#v, stored = %#v", active, client.threads[unnamed.ID])
+	}
+}
+
 func TestManagerListsRenamesArchivesAndRestores(t *testing.T) {
 	manager, err := NewManager(t.TempDir() + "/session-index.json")
 	if err != nil {
@@ -174,6 +193,9 @@ func TestManagerListsRenamesArchivesAndRestores(t *testing.T) {
 	second, err := manager.New(context.Background(), "owner-1", client, "第二项")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if stats := manager.Stats("owner-1"); stats.Active != 2 || stats.Archived != 0 || !stats.HasCurrent || stats.CurrentID != second.ID {
+		t.Fatalf("Stats() before archive = %#v", stats)
 	}
 	renamed, err := manager.Rename(context.Background(), "owner-1", client, "发布排障")
 	if err != nil || renamed.Name != "发布排障" {
@@ -205,6 +227,9 @@ func TestManagerListsRenamesArchivesAndRestores(t *testing.T) {
 	if err != nil || archivedPage.Total != 1 || archivedPage.Items[0].Info.ID != second.ID {
 		t.Fatalf("archived List() = %#v, %v", archivedPage, err)
 	}
+	if stats := manager.Stats("owner-1"); stats.Active != 1 || stats.Archived != 1 || stats.CurrentID != first.ID {
+		t.Fatalf("Stats() after archive = %#v", stats)
+	}
 	restored, err := manager.Restore(context.Background(), "owner-1", client, ShortCode(second.ID))
 	if err != nil || restored.ID != second.ID {
 		t.Fatalf("Restore() = %#v, %v", restored, err)
@@ -212,6 +237,9 @@ func TestManagerListsRenamesArchivesAndRestores(t *testing.T) {
 	activePage, err := manager.List(context.Background(), "owner-1", client, false, 1, 6)
 	if err != nil || activePage.Total != 2 {
 		t.Fatalf("active List() = %#v, %v", activePage, err)
+	}
+	if stats := manager.Stats("owner-1"); stats.Active != 2 || stats.Archived != 0 {
+		t.Fatalf("Stats() after restore = %#v", stats)
 	}
 }
 

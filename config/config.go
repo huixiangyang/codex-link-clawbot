@@ -48,17 +48,22 @@ func (c CodexConfig) validate() error {
 // VisualConfig 控制微信操作卡片的 HTML 到 PNG 渲染。
 // 浏览器为空时自动发现 Playwright 管理的 Chromium 或系统 Chrome。
 type VisualConfig struct {
-	Enabled        bool   `json:"enabled"`
-	BrowserCommand string `json:"browser_command,omitempty"`
+	Enabled           bool   `json:"enabled"`
+	BrowserCommand    string `json:"browser_command,omitempty"`
+	LongReplies       bool   `json:"long_replies"`
+	LongReplyMinRunes int    `json:"long_reply_min_runes"`
 }
 
 func defaultVisualConfig() VisualConfig {
-	return VisualConfig{Enabled: true}
+	return VisualConfig{Enabled: true, LongReplies: true, LongReplyMinRunes: 900}
 }
 
 func (c VisualConfig) validate() error {
 	if c.BrowserCommand != "" && !filepath.IsAbs(c.BrowserCommand) {
 		return fmt.Errorf("visual.browser_command must be an absolute path")
+	}
+	if c.Enabled && c.LongReplies && (c.LongReplyMinRunes < 300 || c.LongReplyMinRunes > 5000) {
+		return fmt.Errorf("visual.long_reply_min_runes must be between 300 and 5000")
 	}
 	return nil
 }
