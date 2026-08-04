@@ -28,6 +28,7 @@ type Handler struct {
 	visualReplies       sync.Map // map[userID]*cachedVisualReply — 最近一条可取回的视觉长回复
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
+	reports             ScheduledReportProvider
 }
 
 // SetSessionManager 注入显式 Codex 会话管理器。
@@ -38,6 +39,11 @@ func (h *Handler) SetSessionManager(manager *session.Manager) {
 // SetVisualRenderer 注入可信模板的微信视觉卡片渲染器。
 func (h *Handler) SetVisualRenderer(renderer controlVisualRenderer) {
 	h.visual = renderer
+}
+
+// SetScheduledReportProvider 注入只读巡检状态，不允许微信修改调度配置。
+func (h *Handler) SetScheduledReportProvider(provider ScheduledReportProvider) {
+	h.reports = provider
 }
 
 // NewHandler 创建只路由到 Codex 的微信消息处理器。

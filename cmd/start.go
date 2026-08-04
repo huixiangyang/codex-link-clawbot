@@ -161,6 +161,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize scheduled reports: %w", err)
 	}
+	handler.SetScheduledReportProvider(reportScheduler)
 	go reportScheduler.Run(ctx)
 
 	// Codex 就绪后才启动消息轮询。

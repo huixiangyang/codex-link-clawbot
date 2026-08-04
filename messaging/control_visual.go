@@ -83,6 +83,9 @@ func controlCardFromText(reply string) visual.Card {
 	case strings.HasPrefix(first, "Codex："):
 		card.Title = "Codex 运行信息"
 		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "Codex："))
+	case strings.HasPrefix(first, "巡检详情："):
+		card.Title = "巡检详情"
+		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "巡检详情："))
 	case strings.HasPrefix(first, "直接发送文字、图片或文件"):
 		card.Title = "使用说明"
 		consumeFirst = false
@@ -150,7 +153,8 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantProgress
 	case strings.Contains(text, "会话"):
 		return visual.VariantSession
-	case strings.HasPrefix(text, "Codex：") || strings.HasPrefix(text, "工作目录") || strings.Contains(text, "协议："):
+	case strings.HasPrefix(text, "Codex：") || strings.HasPrefix(text, "工作目录") || strings.Contains(text, "协议：") ||
+		strings.Contains(text, "定时巡检") || strings.Contains(text, "巡检详情"):
 		return visual.VariantSystem
 	default:
 		return visual.VariantNeutral

@@ -52,6 +52,8 @@ const (
 	actionCancelTask          controlAction = "cancel_task"
 	actionRuntimeInfo         controlAction = "runtime_info"
 	actionPromptWorkingDir    controlAction = "prompt_working_dir"
+	actionScheduledReports    controlAction = "scheduled_reports"
+	actionScheduledReport     controlAction = "scheduled_report"
 	actionGuide               controlAction = "guide"
 )
 
@@ -69,7 +71,7 @@ type controlState struct {
 	Mode      controlMode
 	Prompt    string
 	Options   []controlOption
-	Back      controlAction
+	Back      controlOption
 	ExpiresAt time.Time
 }
 
@@ -121,6 +123,9 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	}
 	if isOneOf(text, "帮助", "怎么用", "使用说明") {
 		return h.openGuide(userID), true
+	}
+	if isOneOf(text, "定时巡检", "巡检状态", "定时报告", "报告计划") {
+		return h.openScheduledReports(userID, 1), true
 	}
 	if isOneOf(text, "会话", "查看会话", "看看会话", "会话菜单") {
 		return h.openSessionMenu(ctx, userID), true
@@ -195,7 +200,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		if !h.controlStates.CompareAndDelete(userID, state) {
 			return "操作状态已经变化。发送 / 重新打开菜单。", true
 		}
-		return h.executeControlAction(ctx, userID, controlOption{Action: state.Back}), true
+		return h.executeControlAction(ctx, userID, state.Back), true
 	}
 
 	switch state.Mode {
@@ -216,7 +221,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			if !h.controlStates.CompareAndDelete(userID, state) {
 				return "操作状态已经变化。发送 / 重新打开菜单。", true
 			}
-			return h.executeControlAction(ctx, userID, controlOption{Action: state.Back}), true
+			return h.executeControlAction(ctx, userID, state.Back), true
 		}
 		if choice < 1 || choice > len(state.Options) {
 			return state.Prompt + fmt.Sprintf("\n\n请输入 1-%d，或回复 0 返回。", len(state.Options)), true
@@ -326,6 +331,10 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.openRuntimeInfo(userID)
 	case actionPromptWorkingDir:
 		return h.openWorkingDirectoryInput(userID)
+	case actionScheduledReports:
+		return h.openScheduledReports(userID, option.Page)
+	case actionScheduledReport:
+		return h.openScheduledReport(userID, option.Value, option.Page)
 	case actionGuide:
 		return h.openGuide(userID)
 	default:
@@ -351,8 +360,11 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		{Label: "任务状态", Action: actionTaskStatus},
 		{Label: "Codex 信息", Action: actionRuntimeInfo},
 		{Label: "工作目录", Action: actionPromptWorkingDir},
-		{Label: "使用说明", Action: actionGuide},
 	}
+	if len(h.scheduledReportStatuses(userID)) > 0 {
+		options = append(options, controlOption{Label: "定时巡检", Action: actionScheduledReports, Page: 1})
+	}
+	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
 	prompt := strings.Join([]string{
 		"WeClaw",
 		"",
@@ -724,6 +736,11 @@ func (h *Handler) changeWorkingDirectory(value string) string {
 }
 
 func (h *Handler) storeChoice(userID, prompt string, options []controlOption, back controlAction) {
+	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: back})
+}
+
+// storeChoiceWithBack 为分页详情保留完整返回位置，避免移动端反复翻页。
+func (h *Handler) storeChoiceWithBack(userID, prompt string, options []controlOption, back controlOption) {
 	h.controlStates.Store(userID, &controlState{
 		Mode: controlChoice, Prompt: prompt, Options: append([]controlOption(nil), options...),
 		Back: back, ExpiresAt: time.Now().Add(controlStateTTL),
@@ -732,7 +749,7 @@ func (h *Handler) storeChoice(userID, prompt string, options []controlOption, ba
 
 func (h *Handler) storeInput(userID string, mode controlMode, prompt string, back controlAction) {
 	h.controlStates.Store(userID, &controlState{
-		Mode: mode, Prompt: prompt, Back: back, ExpiresAt: time.Now().Add(controlStateTTL),
+		Mode: mode, Prompt: prompt, Back: controlOption{Action: back}, ExpiresAt: time.Now().Add(controlStateTTL),
 	})
 }
 
@@ -769,7 +786,7 @@ func controlNavigationOption(text string, options []controlOption) (controlOptio
 		return controlOption{}, false
 	}
 	for _, option := range options {
-		if option.Action != actionSessionPage {
+		if option.Action != actionSessionPage && option.Action != actionScheduledReports {
 			continue
 		}
 		if forward && strings.HasPrefix(option.Label, "下一页") {

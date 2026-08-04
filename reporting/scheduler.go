@@ -98,7 +98,7 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 		date := localNow.Format("2006-01-02")
 		var body string
 		for _, recipient := range s.recipients {
-			stateKey := fmt.Sprintf("%d:%s%s", len(report.Name), report.Name, recipient.userID)
+			stateKey := reportStateKey(report.Name, recipient.userID)
 			if s.wasSent(stateKey, date) {
 				continue
 			}
@@ -115,6 +115,54 @@ func (s *Scheduler) runDue(ctx context.Context, now time.Time) {
 			log.Printf("[reporting] sent report %q to %s", report.Name, recipient.userID)
 		}
 	}
+}
+
+// ScheduledReportStatuses 为微信管理界面提供只读快照，不触发采集或发送。
+func (s *Scheduler) ScheduledReportStatuses(userID string) []messaging.ScheduledReportStatus {
+	now := s.now()
+	s.mu.Lock()
+	lastSent := make(map[string]string, len(s.state.LastSent))
+	for key, value := range s.state.LastSent {
+		lastSent[key] = value
+	}
+	s.mu.Unlock()
+
+	statuses := make([]messaging.ScheduledReportStatus, 0, len(s.reports))
+	for _, report := range s.reports {
+		location, err := time.LoadLocation(report.Timezone)
+		if err != nil {
+			continue
+		}
+		localNow := now.In(location)
+		target, err := time.ParseInLocation("15:04", report.DailyAt, location)
+		if err != nil {
+			continue
+		}
+		targetToday := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), target.Hour(), target.Minute(), 0, 0, location)
+		today := localNow.Format("2006-01-02")
+		last := lastSent[reportStateKey(report.Name, userID)]
+		state := "等待发送"
+		nextRun := targetToday
+		if !localNow.Before(targetToday) {
+			nextRun = targetToday.AddDate(0, 0, 1)
+			if last == today {
+				state = "今日已发送"
+			} else {
+				state = "等待重试"
+			}
+		}
+		statuses = append(statuses, messaging.ScheduledReportStatus{
+			Name: report.Name, State: state,
+			Schedule: "每天 " + report.DailyAt, Timezone: report.Timezone,
+			NextRun: nextRun.Format("2006-01-02 15:04"), LastSent: last,
+			ProjectDir: report.ProjectDir, Service: report.ServiceName, HealthURL: report.HealthURL,
+		})
+	}
+	return statuses
+}
+
+func reportStateKey(reportName, userID string) string {
+	return fmt.Sprintf("%d:%s%s", len(reportName), reportName, userID)
 }
 
 func (s *Scheduler) wasSent(key, date string) bool {

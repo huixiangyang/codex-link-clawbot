@@ -72,6 +72,20 @@ func TestControlCardUsesWarningSemanticsForArchiveConfirmation(t *testing.T) {
 	}
 }
 
+func TestControlCardFromScheduledReportDetail(t *testing.T) {
+	reply := "巡检详情：项目日报\n\n状态：今日已发送\n计划：每天 09:00\n时区：Asia/Shanghai\n\n1  刷新巡检详情\n2  返回巡检列表\n\n回复数字操作，0 返回巡检列表。"
+	card := controlCardFromText(reply)
+	if card.Variant != visual.VariantSystem || card.Title != "巡检详情" || card.Subtitle != "项目日报" {
+		t.Fatalf("report card identity = %#v", card)
+	}
+	if len(card.Facts) != 3 || card.Facts[0].Label != "状态" || card.Facts[0].Value != "今日已发送" {
+		t.Fatalf("report card facts = %#v", card.Facts)
+	}
+	if len(card.Options) != 2 || card.Options[1].Label != "返回巡检列表" {
+		t.Fatalf("report card options = %#v", card.Options)
+	}
+}
+
 func TestHandleMessageSendsVisualControlCardAndCaption(t *testing.T) {
 	imagePath := filepath.Join(t.TempDir(), "card.png")
 	if err := os.WriteFile(imagePath, []byte("test-png"), 0o600); err != nil {
