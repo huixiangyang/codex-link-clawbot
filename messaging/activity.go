@@ -80,6 +80,7 @@ func NewActivityStore(path string) (*ActivityStore, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read task history: %w", err)
 	}
+	needsSave := errors.Is(err, os.ErrNotExist)
 	if err == nil {
 		if err := os.Chmod(store.path, 0o600); err != nil {
 			return nil, fmt.Errorf("protect task history: %w", err)
@@ -97,8 +98,11 @@ func NewActivityStore(path string) (*ActivityStore, error) {
 		}
 	}
 	if store.interruptRunning(store.now()) {
+		needsSave = true
+	}
+	if needsSave {
 		if err := store.saveLocked(); err != nil {
-			return nil, fmt.Errorf("persist interrupted task history: %w", err)
+			return nil, fmt.Errorf("initialize task history: %w", err)
 		}
 	}
 	return store, nil

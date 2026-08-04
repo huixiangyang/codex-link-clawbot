@@ -53,6 +53,24 @@ func TestActivityStorePersistsOutcomesAndInterruptsRunningTasks(t *testing.T) {
 	}
 }
 
+func TestNewActivityStoreCreatesProtectedEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "task-history.json")
+	store, err := NewActivityStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records := store.List("owner-1"); len(records) != 0 {
+		t.Fatalf("new activity records = %#v", records)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("empty task history mode = %o", info.Mode().Perm())
+	}
+}
+
 func TestActivityStoreKeepsOnlyNewestRecords(t *testing.T) {
 	store, err := NewActivityStore(filepath.Join(t.TempDir(), "task-history.json"))
 	if err != nil {
