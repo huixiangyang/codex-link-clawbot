@@ -1,0 +1,104 @@
+{{define "card.html"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
+    body {
+      --accent: #98ff4f;
+      --accent-soft: rgba(152,255,79,.12);
+      --signal: #98ff4f;
+      position: relative;
+      color: #f5f7f2;
+      background:
+        radial-gradient(circle at 88% 9%, rgba(105,64,255,.28), transparent 28%),
+        radial-gradient(circle at 6% 82%, rgba(0,218,170,.15), transparent 30%),
+        linear-gradient(145deg, #090b10 0%, #0d1018 54%, #07090d 100%);
+      font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body.session { --accent: #9aa8ff; --accent-soft: rgba(154,168,255,.14); --signal: #8798ff; }
+    body.progress { --accent: #55e6ff; --accent-soft: rgba(85,230,255,.12); --signal: #55e6ff; }
+    body.system { --accent: #f2c66d; --accent-soft: rgba(242,198,109,.12); --signal: #f2c66d; }
+    body.success { --accent: #6fffc3; --accent-soft: rgba(111,255,195,.12); --signal: #6fffc3; }
+    body.warning { --accent: #ff9e7a; --accent-soft: rgba(255,158,122,.13); --signal: #ff795f; }
+    .grid {
+      position: absolute; inset: 0; opacity: .18; pointer-events: none;
+      background-image: linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px);
+      background-size: 72px 72px;
+      mask-image: linear-gradient(to bottom, black, transparent 90%);
+    }
+    .grain {
+      position: absolute; inset: 0; opacity: .13; pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E");
+    }
+    .frame { position: relative; z-index: 1; height: 100%; padding: 68px 68px 54px; display: flex; flex-direction: column; }
+    .topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 58px; }
+    .brand { display: flex; align-items: center; gap: 18px; }
+    .mark {
+      width: 58px; height: 58px; border: 1px solid rgba(255,255,255,.22); border-radius: 18px;
+      display: grid; place-items: center; background: rgba(255,255,255,.055); box-shadow: inset 0 0 0 1px rgba(255,255,255,.025);
+    }
+    .mark svg { width: 30px; height: 30px; fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .kicker { color: rgba(245,247,242,.58); font-size: 20px; font-weight: 650; letter-spacing: .17em; text-transform: uppercase; }
+    .live { display: flex; align-items: center; gap: 12px; color: rgba(245,247,242,.54); font-size: 19px; letter-spacing: .12em; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 24px var(--signal); }
+    .hero { margin-bottom: 46px; }
+    h1 { margin: 0; max-width: 900px; font-size: 76px; font-weight: 720; line-height: 1.08; letter-spacing: -.052em; text-wrap: balance; }
+    .subtitle { margin-top: 20px; color: var(--accent); font-size: 29px; font-weight: 560; line-height: 1.4; }
+    .rule { width: 100%; height: 1px; background: linear-gradient(90deg, var(--accent), rgba(255,255,255,.16) 30%, transparent); margin-top: 34px; }
+    .facts { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; margin-bottom: 34px; }
+    .fact { min-height: 100px; padding: 22px 25px; border: 1px solid rgba(255,255,255,.105); border-radius: 21px; background: rgba(255,255,255,.035); }
+    .fact-label { color: rgba(245,247,242,.48); font-size: 18px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
+    .fact-value { color: #fff; font-size: 28px; font-weight: 580; line-height: 1.35; overflow-wrap: anywhere; }
+    .body { display: grid; gap: 12px; margin-bottom: 30px; }
+    .body-line { color: rgba(245,247,242,.76); font-size: 28px; line-height: 1.58; overflow-wrap: anywhere; }
+    .options { display: grid; gap: 13px; }
+    .option {
+      position: relative; min-height: 112px; display: grid; grid-template-columns: 92px 1fr 42px; align-items: center;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 25px; background: linear-gradient(90deg, var(--accent-soft), rgba(255,255,255,.035));
+      overflow: hidden;
+    }
+    .option:before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+    .option-number { color: var(--accent); font-family: "Noto Sans Mono CJK SC", monospace; font-size: 35px; font-weight: 640; text-align: center; letter-spacing: -.06em; }
+    .option-label { font-size: 29px; font-weight: 570; line-height: 1.35; padding: 24px 10px; overflow-wrap: anywhere; }
+    .arrow { color: rgba(245,247,242,.35); display: grid; place-items: center; }
+    .arrow svg { width: 27px; height: 27px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .footer { margin-top: auto; padding-top: 34px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+    .footer-copy { max-width: 780px; color: rgba(245,247,242,.48); font-size: 21px; line-height: 1.45; }
+    .index { color: rgba(245,247,242,.22); font-family: "Noto Sans Mono CJK SC", monospace; font-size: 20px; letter-spacing: .08em; }
+  </style>
+</head>
+<body class="{{.Variant}}">
+  <div class="grid"></div><div class="grain"></div>
+  <main class="frame">
+    <header class="topline">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+        </div>
+        <div class="kicker">{{.Kicker}}</div>
+      </div>
+      <div class="live"><span class="dot"></span>LOCAL CODEX</div>
+    </header>
+    <section class="hero">
+      <h1>{{.Title}}</h1>
+      {{if .Subtitle}}<div class="subtitle">{{.Subtitle}}</div>{{end}}
+      <div class="rule"></div>
+    </section>
+    {{if .Facts}}<section class="facts">
+      {{range .Facts}}<div class="fact"><div class="fact-label">{{.Label}}</div><div class="fact-value">{{.Value}}</div></div>{{end}}
+    </section>{{end}}
+    {{if .Body}}<section class="body">
+      {{range .Body}}<div class="body-line">{{.}}</div>{{end}}
+    </section>{{end}}
+    {{if .Options}}<section class="options">
+      {{range .Options}}<div class="option"><div class="option-number">{{.Number}}</div><div class="option-label">{{.Label}}</div><div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div></div>{{end}}
+    </section>{{end}}
+    <footer class="footer"><div class="footer-copy">{{.Footer}}</div><div class="index">W / {{len .Options}}</div></footer>
+  </main>
+</body>
+</html>{{end}}

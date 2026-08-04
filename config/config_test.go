@@ -45,6 +45,9 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if !cfg.Progress.Enabled || cfg.Progress.TypingIntervalSeconds != 8 || cfg.Progress.FirstMessageDelaySeconds != 15 || cfg.Progress.MessageIntervalSeconds != 45 {
 		t.Fatalf("unexpected default progress config: %#v", cfg.Progress)
 	}
+	if !cfg.Visual.Enabled {
+		t.Fatal("visual control cards should be enabled by default")
+	}
 }
 
 func TestLoadEnvOverridesCodex(t *testing.T) {
@@ -52,6 +55,7 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	t.Setenv("WECLAW_CODEX_COMMAND", "/opt/codex")
 	t.Setenv("WECLAW_CODEX_CWD", "/srv/project")
 	t.Setenv("WECLAW_CODEX_MODEL", "gpt-test")
+	t.Setenv("WECLAW_VISUAL_BROWSER", "/opt/chromium")
 
 	cfg := DefaultConfig()
 	loadEnv(cfg)
@@ -60,6 +64,41 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	}
 	if cfg.Codex.Command != "/opt/codex" || cfg.Codex.Cwd != "/srv/project" || cfg.Codex.Model != "gpt-test" {
 		t.Fatalf("codex env overrides = %#v", cfg.Codex)
+	}
+	if cfg.Visual.BrowserCommand != "/opt/chromium" {
+		t.Fatalf("visual browser override = %q", cfg.Visual.BrowserCommand)
+	}
+}
+
+func TestVisualConfigRejectsRelativeBrowserCommand(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Visual.BrowserCommand = "chromium"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("visual validation error = %v", err)
+	}
+}
+
+func TestLoadKeepsVisualDefaultWhenOlderConfigOmitsSection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WECLAW_VISUAL_BROWSER", "")
+	path := filepath.Join(home, ".weclaw", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{
+  "progress": {"enabled": true, "typing_interval_seconds": 8, "first_message_delay_seconds": 15, "message_interval_seconds": 45},
+  "codex": {"command": "codex", "cwd": "", "model": ""}
+}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Visual.Enabled {
+		t.Fatal("omitted visual section should preserve the enabled default")
 	}
 }
 

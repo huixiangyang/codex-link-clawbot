@@ -32,6 +32,11 @@ codex app-server --listen stdio://
 1. Go 1.25 或更高版本。
 2. 已安装 `codex`，并完成 Codex 登录。
 3. 能在目标工作目录运行 `codex app-server --listen stdio://`。
+4. 已安装非 Snap 版 Chromium，用于视觉操作卡片。推荐由 Playwright 管理：
+
+```bash
+npx playwright install chromium
+```
 
 ## 安装
 
@@ -71,6 +76,10 @@ weclaw restart
     "first_message_delay_seconds": 15,
     "message_interval_seconds": 45
   },
+  "visual": {
+    "enabled": true,
+    "browser_command": ""
+  },
   "codex": {
     "command": "codex",
     "cwd": "/absolute/path/to/project",
@@ -83,6 +92,8 @@ weclaw restart
 
 `command` 只能是 Codex 可执行文件，不接受额外协议参数；程序固定追加 `app-server --listen stdio://`。`cwd` 为空时使用 `~/.weclaw/workspace`，设置时必须是绝对路径。`model` 为空时使用用户现有 Codex 默认配置。
 
+视觉操作卡片默认开启。程序会自动发现 Playwright 管理的 Chromium 或系统 Google Chrome；也可以用 `visual.browser_command` 指定浏览器可执行文件的绝对路径。Snap Chromium 因私有挂载无法稳定访问受保护的渲染目录，会被明确拒绝。功能开启但找不到可用浏览器时，服务拒绝启动并给出安装提示。
+
 支持以下环境变量覆盖：
 
 - `WECLAW_API_ADDR`
@@ -90,12 +101,13 @@ weclaw restart
 - `WECLAW_CODEX_COMMAND`
 - `WECLAW_CODEX_CWD`
 - `WECLAW_CODEX_MODEL`
+- `WECLAW_VISUAL_BROWSER`
 
 配置使用严格解码。旧的 `default_agent`、`agents`、`type`、`args`、`endpoint` 和别名配置会导致启动失败，不做兼容转换。
 
 ## 微信交互
 
-公开入口只有一个 `/`。发送后返回与当前任务和会话相关的数字菜单，回复数字即可继续；菜单两分钟后自动失效，失效后的数字仍作为普通内容交给 Codex。
+公开入口只有一个 `/`。发送后返回为手机设计的视觉操作卡片，内容随当前任务和会话变化，回复数字即可继续。需要输入的卡片会额外附一条短文字提示，避免在微信里反复打开图片；菜单两分钟后自动失效，失效后的数字仍作为普通内容交给 Codex。
 
 不打开菜单也可以直接说：
 
@@ -116,6 +128,7 @@ weclaw restart
 - PDF、日志、补丁、压缩包和常见源码作为不可信文件交给 Codex；桥接器不会执行或自动解压。
 - Codex 写入本次 turn 专属 `outbox` 的交付物会自动上传回微信。不会解析回复中的任意本机绝对路径。
 - turn 结束、失败或发送“取消”后，私有 `inbox/outbox` 整体删除。
+- 菜单、会话、状态、确认和错误等控制结果由固定本机模板渲染为 PNG；不会执行 Codex 返回的任意 HTML。
 
 主动发送：
 
@@ -138,12 +151,13 @@ curl -X POST http://127.0.0.1:18011/api/send \
 - 会话索引 `~/.weclaw/session-index.json` 使用 v2 严格格式、原子替换和 `0600` 权限。
 - 会话列表先读取 Codex 全局 thread，再只保留本地所有权索引中的 ID，避免暴露其他 Codex 客户端历史。
 - 终端原始输出、命令文本、diff 和环境变量不会作为进度消息发送到微信。
+- 视觉渲染禁用页面脚本和外部网络，使用严格 CSP；每次发送后立即删除私有 HTML、浏览器 profile 和 PNG。
 
 ## 开发验证
 
 ```bash
 go test ./...
-go test -race ./codex ./messaging ./session ./config ./reporting
+go test -race ./codex ./messaging ./session ./config ./reporting ./visual
 go vet ./...
 ```
 
@@ -152,6 +166,7 @@ go vet ./...
 - [会话管理](docs/session-management.md)
 - [微信长任务进度](docs/wechat-progress.md)
 - [文件、交付物与定时巡检](docs/attachments-and-reports.md)
+- [微信视觉操作卡片](docs/visual-controls.md)
 
 ## License
 

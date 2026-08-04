@@ -19,6 +19,7 @@ import (
 	"github.com/huixiangyang/weclaw/messaging"
 	"github.com/huixiangyang/weclaw/reporting"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/visual"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
@@ -99,6 +100,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	defer codex.Stop()
 	handler := messaging.NewHandler(codex)
+	if cfg.Visual.Enabled {
+		visualRenderer, visualErr := visual.NewRenderer(visual.Config{BrowserCommand: cfg.Visual.BrowserCommand})
+		if visualErr != nil {
+			return fmt.Errorf("initialize visual control cards: %w", visualErr)
+		}
+		handler.SetVisualRenderer(visualRenderer)
+		log.Printf("Visual control cards enabled (browser=%s)", visualRenderer.BrowserCommand())
+	}
 	sessionManager, err := session.NewManager("")
 	if err != nil {
 		return fmt.Errorf("initialize session manager: %w", err)

@@ -20,6 +20,7 @@ type Config struct {
 	Progress         ProgressConfig          `json:"progress"`
 	ScheduledReports []ScheduledReportConfig `json:"scheduled_reports,omitempty"`
 	Codex            CodexConfig             `json:"codex"`
+	Visual           VisualConfig            `json:"visual"`
 }
 
 // CodexConfig 是唯一智能体运行配置。App Server 参数由程序固定，避免协议分叉。
@@ -40,6 +41,24 @@ func (c CodexConfig) validate() error {
 	}
 	if c.Cwd != "" && !filepath.IsAbs(c.Cwd) {
 		return fmt.Errorf("codex.cwd must be an absolute path")
+	}
+	return nil
+}
+
+// VisualConfig 控制微信操作卡片的 HTML 到 PNG 渲染。
+// 浏览器为空时自动发现 Playwright 管理的 Chromium 或系统 Chrome。
+type VisualConfig struct {
+	Enabled        bool   `json:"enabled"`
+	BrowserCommand string `json:"browser_command,omitempty"`
+}
+
+func defaultVisualConfig() VisualConfig {
+	return VisualConfig{Enabled: true}
+}
+
+func (c VisualConfig) validate() error {
+	if c.BrowserCommand != "" && !filepath.IsAbs(c.BrowserCommand) {
+		return fmt.Errorf("visual.browser_command must be an absolute path")
 	}
 	return nil
 }
@@ -131,6 +150,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Progress: defaultProgressConfig(),
 		Codex:    defaultCodexConfig(),
+		Visual:   defaultVisualConfig(),
 	}
 }
 
@@ -183,6 +203,9 @@ func (c *Config) validate() error {
 	if err := c.Codex.validate(); err != nil {
 		return err
 	}
+	if err := c.Visual.validate(); err != nil {
+		return err
+	}
 	return validateScheduledReports(c.ScheduledReports)
 }
 
@@ -201,6 +224,9 @@ func loadEnv(cfg *Config) {
 	}
 	if v := os.Getenv("WECLAW_CODEX_MODEL"); v != "" {
 		cfg.Codex.Model = v
+	}
+	if v := os.Getenv("WECLAW_VISUAL_BROWSER"); v != "" {
+		cfg.Visual.BrowserCommand = v
 	}
 }
 

@@ -24,11 +24,17 @@ type Handler struct {
 	controlStates sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
 	progress      ProgressConfig
 	sessions      *session.Manager
+	visual        controlVisualRenderer
 }
 
 // SetSessionManager 注入显式 Codex 会话管理器。
 func (h *Handler) SetSessionManager(manager *session.Manager) {
 	h.sessions = manager
+}
+
+// SetVisualRenderer 注入可信模板的微信视觉卡片渲染器。
+func (h *Handler) SetVisualRenderer(renderer controlVisualRenderer) {
+	h.visual = renderer
 }
 
 // NewHandler 创建只路由到 Codex 的微信消息处理器。
@@ -115,7 +121,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 
 	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
 	if reply, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
-		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send control result to %s: %v", msg.FromUserID, err)
 		}
 		return

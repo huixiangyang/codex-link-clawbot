@@ -29,9 +29,9 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 
 ## 任务控制
 
-- 发送“状态”随时返回任务状态、已运行时间和当前阶段；空闲时同时返回 Codex 运行信息。
+- 发送“状态”随时以视觉卡片返回任务状态、已运行时间和当前阶段；空闲时同时展示 Codex 运行信息。
 - 发送“取消”使用当前 `threadId` 和 `turnId` 调用 `turn/interrupt`。
-- 单独发送 `/` 打开数字菜单；任务运行期间仍可查询运行信息和会话状态。
+- 单独发送 `/` 打开视觉数字菜单；任务运行期间仍可查询运行信息和会话状态。
 - 新建、切换、重命名、归档、恢复和工作目录修改继续被忙碌保护拦截。
 
 取消请求发出后，原任务的文字进度、最终答案和迟到错误都不再推送。任务完成与取消通过同一状态锁原子决胜，避免确认取消后仍发送最终答案；重复发送“取消”只返回“正在取消”，不会重复提交中断。
@@ -47,6 +47,10 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
     "typing_interval_seconds": 8,
     "first_message_delay_seconds": 15,
     "message_interval_seconds": 45
+  },
+  "visual": {
+    "enabled": true,
+    "browser_command": ""
   }
 }
 ```
@@ -57,6 +61,7 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 - `first_message_delay_seconds`：5–120 秒。
 - `message_interval_seconds`：15–300 秒，只控制检查和发送新文字详情的节奏，不会触发重复保活。
 - 配置越界时服务拒绝启动，不做静默纠正。
+- `visual.browser_command` 为空时自动发现 Playwright Chromium 或系统 Google Chrome；设置时必须使用绝对路径。Snap Chromium 不受支持。
 
 ## 本机部署
 
@@ -73,7 +78,7 @@ systemd 使用 `Restart=always` 自动拉起桥接器，标准输出和错误继
 验证命令：
 
 ```bash
-go test -race ./codex ./messaging ./session ./config ./reporting
+go test -race ./codex ./messaging ./session ./config ./reporting ./visual
 go test ./...
 go vet ./...
 systemctl --user status weclaw.service
