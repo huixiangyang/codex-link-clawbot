@@ -4,17 +4,71 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
 )
 
 // Config holds the application configuration.
 type Config struct {
-	DefaultAgent string                 `json:"default_agent"`
-	APIAddr      string                 `json:"api_addr,omitempty"`
-	SaveDir      string                 `json:"save_dir,omitempty"` // Linkhoard archive directory
-	Progress     ProgressConfig         `json:"progress"`
-	Agents       map[string]AgentConfig `json:"agents"`
+	DefaultAgent     string                  `json:"default_agent"`
+	APIAddr          string                  `json:"api_addr,omitempty"`
+	SaveDir          string                  `json:"save_dir,omitempty"` // Linkhoard archive directory
+	Progress         ProgressConfig          `json:"progress"`
+	ScheduledReports []ScheduledReportConfig `json:"scheduled_reports,omitempty"`
+	Agents           map[string]AgentConfig  `json:"agents"`
+}
+
+// ScheduledReportConfig 定义每日一次的确定性项目巡检。
+// 配置项全部显式必填，避免服务以猜测值静默运行。
+type ScheduledReportConfig struct {
+	Name                string `json:"name"`
+	DailyAt             string `json:"daily_at"`
+	Timezone            string `json:"timezone"`
+	ProjectDir          string `json:"project_dir"`
+	ServiceName         string `json:"service_name"`
+	HealthURL           string `json:"health_url"`
+	CommitLookbackHours int    `json:"commit_lookback_hours"`
+}
+
+var serviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9@_.:-]+$`)
+
+func validateScheduledReports(reports []ScheduledReportConfig) error {
+	names := make(map[string]struct{}, len(reports))
+	for index, report := range reports {
+		prefix := fmt.Sprintf("scheduled_reports[%d]", index)
+		name := strings.TrimSpace(report.Name)
+		if name == "" {
+			return fmt.Errorf("%s.name is required", prefix)
+		}
+		if _, exists := names[name]; exists {
+			return fmt.Errorf("scheduled report name %q is duplicated", name)
+		}
+		names[name] = struct{}{}
+		if _, err := time.Parse("15:04", report.DailyAt); err != nil {
+			return fmt.Errorf("%s.daily_at must use HH:MM", prefix)
+		}
+		if _, err := time.LoadLocation(report.Timezone); err != nil {
+			return fmt.Errorf("%s.timezone is invalid: %w", prefix, err)
+		}
+		if !filepath.IsAbs(report.ProjectDir) {
+			return fmt.Errorf("%s.project_dir must be an absolute path", prefix)
+		}
+		if !serviceNamePattern.MatchString(report.ServiceName) {
+			return fmt.Errorf("%s.service_name is invalid", prefix)
+		}
+		healthURL, err := url.Parse(report.HealthURL)
+		if err != nil || (healthURL.Scheme != "http" && healthURL.Scheme != "https") || healthURL.Host == "" {
+			return fmt.Errorf("%s.health_url must be an absolute HTTP URL", prefix)
+		}
+		if report.CommitLookbackHours < 1 || report.CommitLookbackHours > 168 {
+			return fmt.Errorf("%s.commit_lookback_hours must be between 1 and 168", prefix)
+		}
+	}
+	return nil
 }
 
 // ProgressConfig 控制长任务在微信端的进度提示和保活节奏。
@@ -141,6 +195,9 @@ func Load() (*Config, error) {
 		cfg.Agents = make(map[string]AgentConfig)
 	}
 	if err := cfg.Progress.validate(); err != nil {
+		return nil, err
+	}
+	if err := validateScheduledReports(cfg.ScheduledReports); err != nil {
 		return nil, err
 	}
 

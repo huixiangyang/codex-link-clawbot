@@ -17,6 +17,7 @@ import (
 	"github.com/fastclaw-ai/weclaw/config"
 	"github.com/fastclaw-ai/weclaw/ilink"
 	"github.com/fastclaw-ai/weclaw/messaging"
+	"github.com/fastclaw-ai/weclaw/reporting"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
@@ -145,7 +146,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Load custom aliases from agent configs
 	handler.SetCustomAliases(config.BuildAliasMap(cfg.Agents))
 
-	// Set save directory for images/files if configured
+	// 可选的 Linkhoard 网页归档目录，与 turn 附件沙箱无关。
 	if cfg.SaveDir != "" {
 		handler.SetSaveDir(cfg.SaveDir)
 		log.Printf("Linkhoard archive directory: %s", cfg.SaveDir)
@@ -174,11 +175,29 @@ func runStart(cmd *cobra.Command, args []string) error {
 		apiAddr = apiAddrFlag
 	}
 	apiServer := api.NewServer(clients, apiAddr)
+	apiErr := make(chan error, 1)
 	go func() {
-		if err := apiServer.Run(ctx); err != nil {
+		apiErr <- apiServer.Run(ctx)
+	}()
+	select {
+	case <-apiServer.Ready():
+	case err := <-apiErr:
+		return fmt.Errorf("start API server: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	go func() {
+		if err := <-apiErr; err != nil {
 			log.Printf("API server error: %v", err)
 		}
 	}()
+
+	// 定时巡检复用已登录的微信账号主动发送，状态按报告和绑定者持久化去重。
+	reportScheduler, err := reporting.NewScheduler(cfg.ScheduledReports, clients)
+	if err != nil {
+		return fmt.Errorf("initialize scheduled reports: %w", err)
+	}
+	go reportScheduler.Run(ctx)
 
 	// Agent 就绪后才启动消息轮询。
 	log.Printf("Starting message bridge for %d account(s)...", len(accounts))

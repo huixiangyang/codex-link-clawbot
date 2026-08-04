@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,5 +138,49 @@ func TestLoadEnvOverridesTopLevelOnly(t *testing.T) {
 	}
 	if got := cfg.Agents["claude"].Env["KEEP"]; got != "value" {
 		t.Fatalf("agent env = %q, want preserved value", got)
+	}
+}
+
+func TestValidateScheduledReports(t *testing.T) {
+	reports := []ScheduledReportConfig{{
+		Name:                "项目日报",
+		DailyAt:             "09:00",
+		Timezone:            "Asia/Shanghai",
+		ProjectDir:          filepath.Clean("/srv/project"),
+		ServiceName:         "weclaw.service",
+		HealthURL:           "http://127.0.0.1:18011/health",
+		CommitLookbackHours: 24,
+	}}
+	if err := validateScheduledReports(reports); err != nil {
+		t.Fatalf("validateScheduledReports() error: %v", err)
+	}
+}
+
+func TestValidateScheduledReportsRejectsImplicitOrUnsafeValues(t *testing.T) {
+	base := ScheduledReportConfig{
+		Name: "项目日报", DailyAt: "09:00", Timezone: "Asia/Shanghai",
+		ProjectDir: "/srv/project", ServiceName: "weclaw.service",
+		HealthURL: "http://127.0.0.1:18011/health", CommitLookbackHours: 24,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*ScheduledReportConfig)
+		want   string
+	}{
+		{name: "time", mutate: func(report *ScheduledReportConfig) { report.DailyAt = "9am" }, want: "daily_at"},
+		{name: "timezone", mutate: func(report *ScheduledReportConfig) { report.Timezone = "Mars/Base" }, want: "timezone"},
+		{name: "relative project", mutate: func(report *ScheduledReportConfig) { report.ProjectDir = "project" }, want: "absolute"},
+		{name: "service injection", mutate: func(report *ScheduledReportConfig) { report.ServiceName = "weclaw;reboot" }, want: "service_name"},
+		{name: "health URL", mutate: func(report *ScheduledReportConfig) { report.HealthURL = "file:///etc/passwd" }, want: "health_url"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			report := base
+			test.mutate(&report)
+			err := validateScheduledReports([]ScheduledReportConfig{report})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }

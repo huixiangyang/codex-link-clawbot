@@ -1,116 +1,111 @@
 package messaging
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
-var supportedAttachmentExts = []string{
+const (
+	maxOutboundArtifacts     = 8
+	maxOutboundArtifactBytes = int64(50 << 20)
+	maxOutboundArtifactsSize = int64(100 << 20)
+)
+
+var supportedArtifactExts = []string{
 	".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-	".zip", ".txt", ".csv",
+	".zip", ".tar", ".gz", ".tgz", ".patch", ".diff",
+	".txt", ".log", ".md", ".csv", ".json", ".yaml", ".yml",
 	".png", ".jpg", ".jpeg", ".gif", ".webp",
 	".mp4", ".mov",
 }
 
-func defaultAttachmentWorkspace() string {
-	home, err := os.UserHomeDir()
+type artifactCollection struct {
+	Paths   []string
+	Skipped []string
+}
+
+// collectArtifacts 只收集本次 turn 专属 outbox 内的常规文件。
+// 不再解析回复中的任意绝对路径，避免误发工作区源码或凭据。
+func collectArtifacts(root string) (artifactCollection, error) {
+	var collection artifactCollection
+	if strings.TrimSpace(root) == "" {
+		return collection, nil
+	}
+	cleanRoot, err := canonicalizePath(root, true)
 	if err != nil {
-		return filepath.Clean(os.TempDir())
+		return collection, fmt.Errorf("解析交付目录: %w", err)
 	}
-	return filepath.Join(home, ".weclaw", "workspace")
-}
-
-func extractLocalAttachmentPaths(text string) []string {
-	var paths []string
-	seen := make(map[string]struct{})
-
-	for _, line := range strings.Split(text, "\n") {
-		candidate := strings.TrimSpace(line)
-		if candidate == "" || !filepath.IsAbs(candidate) {
-			continue
+	var totalSize int64
+	err = filepath.WalkDir(cleanRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			collection.Skipped = append(collection.Skipped, filepath.Base(path)+"（无法读取）")
+			return nil
 		}
-		if !isSupportedAttachmentPath(candidate) {
-			continue
+		if path == cleanRoot || entry.IsDir() {
+			return nil
 		}
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() {
-			continue
+		rel, relErr := filepath.Rel(cleanRoot, path)
+		if relErr != nil {
+			return nil
 		}
-		if _, ok := seen[candidate]; ok {
-			continue
+		if entry.Type()&os.ModeSymlink != 0 {
+			collection.Skipped = append(collection.Skipped, rel+"（不允许符号链接）")
+			return nil
 		}
-		seen[candidate] = struct{}{}
-		paths = append(paths, candidate)
-	}
-
-	return paths
-}
-
-func isAllowedAttachmentPath(path string, allowedRoots []string) bool {
-	cleanPath, err := canonicalizePath(path, true)
+		info, infoErr := entry.Info()
+		if infoErr != nil || !info.Mode().IsRegular() {
+			collection.Skipped = append(collection.Skipped, rel+"（不是常规文件）")
+			return nil
+		}
+		if !isSupportedArtifactPath(path) {
+			collection.Skipped = append(collection.Skipped, rel+"（文件类型不支持）")
+			return nil
+		}
+		if info.Size() > maxOutboundArtifactBytes {
+			collection.Skipped = append(collection.Skipped, rel+"（超过 50 MiB）")
+			return nil
+		}
+		if len(collection.Paths) >= maxOutboundArtifacts {
+			collection.Skipped = append(collection.Skipped, rel+"（超过 8 个文件）")
+			return nil
+		}
+		if totalSize+info.Size() > maxOutboundArtifactsSize {
+			collection.Skipped = append(collection.Skipped, rel+"（总大小超过 100 MiB）")
+			return nil
+		}
+		totalSize += info.Size()
+		collection.Paths = append(collection.Paths, path)
+		return nil
+	})
 	if err != nil {
-		return false
+		return collection, fmt.Errorf("扫描交付目录: %w", err)
 	}
-
-	for _, root := range allowedRoots {
-		if root == "" {
-			continue
-		}
-		cleanRoot, err := canonicalizePath(root, false)
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(cleanRoot, cleanPath)
-		if err != nil {
-			continue
-		}
-		if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
-			return true
-		}
-	}
-
-	return false
+	return collection, nil
 }
 
-func rewriteReplyWithAttachmentResults(reply string, sentPaths, failedPaths []string) string {
-	sentMap := make(map[string]string, len(sentPaths))
+func appendArtifactSummary(reply string, sentPaths, failed []string) string {
+	var lines []string
 	for _, path := range sentPaths {
-		sentMap[path] = "已发送附件：" + filepath.Base(path)
+		lines = append(lines, "已发送附件："+filepath.Base(path))
 	}
-
-	lines := strings.Split(reply, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if replacement, ok := sentMap[trimmed]; ok {
-			lines[i] = replacement
-		}
+	for _, item := range failed {
+		lines = append(lines, "附件未发送："+item)
 	}
-
-	rewritten := strings.Join(lines, "\n")
-
-	var failureLines []string
-	seenFailures := make(map[string]struct{})
-	for _, path := range failedPaths {
-		if _, ok := seenFailures[path]; ok {
-			continue
-		}
-		seenFailures[path] = struct{}{}
-		failureLines = append(failureLines, "附件发送失败："+filepath.Base(path))
+	if len(lines) == 0 {
+		return reply
 	}
-	if len(failureLines) == 0 {
-		return rewritten
+	if strings.TrimSpace(reply) == "" {
+		return strings.Join(lines, "\n")
 	}
-	if strings.TrimSpace(rewritten) == "" {
-		return strings.Join(failureLines, "\n")
-	}
-	return rewritten + "\n" + strings.Join(failureLines, "\n")
+	return strings.TrimSpace(reply) + "\n\n" + strings.Join(lines, "\n")
 }
 
-func isSupportedAttachmentPath(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return slices.Contains(supportedAttachmentExts, ext)
+func isSupportedArtifactPath(path string) bool {
+	return slices.Contains(supportedArtifactExts, strings.ToLower(filepath.Ext(path)))
 }
 
 func canonicalizePath(path string, mustExist bool) (string, error) {

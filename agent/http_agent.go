@@ -87,6 +87,9 @@ func (a *HTTPAgent) Chat(ctx context.Context, conversationID string, request Cha
 	if len(request.LocalImages) > 0 {
 		return "", fmt.Errorf("HTTP agent does not support local image input")
 	}
+	if len(request.LocalFiles) > 0 {
+		return "", fmt.Errorf("HTTP agent does not support local file input")
+	}
 	a.mu.Lock()
 	messages := a.buildMessages(conversationID, request.Text)
 	a.mu.Unlock()

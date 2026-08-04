@@ -36,7 +36,7 @@ func TestPrepareAgentInputDownloadsImageAndCleansTaskDirectory(t *testing.T) {
 	defer server.Close()
 
 	root := filepath.Join(t.TempDir(), "inbox")
-	request, cleanup, err := prepareAgentInput(context.Background(), "", []*ilink.ImageItem{{URL: server.URL}}, root)
+	request, cleanup, err := prepareAgentInput(context.Background(), "", []*ilink.ImageItem{{URL: server.URL}}, nil, root)
 	if err != nil {
 		t.Fatalf("prepareAgentInput() error: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPrepareAgentInputPreservesImagePrompt(t *testing.T) {
 	}))
 	defer server.Close()
 
-	request, cleanup, err := prepareAgentInput(context.Background(), "  修复截图里的错误  ", []*ilink.ImageItem{{URL: server.URL}}, t.TempDir())
+	request, cleanup, err := prepareAgentInput(context.Background(), "  修复截图里的错误  ", []*ilink.ImageItem{{URL: server.URL}}, nil, t.TempDir())
 	if err != nil {
 		t.Fatalf("prepareAgentInput() error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestPrepareAgentInputRejectsInvalidImageAndRemovesPartialFiles(t *testing.T
 	defer server.Close()
 
 	root := filepath.Join(t.TempDir(), "inbox")
-	_, _, err := prepareAgentInput(context.Background(), "分析", []*ilink.ImageItem{{URL: server.URL}}, root)
+	_, _, err := prepareAgentInput(context.Background(), "分析", []*ilink.ImageItem{{URL: server.URL}}, nil, root)
 	if err == nil || !strings.Contains(err.Error(), "不支持的图片格式") {
 		t.Fatalf("prepareAgentInput() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestPrepareAgentInputRejectsTooManyImages(t *testing.T) {
 	for index := range images {
 		images[index] = &ilink.ImageItem{URL: "https://example.invalid/image.png"}
 	}
-	_, _, err := prepareAgentInput(context.Background(), "分析", images, t.TempDir())
+	_, _, err := prepareAgentInput(context.Background(), "分析", images, nil, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "最多支持") {
 		t.Fatalf("prepareAgentInput() error = %v", err)
 	}
@@ -143,7 +143,7 @@ func TestPrepareAgentInputCancellationRemovesTaskDirectory(t *testing.T) {
 		cancel()
 	}()
 	root := filepath.Join(t.TempDir(), "inbox")
-	_, _, err := prepareAgentInput(ctx, "分析", []*ilink.ImageItem{{URL: server.URL}}, root)
+	_, _, err := prepareAgentInput(ctx, "分析", []*ilink.ImageItem{{URL: server.URL}}, nil, root)
 	if err == nil {
 		t.Fatal("prepareAgentInput() error = nil, want cancellation")
 	}

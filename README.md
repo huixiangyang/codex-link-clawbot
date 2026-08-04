@@ -102,13 +102,17 @@ Switching default agent is persisted to config — survives restarts.
 
 ## Media Messages
 
-WeClaw supports sending images, videos, files, and voice messages to/from WeChat.
+WeClaw accepts images, files, and voice input from WeChat, and can send images, videos, and files back to WeChat.
 
 **Images sent from WeChat:** In Codex App Server mode, WeClaw downloads and decrypts the image, then sends the text and local image in one multimodal turn. Image-only messages receive a default analysis prompt and do not require `save_dir`. Each message may contain up to four JPEG, PNG, GIF, or WebP images, with a 20 MiB limit per image. Private temporary files are deleted when the task completes or is cancelled. Agents without image-input support return an explicit error instead of silently dropping the image.
+
+**Files sent from WeChat:** PDF, ZIP/TAR/GZip, logs, patches, and common source-code files are downloaded into a private per-turn inbox and exposed to the local agent with their name, type, size, and absolute path. A message may contain up to eight files, each up to 50 MiB, with a combined image-and-file limit of 100 MiB. The bridge never executes or automatically extracts inbound files, and removes the entire turn directory after completion or cancellation.
 
 **Voice messages:** When you send a voice message in WeChat, WeClaw automatically uses WeChat's speech-to-text transcription and forwards the text to the AI agent. Duplicate voice message events are automatically deduplicated.
 
 **From agent replies:** When an AI agent returns markdown with images (`![](url)`), WeClaw automatically extracts the image URLs, downloads them, uploads to WeChat CDN (AES-128-ECB encrypted), and sends them as image messages.
+
+**Automatic artifact delivery:** Every local-agent turn receives a private outbox. Reports, patches, archives, and other supported deliverables written there are uploaded and sent to WeChat automatically, with delivery results appended to the final reply. Arbitrary absolute paths in model output are never treated as attachments. Limits are eight files, 50 MiB each, and 100 MiB total per turn.
 
 **Markdown handling:** Agent responses are automatically converted from markdown to plain text for WeChat display — code fences are stripped, links show display text only, bold/italic markers are removed, etc.
 
@@ -154,6 +158,28 @@ curl -X POST http://127.0.0.1:18011/api/send \
 Supported media types: images (png, jpg, gif, webp), videos (mp4, mov), files (pdf, doc, zip, etc.).
 
 Set `WECLAW_API_ADDR` to change the listen address (e.g. `0.0.0.0:18011`).
+
+## Scheduled Project Reports
+
+WeClaw can send a deterministic daily project report directly to every signed-in account owner. It reads the Git branch, dirty-file count, upstream divergence, recent commits, the configured user-systemd service state, and an HTTP health endpoint. Collection does not use an AI model.
+
+```json
+{
+  "scheduled_reports": [
+    {
+      "name": "Daily project report",
+      "daily_at": "09:00",
+      "timezone": "Asia/Shanghai",
+      "project_dir": "/absolute/path/to/project",
+      "service_name": "weclaw.service",
+      "health_url": "http://127.0.0.1:18011/health",
+      "commit_lookback_hours": 24
+    }
+  ]
+}
+```
+
+Every field is required and validated at startup. Delivery state is persisted in `~/.weclaw/scheduled-reports-state.json`, preventing duplicate reports after restarts while still catching up after a missed scheduled time. Remove the array entry to disable a report.
 
 ## Configuration
 

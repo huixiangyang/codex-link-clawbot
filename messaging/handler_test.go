@@ -181,3 +181,16 @@ func TestExtractImagesReturnsEveryImageItem(t *testing.T) {
 		t.Fatalf("extractImages() = %#v", got)
 	}
 }
+
+func TestExtractFilesReturnsEveryFileItem(t *testing.T) {
+	first := &ilink.FileItem{FileName: "report.pdf"}
+	second := &ilink.FileItem{FileName: "source.zip"}
+	got := extractFiles(ilink.WeixinMessage{ItemList: []ilink.MessageItem{
+		{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "检查"}},
+		{Type: ilink.ItemTypeFile, FileItem: first},
+		{Type: ilink.ItemTypeFile, FileItem: second},
+	}})
+	if len(got) != 2 || got[0] != first || got[1] != second {
+		t.Fatalf("extractFiles() = %#v", got)
+	}
+}

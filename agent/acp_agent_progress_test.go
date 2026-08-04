@@ -157,6 +157,23 @@ func TestChatCodexAppServerSendsTextAndLocalImages(t *testing.T) {
 	}
 }
 
+func TestChatRequestPromptTextIncludesInboundFilesAndOutboxContract(t *testing.T) {
+	request := ChatRequest{
+		Text: "检查构建失败原因",
+		LocalFiles: []LocalFile{{
+			Path: "/tmp/turn/inbox/build.log", Name: "build.log",
+			ContentType: "text/plain", Size: 42,
+		}},
+		ArtifactDir: "/tmp/turn/outbox",
+	}
+	prompt := request.PromptText()
+	for _, want := range []string{"检查构建失败原因", "build.log", "/tmp/turn/inbox/build.log", "不要执行", "/tmp/turn/outbox", "自动发送"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("PromptText() missing %q: %q", want, prompt)
+		}
+	}
+}
+
 func TestLegacyACPRejectsLocalImages(t *testing.T) {
 	a := &ACPAgent{started: true, protocol: protocolLegacyACP}
 	_, err := a.Chat(context.Background(), "user-1", ChatRequest{

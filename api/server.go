@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"sync"
 
 	"github.com/fastclaw-ai/weclaw/ilink"
 	"github.com/fastclaw-ai/weclaw/messaging"
@@ -15,6 +17,8 @@ import (
 type Server struct {
 	clients []*ilink.Client
 	addr    string
+	ready   chan struct{}
+	once    sync.Once
 }
 
 // NewServer creates an API server.
@@ -22,7 +26,12 @@ func NewServer(clients []*ilink.Client, addr string) *Server {
 	if addr == "" {
 		addr = "127.0.0.1:18011"
 	}
-	return &Server{clients: clients, addr: addr}
+	return &Server{clients: clients, addr: addr, ready: make(chan struct{})}
+}
+
+// Ready 在监听端口真正绑定成功后关闭，供调度器避免启动竞态。
+func (s *Server) Ready() <-chan struct{} {
+	return s.ready
 }
 
 // SendRequest is the JSON body for POST /api/send.
@@ -41,6 +50,10 @@ func (s *Server) Run(ctx context.Context) error {
 		fmt.Fprintln(w, "ok")
 	})
 
+	listener, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{Addr: s.addr, Handler: mux}
 
 	go func() {
@@ -48,8 +61,9 @@ func (s *Server) Run(ctx context.Context) error {
 		srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("[api] listening on %s", s.addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	s.once.Do(func() { close(s.ready) })
+	log.Printf("[api] listening on %s", listener.Addr())
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

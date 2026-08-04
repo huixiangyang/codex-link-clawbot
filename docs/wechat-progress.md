@@ -7,7 +7,7 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 ## 事件链路
 
 1. WeClaw 通过 iLink 长轮询接收扫码绑定账号的消息。
-2. 文本与微信图片被整理为结构化输入；图片经下载、解密和格式校验后，以 `localImage` 与文本一起进入同一个 Codex App Server turn。
+2. 文本、微信图片和文件被整理为结构化输入；图片以 `localImage` 进入 Codex App Server，文件以受控本机路径和元数据进入同一个 turn。
 3. `turn/plan/updated` 被压缩为已完成步骤数和当前步骤。
 4. `agentMessage` 的 `commentary` 阶段作为进度，`final_answer` 阶段只进入最终回复。
 5. `commandExecution` 和 `fileChange` 只产生固定活动标签；终端输出、命令文本和 diff 内容不进入微信消息。
@@ -16,10 +16,10 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 ## 图片输入
 
 - 仅 Codex App Server 协议接收微信图片；不支持结构化图片输入的 Agent 直接返回错误。
-- 图片无需依赖 `save_dir`，统一写入 `~/.weclaw/inbox/turn-*` 私有任务目录，目录权限为 `0700`、文件权限为 `0600`。
+- 图片无需依赖 `save_dir`，统一写入 `~/.weclaw/turns/turn-*/inbox` 私有任务目录，目录权限为 `0700`、文件权限为 `0600`。
 - 单条消息最多 4 张图片，单张最大 20 MiB，仅接受按文件内容识别出的 JPEG、PNG、GIF 和 WebP。
 - 有文字时按“文字 + 图片”提交；纯图片消息自动补充图片分析指令。
-- turn 完成、失败或通过 `/cancel` 取消后，任务图片目录立即删除。
+- turn 完成、失败或通过 `/cancel` 取消后，包含入站附件和出站交付物的整个任务目录立即删除。
 
 ## 并发规则
 
@@ -72,7 +72,7 @@ systemd 使用 `Restart=always` 自动拉起桥接器，标准输出和错误继
 验证命令：
 
 ```bash
-go test -race ./agent ./messaging ./config
+go test -race ./agent ./messaging ./config ./reporting
 go test ./...
 go vet ./...
 systemctl --user status weclaw.service

@@ -387,6 +387,10 @@ func (a *ACPAgent) chat(ctx context.Context, conversationID string, request Chat
 	if len(request.LocalImages) > 0 {
 		return "", fmt.Errorf("ACP protocol %q does not support image input", a.protocol)
 	}
+	promptText := request.PromptText()
+	if promptText == "" {
+		return "", fmt.Errorf("prompt input is empty")
+	}
 
 	// Get or create session
 	sessionID, isNew, err := a.getOrCreateSession(ctx, conversationID)
@@ -422,7 +426,7 @@ func (a *ACPAgent) chat(ctx context.Context, conversationID string, request Chat
 	go func() {
 		result, err := a.rpc(ctx, "session/prompt", promptParams{
 			SessionID: sessionID,
-			Prompt:    []promptEntry{{Type: "text", Text: request.Text}},
+			Prompt:    []promptEntry{{Type: "text", Text: promptText}},
 		})
 		if result != nil {
 			log.Printf("[acp] prompt result (session=%s): %s", sessionID, string(result))
@@ -582,7 +586,7 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, conversationID string
 	// turn/start 会立即返回 turn ID；取消时必须携带它调用 turn/interrupt。
 	// 短暂脱离任务取消信号，确保即使用户立刻取消也能拿到 turn ID 后完成中断。
 	input := make([]codexUserInput, 0, 1+len(request.LocalImages))
-	if text := strings.TrimSpace(request.Text); text != "" {
+	if text := request.PromptText(); text != "" {
 		input = append(input, codexUserInput{Type: "text", Text: text})
 	}
 	for _, imagePath := range request.LocalImages {

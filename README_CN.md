@@ -113,13 +113,17 @@ Codex App Server 模式会把阶段说明、计划更新和工具活动转换成
 
 ## 富媒体消息
 
-WeClaw 支持收发图片、视频、文件和语音消息。
+WeClaw 支持微信图片、文件和语音输入，并支持向微信发送图片、视频和文件。
 
 **微信图片输入：** Codex App Server 模式会下载并解密微信图片，把文字和图片作为同一个多模态 turn 发送给 Codex。纯图片消息会自动补充图片分析指令，不需要配置 `save_dir`。单条消息最多 4 张、单张最大 20 MiB，仅接受 JPEG、PNG、GIF 和 WebP；临时文件使用私有权限，并在任务完成或取消后删除。不支持图片输入的 Agent 会明确返回错误，不会静默忽略图片。
+
+**微信文件输入：** 可以直接发送 PDF、ZIP/TAR/GZip、日志、补丁以及常见源代码文件。单条消息最多 8 个文件、单个最大 50 MiB，图片与文件合计最大 100 MiB。文件进入 `~/.weclaw/turns/turn-*/inbox` 私有目录，Codex 会收到文件名、类型、大小和绝对路径；文件被视为不可信数据，不会由桥接器执行或自动解压。任务完成或取消后整个 turn 目录删除。
 
 **语音消息：** 在微信中发送语音消息时，WeClaw 会自动使用微信的语音转文字功能，将转写后的文本发送给 AI Agent。重复的语音消息事件会自动去重。
 
 **Agent 回复自动处理：** 当 AI Agent 返回包含图片的 markdown（`![](url)`）时，WeClaw 会自动提取图片 URL，下载文件，上传到微信 CDN（AES-128-ECB 加密），然后作为图片消息发送。
+
+**交付物自动回传：** 每个 turn 都会为 Agent 提供独立的 `outbox` 路径。Codex 把最终报告、补丁、压缩包或其他受支持文件写入该目录后，WeClaw 会自动上传并发送到微信，再在最终文字中列出成功和失败的附件。旧的“从回复中提取任意绝对路径”机制已删除，工作区文件不会被误发。单次最多回传 8 个文件、单个最大 50 MiB、总计最大 100 MiB。
 
 **Markdown 转换：** Agent 的回复会自动从 markdown 转为纯文本再发送 — 代码块去掉围栏、链接只保留文字、加粗斜体标记去除等。
 
@@ -166,6 +170,30 @@ curl -X POST http://127.0.0.1:18011/api/send \
 
 设置 `WECLAW_API_ADDR` 环境变量可更改监听地址（如 `0.0.0.0:18011`）。
 
+## 定时项目巡检
+
+WeClaw 可以每天主动向扫码绑定者发送确定性巡检报告，内容直接采集自 Git、systemd 和 HTTP 健康端点，不经过 Agent 推断。报告包含当前分支、未提交改动数、与上游的领先/落后、指定时间窗口内的最近提交、用户服务状态和健康检查响应。
+
+```json
+{
+  "scheduled_reports": [
+    {
+      "name": "项目日报",
+      "daily_at": "09:00",
+      "timezone": "Asia/Shanghai",
+      "project_dir": "/absolute/path/to/project",
+      "service_name": "weclaw.service",
+      "health_url": "http://127.0.0.1:18011/health",
+      "commit_lookback_hours": 24
+    }
+  ]
+}
+```
+
+所有字段必填且启动时严格校验。到达设定时间后，每个报告会发送给所有已登录账号的绑定者；当天发送状态保存在 `~/.weclaw/scheduled-reports-state.json`，服务重启不会重复推送，错过时间后当天首次启动会补发。删除数组中的配置即可停用，不存在隐式默认任务。
+
+完整的文件安全边界、产物协议和调度行为见 [微信文件、交付物与定时巡检](docs/attachments-and-reports.md)。
+
 ## 配置
 
 配置文件路径：`~/.weclaw/config.json`
@@ -179,6 +207,17 @@ curl -X POST http://127.0.0.1:18011/api/send \
     "first_message_delay_seconds": 15,
     "message_interval_seconds": 45
   },
+  "scheduled_reports": [
+    {
+      "name": "项目日报",
+      "daily_at": "09:00",
+      "timezone": "Asia/Shanghai",
+      "project_dir": "/home/user/my-project",
+      "service_name": "weclaw.service",
+      "health_url": "http://127.0.0.1:18011/health",
+      "commit_lookback_hours": 24
+    }
+  ],
   "agents": {
     "claude": {
       "type": "acp",

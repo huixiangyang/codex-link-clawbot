@@ -44,7 +44,12 @@ func SendMediaFromURL(ctx context.Context, client *ilink.Client, toUserID, media
 
 // SendMediaFromPath reads a local file and sends it as a media message.
 func SendMediaFromPath(ctx context.Context, client *ilink.Client, toUserID, path, contextToken string) error {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+	data, err := readAllLimited(file, maxOutboundArtifactBytes)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}

@@ -107,11 +107,15 @@ func (a *CLIAgent) Chat(ctx context.Context, conversationID string, request Chat
 	if len(request.LocalImages) > 0 {
 		return "", fmt.Errorf("CLI agent %q does not support image input", a.name)
 	}
+	promptText := request.PromptText()
+	if promptText == "" {
+		return "", fmt.Errorf("prompt input is empty")
+	}
 	switch a.name {
 	case "codex":
-		return a.chatCodex(ctx, request.Text)
+		return a.chatCodex(ctx, promptText)
 	default:
-		return a.chatClaude(ctx, conversationID, request.Text)
+		return a.chatClaude(ctx, conversationID, promptText)
 	}
 }
 
