@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/fastclaw-ai/weclaw/config"
+	"github.com/huixiangyang/weclaw/config"
 )
 
 type commandRunner func(context.Context, string, ...string) (string, error)

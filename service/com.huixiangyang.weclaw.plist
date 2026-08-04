@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.fastclaw.weclaw</string>
+    <string>com.huixiangyang.weclaw</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/weclaw</string>

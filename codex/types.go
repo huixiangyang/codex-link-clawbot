@@ -1,4 +1,4 @@
-package agent
+package codex
 
 import (
 	"context"
@@ -9,16 +9,15 @@ import (
 	"strings"
 )
 
-// AgentInfo holds metadata about an agent for logging/debugging.
-type AgentInfo struct {
-	Name    string // e.g. "claude-acp", "claude", "gpt-4o"
-	Type    string // e.g. "acp", "cli", "http"
-	Model   string // e.g. "sonnet", "gpt-4o-mini"
-	Command string // binary path, e.g. "/usr/local/bin/claude-agent-acp"
-	PID     int    // subprocess PID (0 if not applicable, e.g. http agent)
+// RuntimeInfo 是 Codex App Server 的运行时摘要。
+type RuntimeInfo struct {
+	Model   string
+	Command string
+	Cwd     string
+	PID     int
 }
 
-// ProgressKind 描述 Agent 在一次长任务中的安全进度类型。
+// ProgressKind 描述 Codex 在一次长任务中的安全进度类型。
 // 桥接层只消费结构化状态，不转发命令原始输出。
 type ProgressKind string
 
@@ -40,7 +39,7 @@ type ProgressEvent struct {
 type ProgressHandler func(ProgressEvent)
 
 // LocalFile 是微信文件落盘后的受控本机引用。
-// Agent 只能把它当作不可信数据读取，不能直接执行其中的内容。
+// Codex 只能把它当作不可信数据读取，不能直接执行其中的内容。
 type LocalFile struct {
 	Path        string
 	Name        string
@@ -48,7 +47,7 @@ type LocalFile struct {
 	Size        int64
 }
 
-// ChatRequest 是一次 Agent turn 的结构化用户输入。
+// ChatRequest 是一次 Codex turn 的结构化用户输入。
 // 本机路径的生命周期全部由消息桥接层管理。
 type ChatRequest struct {
 	Text        string
@@ -57,7 +56,7 @@ type ChatRequest struct {
 	ArtifactDir string
 }
 
-// PromptText 把本机文件和交付目录转换为 Agent 可执行的明确约定。
+// PromptText 把本机文件和交付目录转换为 Codex 可执行的明确约定。
 // 图片仍通过支持多模态的协议字段单独提交，不嵌入文本。
 func (r ChatRequest) PromptText() string {
 	var sections []string
@@ -84,12 +83,6 @@ func (r ChatRequest) PromptText() string {
 		}, "\n"))
 	}
 	return strings.Join(sections, "\n\n")
-}
-
-// ProgressAgent 为支持阶段更新的 Agent 提供显式接口。
-// 未实现该接口的 Agent 仍可通过 Agent.Chat 正常返回最终答案。
-type ProgressAgent interface {
-	ChatWithProgress(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error)
 }
 
 // ThreadStatus 是 Codex App Server 返回的线程运行状态。
@@ -128,9 +121,9 @@ type ThreadPage struct {
 	NextCursor string
 }
 
-// ThreadAgent 为 Codex App Server 暴露显式线程生命周期。
+// ThreadClient 暴露 Codex App Server 的显式线程生命周期。
 // 微信消息层必须先完成归属校验，再把 threadID 交给这些方法。
-type ThreadAgent interface {
+type ThreadClient interface {
 	StartThread(ctx context.Context) (ThreadInfo, error)
 	ResumeThread(ctx context.Context, threadID string) (ThreadInfo, error)
 	ReadThread(ctx context.Context, threadID string) (ThreadInfo, error)
@@ -142,14 +135,21 @@ type ThreadAgent interface {
 	ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error)
 }
 
-// ThreadProgressAgent 是支持结构化任务进度的显式线程 Agent。
-type ThreadProgressAgent interface {
+// ProgressClient 是支持结构化任务进度的 Codex 客户端。
+type ProgressClient interface {
 	ChatThreadWithProgress(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error)
 }
 
+// Runtime 是消息层需要的最小 Codex 能力；会话命令再要求 ThreadClient。
+type Runtime interface {
+	ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error)
+	Info() RuntimeInfo
+	SetCwd(cwd string)
+}
+
 // String returns a human-readable summary for logging.
-func (i AgentInfo) String() string {
-	s := fmt.Sprintf("name=%s, type=%s, model=%s, command=%s", i.Name, i.Type, i.Model, i.Command)
+func (i RuntimeInfo) String() string {
+	s := fmt.Sprintf("codex app-server, model=%s, command=%s, cwd=%s", i.Model, i.Command, i.Cwd)
 	if i.PID > 0 {
 		s += fmt.Sprintf(", pid=%d", i.PID)
 	}
@@ -202,17 +202,4 @@ func mergeEnv(base []string, extra map[string]string) ([]string, error) {
 	}
 
 	return merged, nil
-}
-
-// Agent is the interface for AI chat agents.
-type Agent interface {
-	// Chat sends structured user input to the agent and returns the response.
-	// conversationID is used to maintain conversation history per user.
-	Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error)
-
-	// Info returns metadata about this agent.
-	Info() AgentInfo
-
-	// SetCwd changes the working directory for subsequent operations.
-	SetCwd(cwd string)
 }

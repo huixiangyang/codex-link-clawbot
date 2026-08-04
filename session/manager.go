@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
+	"github.com/huixiangyang/weclaw/codex"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 )
 
 type ManagedThread struct {
-	Info        agent.ThreadInfo
+	Info        codex.ThreadInfo
 	Current     bool
 	Archived    bool
 	Unavailable bool
@@ -43,19 +43,19 @@ func NewManager(path string) (*Manager, error) {
 	return &Manager{store: store, now: time.Now}, nil
 }
 
-func (m *Manager) EnsureActive(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent) (agent.ThreadInfo, error) {
-	if threadID, ok := m.store.Active(ownerID, agentName); ok {
+func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex.ThreadClient) (codex.ThreadInfo, error) {
+	if threadID, ok := m.store.Active(ownerID); ok {
 		thread, err := client.ReadThread(ctx, threadID)
 		if err != nil {
-			return agent.ThreadInfo{}, fmt.Errorf("read active session %s: %w", ShortCode(threadID), err)
+			return codex.ThreadInfo{}, fmt.Errorf("read active session %s: %w", ShortCode(threadID), err)
 		}
 		return thread, nil
 	}
-	return m.New(ctx, ownerID, agentName, client, "")
+	return m.New(ctx, ownerID, client, "")
 }
 
-func (m *Manager) Current(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent) (ManagedThread, error) {
-	threadID, ok := m.store.Active(ownerID, agentName)
+func (m *Manager) Current(ctx context.Context, ownerID string, client codex.ThreadClient) (ManagedThread, error) {
+	threadID, ok := m.store.Active(ownerID)
 	if !ok {
 		return ManagedThread{}, ErrNoActive
 	}
@@ -66,26 +66,26 @@ func (m *Manager) Current(ctx context.Context, ownerID, agentName string, client
 	return ManagedThread{Info: thread, Current: true}, nil
 }
 
-func (m *Manager) New(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent, name string) (agent.ThreadInfo, error) {
+func (m *Manager) New(ctx context.Context, ownerID string, client codex.ThreadClient, name string) (codex.ThreadInfo, error) {
 	name, err := normalizeName(name)
 	if err != nil {
-		return agent.ThreadInfo{}, err
+		return codex.ThreadInfo{}, err
 	}
 	thread, err := client.StartThread(ctx)
 	if err != nil {
-		return agent.ThreadInfo{}, fmt.Errorf("start session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("start session: %w", err)
 	}
 	if name != "" {
 		if err := client.SetThreadName(ctx, thread.ID, name); err != nil {
 			_ = client.ArchiveThread(context.WithoutCancel(ctx), thread.ID)
-			return agent.ThreadInfo{}, fmt.Errorf("name new session: %w", err)
+			return codex.ThreadInfo{}, fmt.Errorf("name new session: %w", err)
 		}
 		thread.Name = name
 	}
-	oldThreadID, hadOld := m.store.Active(ownerID, agentName)
-	if err := m.store.Register(ownerID, agentName, thread, true, m.now()); err != nil {
+	oldThreadID, hadOld := m.store.Active(ownerID)
+	if err := m.store.Register(ownerID, thread, true, m.now()); err != nil {
 		_ = client.ArchiveThread(context.WithoutCancel(ctx), thread.ID)
-		return agent.ThreadInfo{}, fmt.Errorf("persist new session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("persist new session: %w", err)
 	}
 	if hadOld && oldThreadID != thread.ID {
 		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), oldThreadID)
@@ -93,22 +93,22 @@ func (m *Manager) New(ctx context.Context, ownerID, agentName string, client age
 	return thread, nil
 }
 
-func (m *Manager) Use(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent, reference string) (agent.ThreadInfo, error) {
-	record, err := m.store.Resolve(ownerID, agentName, reference, false)
+func (m *Manager) Use(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (codex.ThreadInfo, error) {
+	record, err := m.store.Resolve(ownerID, reference, false)
 	if err != nil {
-		return agent.ThreadInfo{}, err
+		return codex.ThreadInfo{}, err
 	}
-	oldThreadID, _ := m.store.Active(ownerID, agentName)
+	oldThreadID, _ := m.store.Active(ownerID)
 	if oldThreadID == record.ID {
 		return client.ReadThread(ctx, record.ID)
 	}
 	thread, err := client.ResumeThread(ctx, record.ID)
 	if err != nil {
-		return agent.ThreadInfo{}, fmt.Errorf("resume session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("resume session: %w", err)
 	}
-	if err := m.store.SetActive(ownerID, agentName, record.ID, m.now()); err != nil {
+	if err := m.store.SetActive(ownerID, record.ID, m.now()); err != nil {
 		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), record.ID)
-		return agent.ThreadInfo{}, fmt.Errorf("persist selected session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("persist selected session: %w", err)
 	}
 	if oldThreadID != "" {
 		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), oldThreadID)
@@ -116,45 +116,45 @@ func (m *Manager) Use(ctx context.Context, ownerID, agentName string, client age
 	return thread, nil
 }
 
-func (m *Manager) Rename(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent, name string) (agent.ThreadInfo, error) {
+func (m *Manager) Rename(ctx context.Context, ownerID string, client codex.ThreadClient, name string) (codex.ThreadInfo, error) {
 	name, err := normalizeName(name)
 	if err != nil || name == "" {
 		if err == nil {
 			err = fmt.Errorf("session name is required")
 		}
-		return agent.ThreadInfo{}, err
+		return codex.ThreadInfo{}, err
 	}
-	threadID, ok := m.store.Active(ownerID, agentName)
+	threadID, ok := m.store.Active(ownerID)
 	if !ok {
-		return agent.ThreadInfo{}, ErrNoActive
+		return codex.ThreadInfo{}, ErrNoActive
 	}
 	thread, err := client.ReadThread(ctx, threadID)
 	if err != nil {
-		return agent.ThreadInfo{}, fmt.Errorf("read session before rename: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("read session before rename: %w", err)
 	}
 	if err := client.SetThreadName(ctx, threadID, name); err != nil {
-		return agent.ThreadInfo{}, fmt.Errorf("rename session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("rename session: %w", err)
 	}
 	thread.Name = name
 	return thread, nil
 }
 
-func (m *Manager) Archive(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent, reference string) (string, error) {
+func (m *Manager) Archive(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (string, error) {
 	if strings.TrimSpace(reference) == "" {
 		var ok bool
-		reference, ok = m.store.Active(ownerID, agentName)
+		reference, ok = m.store.Active(ownerID)
 		if !ok {
 			return "", ErrNoActive
 		}
 	}
-	record, err := m.store.Resolve(ownerID, agentName, reference, false)
+	record, err := m.store.Resolve(ownerID, reference, false)
 	if err != nil {
 		return "", err
 	}
-	activeID, _ := m.store.Active(ownerID, agentName)
+	activeID, _ := m.store.Active(ownerID)
 	nextActive := ""
 	if activeID == record.ID {
-		for _, candidate := range m.store.Records(ownerID, agentName, false) {
+		for _, candidate := range m.store.Records(ownerID, false) {
 			if candidate.ID == record.ID {
 				continue
 			}
@@ -170,7 +170,7 @@ func (m *Manager) Archive(ctx context.Context, ownerID, agentName string, client
 		}
 		return "", fmt.Errorf("archive session: %w", err)
 	}
-	if err := m.store.MarkArchived(ownerID, agentName, record.ID, nextActive, true, m.now()); err != nil {
+	if err := m.store.MarkArchived(ownerID, record.ID, nextActive, true, m.now()); err != nil {
 		_, _ = client.UnarchiveThread(context.WithoutCancel(ctx), record.ID)
 		if nextActive != "" {
 			_ = client.UnsubscribeThread(context.WithoutCancel(ctx), nextActive)
@@ -180,36 +180,36 @@ func (m *Manager) Archive(ctx context.Context, ownerID, agentName string, client
 	return nextActive, nil
 }
 
-func (m *Manager) Restore(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent, reference string) (agent.ThreadInfo, error) {
-	record, err := m.store.Resolve(ownerID, agentName, reference, true)
+func (m *Manager) Restore(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (codex.ThreadInfo, error) {
+	record, err := m.store.Resolve(ownerID, reference, true)
 	if err != nil {
-		return agent.ThreadInfo{}, err
+		return codex.ThreadInfo{}, err
 	}
 	thread, err := client.UnarchiveThread(ctx, record.ID)
 	if err != nil {
-		return agent.ThreadInfo{}, fmt.Errorf("restore session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("restore session: %w", err)
 	}
-	_, hasActive := m.store.Active(ownerID, agentName)
+	_, hasActive := m.store.Active(ownerID)
 	nextActive := ""
 	if !hasActive {
 		nextActive = record.ID
 	}
-	if err := m.store.MarkArchived(ownerID, agentName, record.ID, nextActive, false, m.now()); err != nil {
+	if err := m.store.MarkArchived(ownerID, record.ID, nextActive, false, m.now()); err != nil {
 		_ = client.ArchiveThread(context.WithoutCancel(ctx), record.ID)
-		return agent.ThreadInfo{}, fmt.Errorf("persist restored session: %w", err)
+		return codex.ThreadInfo{}, fmt.Errorf("persist restored session: %w", err)
 	}
 	return thread, nil
 }
 
-func (m *Manager) List(ctx context.Context, ownerID, agentName string, client agent.ThreadAgent, archived bool, pageNumber, pageSize int) (Page, error) {
+func (m *Manager) List(ctx context.Context, ownerID string, client codex.ThreadClient, archived bool, pageNumber, pageSize int) (Page, error) {
 	if pageSize <= 0 {
 		pageSize = DefaultPageSize
 	}
 	if pageNumber <= 0 {
 		pageNumber = 1
 	}
-	records := m.store.Records(ownerID, agentName, archived)
-	activeID, _ := m.store.Active(ownerID, agentName)
+	records := m.store.Records(ownerID, archived)
+	activeID, _ := m.store.Active(ownerID)
 	owned := make(map[string]Record, len(records))
 	for _, record := range records {
 		owned[record.ID] = record
@@ -218,7 +218,7 @@ func (m *Manager) List(ctx context.Context, ownerID, agentName string, client ag
 	cursor := ""
 	seenCursors := make(map[string]bool)
 	for len(owned) > 0 {
-		page, err := client.ListThreads(ctx, agent.ThreadListOptions{
+		page, err := client.ListThreads(ctx, codex.ThreadListOptions{
 			Cursor: cursor, Limit: 100, Archived: archived,
 			SourceKinds: allCodexThreadSources,
 		})
@@ -243,9 +243,9 @@ func (m *Manager) List(ctx context.Context, ownerID, agentName string, client ag
 	// Codex 历史被外部删除或损坏时仍展示归属记录，但明确标记无法读取。
 	for _, record := range owned {
 		items = append(items, ManagedThread{
-			Info: agent.ThreadInfo{
+			Info: codex.ThreadInfo{
 				ID: record.ID, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
-				Status: agent.ThreadStatus{Type: "systemError"},
+				Status: codex.ThreadStatus{Type: "systemError"},
 			},
 			Current: activeID == record.ID, Archived: archived, Unavailable: true,
 		})
@@ -277,8 +277,8 @@ var allCodexThreadSources = []string{
 	"subAgentThreadSpawn", "subAgentOther", "unknown",
 }
 
-func (m *Manager) Touch(ownerID, agentName, threadID string, updatedAt int64) error {
-	return m.store.Touch(ownerID, agentName, threadID, updatedAt)
+func (m *Manager) Touch(ownerID, threadID string, updatedAt int64) error {
+	return m.store.Touch(ownerID, threadID, updatedAt)
 }
 
 func normalizeName(name string) (string, error) {
@@ -292,7 +292,7 @@ func normalizeName(name string) (string, error) {
 	return name, nil
 }
 
-func recency(thread agent.ThreadInfo) int64 {
+func recency(thread codex.ThreadInfo) int64 {
 	if thread.RecencyAt != nil {
 		return *thread.RecencyAt
 	}

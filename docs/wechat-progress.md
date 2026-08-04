@@ -15,7 +15,7 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 
 ## 图片输入
 
-- 仅 Codex App Server 协议接收微信图片；不支持结构化图片输入的 Agent 直接返回错误。
+- 图片只通过 Codex App Server 的 `localImage` 输入，不存在其他协议回退。
 - 图片无需依赖 `save_dir`，统一写入 `~/.weclaw/turns/turn-*/inbox` 私有任务目录，目录权限为 `0700`、文件权限为 `0600`。
 - 单条消息最多 4 张图片，单张最大 20 MiB，仅接受按文件内容识别出的 JPEG、PNG、GIF 和 WebP。
 - 有文字时按“文字 + 图片”提交；纯图片消息自动补充图片分析指令。
@@ -29,10 +29,10 @@ Codex 执行本机检查、构建或部署时，微信端不再从一次“正�
 
 ## 任务控制命令
 
-- `/status`：随时返回任务状态、已运行时间和当前阶段；空闲时返回默认 Agent 信息。
-- `/cancel`：取消当前任务。Codex App Server 模式会使用当前 `threadId` 和 `turnId` 调用 `turn/interrupt`；CLI 与 HTTP 模式通过任务上下文终止当前进程或请求。
+- `/status`：随时返回任务状态、已运行时间和当前阶段；空闲时返回 Codex 运行信息。
+- `/cancel`：使用当前 `threadId` 和 `turnId` 调用 `turn/interrupt`。
 - `/info`、`/help`、`/session` 与 `/sessions`：任务运行期间仍可查询。
-- `/session new|use|rename|archive|restore`、`/cwd` 和 Agent 切换等状态变更命令会继续被忙碌保护拦截。
+- `/session new|use|rename|archive|restore` 和 `/cwd` 等状态变更命令会继续被忙碌保护拦截。
 
 取消请求发出后，原任务的文字进度、最终答案和迟到错误都不再推送。任务完成与取消通过同一状态锁原子决胜，避免“已确认取消”后仍发送最终答案；重复发送 `/cancel` 只返回“正在取消”，不会重复提交中断。
 
@@ -73,7 +73,7 @@ systemd 使用 `Restart=always` 自动拉起桥接器，标准输出和错误继
 验证命令：
 
 ```bash
-go test -race ./agent ./messaging ./session ./config ./reporting
+go test -race ./codex ./messaging ./session ./config ./reporting
 go test ./...
 go vet ./...
 systemctl --user status weclaw.service
@@ -86,4 +86,4 @@ systemctl --user status weclaw.service
 - 只接受扫码凭据中的 `ILinkUserID` 对应账号，其他联系人和群聊来源直接拒绝。
 - Codex 保持本机已授权的 `danger-full-access`；该权限没有扩展到其他微信账号。
 - 进度事件不包含命令输出、命令文本、diff、环境变量或终端交互内容。
-- 配置中存在显式 Agent 时不运行自动发现，避免切换到未授权的备用 Agent。
+- 配置只包含单一 `codex` 节点，未知字段和旧多 Agent 字段会使服务拒绝启动。

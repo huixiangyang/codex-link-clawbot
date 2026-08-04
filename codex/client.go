@@ -1,4 +1,4 @@
-package agent
+package codex
 
 import (
 	"bufio"
@@ -9,22 +9,18 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// ACPAgent communicates with ACP-compatible agents (claude-agent-acp, codex-acp, cursor agent, etc.) via stdio JSON-RPC 2.0.
-type ACPAgent struct {
-	command      string
-	args         []string
-	model        string
-	systemPrompt string
-	cwd          string
-	env          map[string]string
-	protocol     string // "legacy_acp" or "codex_app_server"
+// Codex communicates with Codex App Server over stdio JSON-RPC.
+type Codex struct {
+	command string
+	model   string
+	cwd     string
+	env     map[string]string
 
 	mu            sync.Mutex
 	cmd           *exec.Cmd
@@ -32,42 +28,39 @@ type ACPAgent struct {
 	scanner       *bufio.Scanner
 	started       bool
 	nextID        atomic.Int64
-	sessions      map[string]string // conversationID -> sessionID (legacy ACP)
-	loadedThreads map[string]bool   // 当前 app-server 进程已加载的显式线程
+	loadedThreads map[string]bool // 当前 app-server 进程已加载的显式线程
 	threadStatus  map[string]ThreadStatus
+	done          chan struct{}
+	doneOnce      sync.Once
+	exitErr       error
 
 	// pending tracks in-flight JSON-RPC requests
 	pendingMu sync.Mutex
 	pending   map[int64]chan *rpcResponse
 
-	// notifications channel for session/update events
 	notifyMu sync.Mutex
-	notifyCh map[string]chan *sessionUpdate // sessionID -> channel
 	turnCh   map[string]chan *codexTurnEvent
 
-	stderr *acpStderrWriter // captures stderr for error reporting
+	stderr *codexStderrWriter // captures stderr for error reporting
 
 	// rpcCall allows tests to stub JSON-RPC interactions without a subprocess.
 	rpcCall func(ctx context.Context, method string, params interface{}) (json.RawMessage, error)
 }
 
-// ACPAgentConfig holds configuration for the ACP agent.
-type ACPAgentConfig struct {
-	Command      string   // path to ACP agent binary (claude-agent-acp, codex-acp, cursor agent, etc.)
-	Args         []string // extra args for command (e.g. ["acp"] for cursor)
-	Model        string
-	SystemPrompt string
-	Cwd          string            // working directory
-	Env          map[string]string // extra environment variables
+// CodexConfig 定义唯一支持的 Codex App Server 进程配置。
+type CodexConfig struct {
+	Command string
+	Model   string
+	Cwd     string
+	Env     map[string]string
 }
 
 // --- JSON-RPC types ---
 
 type rpcRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      int64       `json:"id"`
-	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
+	ID     int64       `json:"id"`
+	Method string      `json:"method"`
+	Params interface{} `json:"params,omitempty"`
 }
 
 type rpcResponse struct {
@@ -83,75 +76,6 @@ type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
-
-// --- ACP protocol types ---
-
-type initParams struct {
-	ProtocolVersion    int                `json:"protocolVersion"`
-	ClientCapabilities clientCapabilities `json:"clientCapabilities"`
-}
-
-type clientCapabilities struct {
-	FS *fsCapabilities `json:"fs,omitempty"`
-}
-
-type fsCapabilities struct {
-	ReadTextFile  bool `json:"readTextFile"`
-	WriteTextFile bool `json:"writeTextFile"`
-}
-
-type newSessionParams struct {
-	Cwd        string        `json:"cwd"`
-	McpServers []interface{} `json:"mcpServers"`
-}
-
-type newSessionResult struct {
-	SessionID string `json:"sessionId"`
-}
-
-type promptParams struct {
-	SessionID string        `json:"sessionId"`
-	Prompt    []promptEntry `json:"prompt"`
-}
-
-type promptEntry struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
-
-type promptResult struct {
-	StopReason string `json:"stopReason"`
-}
-
-type sessionUpdateParams struct {
-	SessionID string        `json:"sessionId"`
-	Update    sessionUpdate `json:"update"`
-}
-
-type sessionUpdate struct {
-	SessionUpdate string          `json:"sessionUpdate"`
-	Content       json.RawMessage `json:"content,omitempty"`
-	// For agent_message_chunk
-	Type string `json:"type,omitempty"`
-	Text string `json:"text,omitempty"`
-}
-
-type permissionRequestParams struct {
-	ToolCall json.RawMessage    `json:"toolCall"`
-	Options  []permissionOption `json:"options"`
-}
-
-type permissionOption struct {
-	OptionID string `json:"optionId"`
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-}
-
-// Codex app-server protocol constants and types.
-const (
-	protocolLegacyACP      = "legacy_acp"
-	protocolCodexAppServer = "codex_app_server"
-)
 
 type codexTurnStartParams struct {
 	ThreadID       string           `json:"threadId"`
@@ -178,66 +102,47 @@ type codexTurnEvent struct {
 	Total     int
 }
 
-func detectACPProtocol(command string, args []string) string {
-	base := strings.ToLower(filepath.Base(command))
-	// codex-acp is a standard ACP wrapper, NOT codex app-server
-	// Only `codex app-server` uses the codex-native protocol
-	if base == "codex" || base == "codex.exe" {
-		for _, arg := range args {
-			if arg == "app-server" {
-				return protocolCodexAppServer
-			}
-		}
-	}
-	return protocolLegacyACP
-}
-
-// NewACPAgent creates a new ACP agent.
-func NewACPAgent(cfg ACPAgentConfig) *ACPAgent {
+// NewCodex 创建一个只使用稳定 App Server API 的 Codex 客户端。
+func NewCodex(cfg CodexConfig) *Codex {
 	if cfg.Command == "" {
-		cfg.Command = "claude-agent-acp"
+		cfg.Command = "codex"
 	}
 	if cfg.Cwd == "" {
 		cfg.Cwd = defaultWorkspace()
 	}
-	protocol := detectACPProtocol(cfg.Command, cfg.Args)
-	return &ACPAgent{
+	return &Codex{
 		command:       cfg.Command,
-		args:          cfg.Args,
 		model:         cfg.Model,
-		systemPrompt:  cfg.SystemPrompt,
 		cwd:           cfg.Cwd,
 		env:           cfg.Env,
-		protocol:      protocol,
-		sessions:      make(map[string]string),
 		loadedThreads: make(map[string]bool),
 		threadStatus:  make(map[string]ThreadStatus),
 		pending:       make(map[int64]chan *rpcResponse),
-		notifyCh:      make(map[string]chan *sessionUpdate),
 		turnCh:        make(map[string]chan *codexTurnEvent),
+		done:          make(chan struct{}),
 	}
 }
 
-// Start launches the claude-agent-acp subprocess and initializes the connection.
-func (a *ACPAgent) Start(ctx context.Context) error {
+// Start 启动唯一的 Codex App Server 子进程并完成握手。
+func (a *Codex) Start(ctx context.Context) error {
 	a.mu.Lock()
 	if a.started {
 		a.mu.Unlock()
 		return nil
 	}
 
-	a.cmd = exec.CommandContext(ctx, a.command, a.args...)
+	a.cmd = exec.CommandContext(ctx, a.command, "app-server", "--listen", "stdio://")
 	a.cmd.Dir = a.cwd
 	if len(a.env) > 0 {
 		cmdEnv, err := mergeEnv(os.Environ(), a.env)
 		if err != nil {
 			a.mu.Unlock()
-			return fmt.Errorf("build acp env: %w", err)
+			return fmt.Errorf("build codex env: %w", err)
 		}
 		a.cmd.Env = cmdEnv
 	}
 	// Capture stderr for debugging and error reporting
-	a.stderr = &acpStderrWriter{prefix: "[acp-stderr]"}
+	a.stderr = &codexStderrWriter{prefix: "[codex-stderr]"}
 	a.cmd.Stderr = a.stderr
 
 	var err error
@@ -255,11 +160,11 @@ func (a *ACPAgent) Start(ctx context.Context) error {
 
 	if err := a.cmd.Start(); err != nil {
 		a.mu.Unlock()
-		return fmt.Errorf("start acp agent %s: %w", a.command, err)
+		return fmt.Errorf("start codex app-server %s: %w", a.command, err)
 	}
 
 	pid := a.cmd.Process.Pid
-	log.Printf("[acp] started subprocess (command=%s, pid=%d)", a.command, pid)
+	log.Printf("[codex] started subprocess (command=%s, pid=%d)", a.command, pid)
 
 	a.scanner = bufio.NewScanner(stdout)
 	a.scanner.Buffer(make([]byte, 0, 4*1024*1024), 4*1024*1024) // 4MB
@@ -275,23 +180,14 @@ func (a *ACPAgent) Start(ctx context.Context) error {
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	log.Printf("[acp] sending initialize handshake (pid=%d, protocol=%s)...", pid, a.protocol)
-	var result json.RawMessage
-	if a.protocol == protocolCodexAppServer {
-		result, err = a.rpc(initCtx, "initialize", map[string]interface{}{
-			"clientInfo": map[string]string{"name": "weclaw", "version": "0.3.0"},
-		})
-		if err == nil {
-			// codex app-server expects an "initialized" notification after initialize response
-			err = a.notify("initialized", nil)
-		}
-	} else {
-		result, err = a.rpc(initCtx, "initialize", initParams{
-			ProtocolVersion: 1,
-			ClientCapabilities: clientCapabilities{
-				FS: &fsCapabilities{ReadTextFile: true, WriteTextFile: true},
-			},
-		})
+	log.Printf("[codex] sending initialize handshake (pid=%d)...", pid)
+	result, err := a.rpc(initCtx, "initialize", map[string]interface{}{
+		"clientInfo": map[string]string{
+			"name": "weclaw", "title": "WeClaw", "version": "1.0.0",
+		},
+	})
+	if err == nil {
+		err = a.notify("initialized", map[string]interface{}{})
 	}
 	if err != nil {
 		a.mu.Lock()
@@ -300,205 +196,82 @@ func (a *ACPAgent) Start(ctx context.Context) error {
 		a.stdin.Close()
 		a.cmd.Process.Kill()
 		a.cmd.Wait()
-		// Use stderr detail if available (e.g. "connect ECONNREFUSED")
 		if detail := a.stderr.LastError(); detail != "" {
-			return fmt.Errorf("agent startup failed: %s", detail)
+			return fmt.Errorf("codex startup failed: %s", detail)
 		}
-		// Provide a helpful hint when the binary looks like a Claude CLI that doesn't support ACP
-		base := strings.ToLower(filepath.Base(a.command))
-		if base == "claude" || base == "claude.exe" {
-			return fmt.Errorf("agent startup failed (pid=%d): %w\n\nHint: the 'claude' CLI does not support ACP protocol directly.\nSet type to \"cli\" in your config, or install claude-agent-acp and set command to \"claude-agent-acp\".", pid, err)
-		}
-		return fmt.Errorf("agent startup failed (pid=%d): %w", pid, err)
+		return fmt.Errorf("codex startup failed (pid=%d): %w", pid, err)
 	}
 
-	log.Printf("[acp] initialized (pid=%d): %s", pid, string(result))
+	log.Printf("[codex] initialized (pid=%d): %s", pid, string(result))
+	go a.waitForExit()
 	return nil
 }
 
 // Stop terminates the subprocess.
-func (a *ACPAgent) Stop() {
+func (a *Codex) Stop() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if !a.started {
+		a.mu.Unlock()
 		return
 	}
-	a.stdin.Close()
-	a.cmd.Process.Kill()
-	a.cmd.Wait()
+	stdin := a.stdin
+	process := a.cmd.Process
+	a.mu.Unlock()
+
+	_ = stdin.Close()
+	_ = process.Kill()
+	<-a.done
+}
+
+// Done 在 App Server 退出时关闭，主进程必须随即退出并由服务管理器重启。
+func (a *Codex) Done() <-chan struct{} {
+	return a.done
+}
+
+// ExitError 返回 App Server 的最终退出原因。
+func (a *Codex) ExitError() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.exitErr
+}
+
+func (a *Codex) waitForExit() {
+	err := a.cmd.Wait()
+	a.mu.Lock()
 	a.started = false
+	a.exitErr = err
 	a.loadedThreads = make(map[string]bool)
 	a.threadStatus = make(map[string]ThreadStatus)
+	a.mu.Unlock()
+	a.doneOnce.Do(func() { close(a.done) })
+	if err != nil {
+		log.Printf("[codex] app-server exited: %v", err)
+	} else {
+		log.Printf("[codex] app-server exited")
+	}
 }
 
 // SetCwd changes the working directory for subsequent sessions.
-func (a *ACPAgent) SetCwd(cwd string) {
+func (a *Codex) SetCwd(cwd string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.cwd = cwd
 }
 
-// Chat sends structured input and returns the final response.
-func (a *ACPAgent) Chat(ctx context.Context, conversationID string, request ChatRequest) (string, error) {
-	return a.chat(ctx, conversationID, request, nil)
-}
-
-// ChatWithProgress sends structured input and exposes safe progress updates.
-func (a *ACPAgent) ChatWithProgress(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
-	return a.chat(ctx, conversationID, request, onProgress)
-}
-
-func (a *ACPAgent) chat(ctx context.Context, conversationID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
-	if !a.started {
-		if err := a.Start(ctx); err != nil {
-			return "", err
-		}
-	}
-
-	// Route to codex app-server protocol if applicable
-	if a.protocol == protocolCodexAppServer {
-		return "", fmt.Errorf("codex app-server requires an explicit thread id")
-	}
-	if len(request.LocalImages) > 0 {
-		return "", fmt.Errorf("ACP protocol %q does not support image input", a.protocol)
-	}
-	promptText := request.PromptText()
-	if promptText == "" {
-		return "", fmt.Errorf("prompt input is empty")
-	}
-
-	// Get or create session
-	sessionID, isNew, err := a.getOrCreateSession(ctx, conversationID)
-	if err != nil {
-		return "", fmt.Errorf("session error: %w", err)
-	}
-
-	pid := a.cmd.Process.Pid
-	if isNew {
-		log.Printf("[acp] new session created (pid=%d, session=%s, conversation=%s)", pid, sessionID, conversationID)
-	} else {
-		log.Printf("[acp] reusing session (pid=%d, session=%s, conversation=%s)", pid, sessionID, conversationID)
-	}
-
-	// Register notification channel for this session
-	notifyCh := make(chan *sessionUpdate, 256)
-	a.notifyMu.Lock()
-	a.notifyCh[sessionID] = notifyCh
-	a.notifyMu.Unlock()
-
-	defer func() {
-		a.notifyMu.Lock()
-		delete(a.notifyCh, sessionID)
-		a.notifyMu.Unlock()
-	}()
-
-	// Send prompt (this blocks until the prompt completes)
-	type promptDoneMsg struct {
-		result json.RawMessage
-		err    error
-	}
-	promptDone := make(chan promptDoneMsg, 1)
-	go func() {
-		result, err := a.rpc(ctx, "session/prompt", promptParams{
-			SessionID: sessionID,
-			Prompt:    []promptEntry{{Type: "text", Text: promptText}},
-		})
-		if result != nil {
-			log.Printf("[acp] prompt result (session=%s): %s", sessionID, string(result))
-		}
-		promptDone <- promptDoneMsg{result: result, err: err}
-	}()
-
-	// Collect text chunks from notifications
-	var textParts []string
-
-	for {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case update := <-notifyCh:
-			if update.SessionUpdate == "agent_message_chunk" {
-				text := extractChunkText(update)
-				if text != "" {
-					textParts = append(textParts, text)
-				}
-			}
-		case done := <-promptDone:
-			// Drain remaining notifications
-			for {
-				select {
-				case update := <-notifyCh:
-					if update.SessionUpdate == "agent_message_chunk" {
-						text := extractChunkText(update)
-						if text != "" {
-							textParts = append(textParts, text)
-						}
-					}
-				default:
-					goto drained
-				}
-			}
-		drained:
-			if done.err != nil {
-				return "", fmt.Errorf("prompt error: %w", done.err)
-			}
-			result := strings.TrimSpace(strings.Join(textParts, ""))
-			if result == "" {
-				// Try extracting from prompt result (some agents return content here)
-				result = extractPromptResultText(done.result)
-			}
-			if result == "" {
-				return "", fmt.Errorf("agent returned empty response")
-			}
-			return result, nil
-		}
-	}
-}
-
-func (a *ACPAgent) getOrCreateSession(ctx context.Context, conversationID string) (string, bool, error) {
-	a.mu.Lock()
-	sid, exists := a.sessions[conversationID]
-	a.mu.Unlock()
-
-	if exists {
-		return sid, false, nil
-	}
-
-	result, err := a.rpc(ctx, "session/new", newSessionParams{
-		Cwd:        a.cwd,
-		McpServers: []interface{}{},
-	})
-	if err != nil {
-		return "", false, err
-	}
-
-	var sessionResult newSessionResult
-	if err := json.Unmarshal(result, &sessionResult); err != nil {
-		return "", false, fmt.Errorf("parse session result: %w", err)
-	}
-
-	a.mu.Lock()
-	a.sessions[conversationID] = sessionResult.SessionID
-	a.mu.Unlock()
-
-	return sessionResult.SessionID, true, nil
-}
-
-// --- Codex app-server protocol ---
-
 // StartThread 创建一个持久化 Codex 线程，归属关系由上层会话管理器保存。
-func (a *ACPAgent) StartThread(ctx context.Context) (ThreadInfo, error) {
+func (a *Codex) StartThread(ctx context.Context) (ThreadInfo, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadInfo{}, err
 	}
+	cwd, model := a.settings()
 	params := map[string]interface{}{
 		"approvalPolicy": "never",
-		"cwd":            a.cwd,
+		"cwd":            cwd,
 		"sandbox":        "danger-full-access",
+		"serviceName":    "weclaw",
 	}
-	if a.model != "" {
-		params["model"] = a.model
+	if model != "" {
+		params["model"] = model
 	}
 	result, err := a.rpc(ctx, "thread/start", params)
 	if err != nil {
@@ -521,21 +294,23 @@ func (a *ACPAgent) StartThread(ctx context.Context) (ThreadInfo, error) {
 }
 
 // ResumeThread 从磁盘加载线程并订阅其事件。
-func (a *ACPAgent) ResumeThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+func (a *Codex) ResumeThread(ctx context.Context, threadID string) (ThreadInfo, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadInfo{}, err
 	}
 	if strings.TrimSpace(threadID) == "" {
 		return ThreadInfo{}, fmt.Errorf("thread id is required")
 	}
+	cwd, model := a.settings()
 	params := map[string]interface{}{
 		"threadId":       threadID,
 		"approvalPolicy": "never",
-		"cwd":            a.cwd,
+		"cwd":            cwd,
 		"sandbox":        "danger-full-access",
+		"serviceName":    "weclaw",
 	}
-	if a.model != "" {
-		params["model"] = a.model
+	if model != "" {
+		params["model"] = model
 	}
 	result, err := a.rpc(ctx, "thread/resume", params)
 	if err != nil {
@@ -553,7 +328,7 @@ func (a *ACPAgent) ResumeThread(ctx context.Context, threadID string) (ThreadInf
 }
 
 // ReadThread 只读取线程摘要，不加载完整 turn 历史。
-func (a *ACPAgent) ReadThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+func (a *Codex) ReadThread(ctx context.Context, threadID string) (ThreadInfo, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadInfo{}, err
 	}
@@ -576,7 +351,7 @@ func (a *ACPAgent) ReadThread(ctx context.Context, threadID string) (ThreadInfo,
 }
 
 // ListThreads 查询 Codex 线程页；上层仍必须按 WeClaw 归属索引过滤。
-func (a *ACPAgent) ListThreads(ctx context.Context, options ThreadListOptions) (ThreadPage, error) {
+func (a *Codex) ListThreads(ctx context.Context, options ThreadListOptions) (ThreadPage, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadPage{}, err
 	}
@@ -612,7 +387,7 @@ func (a *ACPAgent) ListThreads(ctx context.Context, options ThreadListOptions) (
 	return page, nil
 }
 
-func (a *ACPAgent) SetThreadName(ctx context.Context, threadID, name string) error {
+func (a *Codex) SetThreadName(ctx context.Context, threadID, name string) error {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return err
 	}
@@ -620,7 +395,7 @@ func (a *ACPAgent) SetThreadName(ctx context.Context, threadID, name string) err
 	return err
 }
 
-func (a *ACPAgent) ArchiveThread(ctx context.Context, threadID string) error {
+func (a *Codex) ArchiveThread(ctx context.Context, threadID string) error {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return err
 	}
@@ -634,7 +409,7 @@ func (a *ACPAgent) ArchiveThread(ctx context.Context, threadID string) error {
 	return err
 }
 
-func (a *ACPAgent) UnarchiveThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+func (a *Codex) UnarchiveThread(ctx context.Context, threadID string) (ThreadInfo, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadInfo{}, err
 	}
@@ -645,7 +420,7 @@ func (a *ACPAgent) UnarchiveThread(ctx context.Context, threadID string) (Thread
 	return decodeCodexThread(result, "thread/unarchive")
 }
 
-func (a *ACPAgent) UnsubscribeThread(ctx context.Context, threadID string) error {
+func (a *Codex) UnsubscribeThread(ctx context.Context, threadID string) error {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return err
 	}
@@ -659,19 +434,19 @@ func (a *ACPAgent) UnsubscribeThread(ctx context.Context, threadID string) error
 }
 
 // ChatThread 在已经过归属校验的显式线程中执行一次 turn。
-func (a *ACPAgent) ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error) {
-	return a.chatCodexAppServer(ctx, threadID, request, nil)
+func (a *Codex) ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error) {
+	return a.chatTurn(ctx, threadID, request, nil)
 }
 
-func (a *ACPAgent) ChatThreadWithProgress(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
-	return a.chatCodexAppServer(ctx, threadID, request, onProgress)
+func (a *Codex) ChatThreadWithProgress(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
+	return a.chatTurn(ctx, threadID, request, onProgress)
 }
 
-func (a *ACPAgent) ensureCodexReady(ctx context.Context) error {
-	if a.protocol != protocolCodexAppServer {
-		return fmt.Errorf("agent protocol %q does not support codex threads", a.protocol)
-	}
-	if !a.started {
+func (a *Codex) ensureCodexReady(ctx context.Context) error {
+	a.mu.Lock()
+	started := a.started
+	a.mu.Unlock()
+	if !started {
 		return a.Start(ctx)
 	}
 	return nil
@@ -690,7 +465,7 @@ func decodeCodexThread(result json.RawMessage, method string) (ThreadInfo, error
 	return response.Thread, nil
 }
 
-func (a *ACPAgent) ensureThreadLoaded(ctx context.Context, threadID string) error {
+func (a *Codex) ensureThreadLoaded(ctx context.Context, threadID string) error {
 	a.mu.Lock()
 	loaded := a.loadedThreads[threadID]
 	a.mu.Unlock()
@@ -701,7 +476,7 @@ func (a *ACPAgent) ensureThreadLoaded(ctx context.Context, threadID string) erro
 	return err
 }
 
-func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
+func (a *Codex) chatTurn(ctx context.Context, threadID string, request ChatRequest, onProgress ProgressHandler) (string, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return "", err
 	}
@@ -716,7 +491,7 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, requ
 	}
 	a.mu.Unlock()
 
-	log.Printf("[acp] using explicit thread (pid=%d, thread=%s)", pid, threadID)
+	log.Printf("[codex] using explicit thread (pid=%d, thread=%s)", pid, threadID)
 
 	// Register turn event channel
 	turnCh := make(chan *codexTurnEvent, 256)
@@ -745,6 +520,7 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, requ
 	if len(input) == 0 {
 		return "", fmt.Errorf("turn input is empty")
 	}
+	cwd, model := a.settings()
 
 	startCtx, cancelStart := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	startResult, err := a.rpc(startCtx, "turn/start", codexTurnStartParams{
@@ -752,8 +528,8 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, requ
 		ApprovalPolicy: "never",
 		Input:          input,
 		SandboxPolicy:  map[string]interface{}{"type": "dangerFullAccess"},
-		Model:          a.model,
-		Cwd:            a.cwd,
+		Model:          model,
+		Cwd:            cwd,
 	})
 	cancelStart()
 	if err != nil {
@@ -859,7 +635,7 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, requ
 					}
 				}
 				if result == "" {
-					return "", fmt.Errorf("agent returned empty response")
+					return "", fmt.Errorf("codex returned empty response")
 				}
 				return result, nil
 			}
@@ -867,7 +643,7 @@ func (a *ACPAgent) chatCodexAppServer(ctx context.Context, threadID string, requ
 	}
 }
 
-func (a *ACPAgent) interruptCodexTurn(threadID, turnID string) {
+func (a *Codex) interruptCodexTurn(threadID, turnID string) {
 	interruptCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -876,13 +652,13 @@ func (a *ACPAgent) interruptCodexTurn(threadID, turnID string) {
 		"turnId":   turnID,
 	})
 	if err != nil {
-		log.Printf("[acp] failed to interrupt turn (thread=%s, turn=%s): %v", threadID, turnID, err)
+		log.Printf("[codex] failed to interrupt turn (thread=%s, turn=%s): %v", threadID, turnID, err)
 		return
 	}
-	log.Printf("[acp] interrupted turn (thread=%s, turn=%s)", threadID, turnID)
+	log.Printf("[codex] interrupted turn (thread=%s, turn=%s)", threadID, turnID)
 }
 
-func (a *ACPAgent) rpc(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+func (a *Codex) rpc(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
 	if a.rpcCall != nil {
 		return a.rpcCall(ctx, method, params)
 	}
@@ -890,15 +666,13 @@ func (a *ACPAgent) rpc(ctx context.Context, method string, params interface{}) (
 }
 
 // notify sends a JSON-RPC notification (no id, no response expected).
-func (a *ACPAgent) notify(method string, params interface{}) error {
+func (a *Codex) notify(method string, params interface{}) error {
 	msg := struct {
-		JSONRPC string      `json:"jsonrpc"`
-		Method  string      `json:"method"`
-		Params  interface{} `json:"params,omitempty"`
+		Method string      `json:"method"`
+		Params interface{} `json:"params,omitempty"`
 	}{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
+		Method: method,
+		Params: params,
 	}
 
 	data, err := json.Marshal(msg)
@@ -913,7 +687,7 @@ func (a *ACPAgent) notify(method string, params interface{}) error {
 }
 
 // call sends a JSON-RPC request and waits for the response.
-func (a *ACPAgent) call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+func (a *Codex) call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
 	id := a.nextID.Add(1)
 
 	ch := make(chan *rpcResponse, 1)
@@ -928,10 +702,9 @@ func (a *ACPAgent) call(ctx context.Context, method string, params interface{}) 
 	}()
 
 	req := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      id,
-		Method:  method,
-		Params:  params,
+		ID:     id,
+		Method: method,
+		Params: params,
 	}
 
 	data, err := json.Marshal(req)
@@ -958,14 +731,14 @@ func (a *ACPAgent) call(ctx context.Context, method string, params interface{}) 
 					msg = detail
 				}
 			}
-			return nil, fmt.Errorf("agent error: %s", msg)
+			return nil, fmt.Errorf("codex error: %s", msg)
 		}
 		return resp.Result, nil
 	}
 }
 
 // readLoop reads NDJSON lines from stdout and dispatches to pending requests or notification channels.
-func (a *ACPAgent) readLoop() {
+func (a *Codex) readLoop() {
 	for a.scanner.Scan() {
 		line := a.scanner.Text()
 		if line == "" {
@@ -974,7 +747,7 @@ func (a *ACPAgent) readLoop() {
 
 		var msg rpcResponse
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			log.Printf("[acp] failed to parse message: %v", err)
+			log.Printf("[codex] failed to parse message: %v", err)
 			continue
 		}
 
@@ -989,18 +762,8 @@ func (a *ACPAgent) readLoop() {
 			continue
 		}
 
-		// Request from agent or notification
+		// 只处理 Codex App Server 当前稳定事件。
 		switch msg.Method {
-		case "session/update":
-			a.handleSessionUpdate(msg.Params)
-
-		case "session/request_permission":
-			// Auto-allow all permissions
-			a.handlePermissionRequest(line)
-
-		// Codex app-server events (multiple protocol versions)
-		case "codex/event/agent_message_delta":
-			a.handleCodexDelta(msg.Params)
 		case "item/agentMessage/delta":
 			a.handleCodexItemDelta(msg.Params)
 		case "item/started":
@@ -1018,34 +781,31 @@ func (a *ACPAgent) readLoop() {
 			a.handleCodexTurnEvent(msg.Method, msg.Params)
 		case "thread/status/changed":
 			a.handleThreadStatusChanged(msg.Params)
-		case "codex/event/agent_message", "codex/event/task_complete",
-			"codex/event/item_completed", "codex/event/token_count",
-			"thread/started", "thread/tokenUsage/updated",
-			"account/rateLimits/updated":
-			// Known events we don't need to act on
-		case "turn/approval/request":
-			a.handlePermissionRequest(line)
+		case "thread/started", "thread/archived", "thread/unarchived", "thread/closed",
+			"thread/name/updated", "thread/tokenUsage/updated", "account/rateLimits/updated",
+			"serverRequest/resolved":
+			// 已知但无需转发到微信的稳定事件。
 
 		default:
 			if msg.Method != "" {
-				log.Printf("[acp] unhandled method: %s (raw: %.200s)", msg.Method, line)
+				log.Printf("[codex] unhandled method: %s (raw: %.200s)", msg.Method, line)
 			}
 		}
 	}
 
 	if err := a.scanner.Err(); err != nil {
-		log.Printf("[acp] read loop error: %v", err)
+		log.Printf("[codex] read loop error: %v", err)
 	}
-	log.Println("[acp] read loop ended")
+	log.Println("[codex] read loop ended")
 }
 
-func (a *ACPAgent) handleThreadStatusChanged(params json.RawMessage) {
+func (a *Codex) handleThreadStatusChanged(params json.RawMessage) {
 	var update struct {
 		ThreadID string       `json:"threadId"`
 		Status   ThreadStatus `json:"status"`
 	}
 	if err := json.Unmarshal(params, &update); err != nil || update.ThreadID == "" {
-		log.Printf("[acp] failed to parse thread/status/changed: %v", err)
+		log.Printf("[codex] failed to parse thread/status/changed: %v", err)
 		return
 	}
 	a.mu.Lock()
@@ -1056,82 +816,9 @@ func (a *ACPAgent) handleThreadStatusChanged(params json.RawMessage) {
 	a.mu.Unlock()
 }
 
-func (a *ACPAgent) handleSessionUpdate(params json.RawMessage) {
-	var p sessionUpdateParams
-	if err := json.Unmarshal(params, &p); err != nil {
-		log.Printf("[acp] failed to parse session/update: %v (raw: %s)", err, string(params))
-		return
-	}
-
-	// Only log non-streaming events (skip chunks to reduce noise)
-	switch p.Update.SessionUpdate {
-	case "agent_message_chunk", "agent_thought_chunk":
-		// skip — too noisy
-	default:
-		log.Printf("[acp] session/update (session=%s, type=%s)", p.SessionID, p.Update.SessionUpdate)
-	}
-
-	a.notifyMu.Lock()
-	ch, ok := a.notifyCh[p.SessionID]
-	a.notifyMu.Unlock()
-
-	if ok {
-		select {
-		case ch <- &p.Update:
-		default:
-			log.Printf("[acp] notification channel full, dropping update (session=%s)", p.SessionID)
-		}
-	}
-}
-
-func (a *ACPAgent) handleCodexDelta(params json.RawMessage) {
-	var p struct {
-		Msg struct {
-			Type  string `json:"type"`
-			Delta string `json:"delta"`
-		} `json:"msg"`
-		ConversationID string `json:"conversationId"`
-		ThreadID       string `json:"threadId"` // some versions use threadId
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return
-	}
-
-	// Try conversationId first (codex uses this), fallback to threadId
-	key := p.ConversationID
-	if key == "" {
-		key = p.ThreadID
-	}
-
-	delta := p.Msg.Delta
-	if delta == "" {
-		return
-	}
-
-	// Find the turn channel by thread ID — we need to match against stored threads
-	a.notifyMu.Lock()
-	ch, ok := a.turnCh[key]
-	if !ok {
-		// Try matching by iterating all turn channels (codex uses conversationId, not threadId)
-		for _, c := range a.turnCh {
-			ch = c
-			ok = true
-			break
-		}
-	}
-	a.notifyMu.Unlock()
-
-	if ok {
-		select {
-		case ch <- &codexTurnEvent{Delta: delta}:
-		default:
-		}
-	}
-}
-
 // handleCodexItemDelta handles "item/agentMessage/delta" events.
 // These contain incremental text deltas for the agent's response.
-func (a *ACPAgent) handleCodexItemDelta(params json.RawMessage) {
+func (a *Codex) handleCodexItemDelta(params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
 		ItemID   string `json:"itemId"`
@@ -1149,7 +836,7 @@ func (a *ACPAgent) handleCodexItemDelta(params json.RawMessage) {
 }
 
 // handleCodexItemStarted handles "item/started" events.
-func (a *ACPAgent) handleCodexItemStarted(params json.RawMessage) {
+func (a *Codex) handleCodexItemStarted(params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
 		Item     struct {
@@ -1176,7 +863,7 @@ func (a *ACPAgent) handleCodexItemStarted(params json.RawMessage) {
 }
 
 // handleCodexItemCompleted 使用完整 item 文本结束消息，避免依赖碎片拼接。
-func (a *ACPAgent) handleCodexItemCompleted(params json.RawMessage) {
+func (a *Codex) handleCodexItemCompleted(params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
 		Item     struct {
@@ -1198,7 +885,7 @@ func (a *ACPAgent) handleCodexItemCompleted(params json.RawMessage) {
 }
 
 // handleCodexPlanUpdated 将计划压缩成适合微信展示的一行阶段状态。
-func (a *ACPAgent) handleCodexPlanUpdated(params json.RawMessage) {
+func (a *Codex) handleCodexPlanUpdated(params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
 		Plan     []struct {
@@ -1229,7 +916,7 @@ func (a *ACPAgent) handleCodexPlanUpdated(params json.RawMessage) {
 }
 
 // handleCodexActivity 只报告安全的活动标签，原始命令输出绝不进入聊天端。
-func (a *ACPAgent) handleCodexActivity(params json.RawMessage, text string) {
+func (a *Codex) handleCodexActivity(params json.RawMessage, text string) {
 	var p struct {
 		ThreadID string `json:"threadId"`
 	}
@@ -1240,32 +927,33 @@ func (a *ACPAgent) handleCodexActivity(params json.RawMessage, text string) {
 }
 
 // handleCodexTurnEvent handles "turn/started" and "turn/completed" notifications.
-func (a *ACPAgent) handleCodexTurnEvent(method string, params json.RawMessage) {
+func (a *Codex) handleCodexTurnEvent(method string, params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
-		Status   string `json:"status"`
+		Turn     struct {
+			Status string `json:"status"`
+			Error  *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"turn"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return
 	}
 
 	if method == "turn/completed" {
+		if p.Turn.Error != nil && p.Turn.Error.Message != "" {
+			a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "error", Text: p.Turn.Error.Message})
+			return
+		}
 		a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "completed"})
 	}
 }
 
 // dispatchToTurnCh sends an event to the turn channel for a thread.
-func (a *ACPAgent) dispatchToTurnCh(threadID string, evt *codexTurnEvent) {
+func (a *Codex) dispatchToTurnCh(threadID string, evt *codexTurnEvent) {
 	a.notifyMu.Lock()
 	ch, ok := a.turnCh[threadID]
-	if !ok {
-		// Fallback: try any active turn channel
-		for _, c := range a.turnCh {
-			ch = c
-			ok = true
-			break
-		}
-	}
 	a.notifyMu.Unlock()
 
 	if ok {
@@ -1276,129 +964,35 @@ func (a *ACPAgent) dispatchToTurnCh(threadID string, evt *codexTurnEvent) {
 	}
 }
 
-func (a *ACPAgent) handlePermissionRequest(raw string) {
-	// Parse the request to get the ID and auto-allow
-	var req struct {
-		ID     json.RawMessage         `json:"id"`
-		Params permissionRequestParams `json:"params"`
-	}
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
-		log.Printf("[acp] failed to parse permission request: %v", err)
-		return
-	}
-
-	// Find the "allow" option
-	optionID := "allow"
-	for _, opt := range req.Params.Options {
-		if opt.Kind == "allow" {
-			optionID = opt.OptionID
-			break
-		}
-	}
-
-	// Send response
-	resp := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      req.ID,
-		"result": map[string]interface{}{
-			"outcome": map[string]interface{}{
-				"outcome":  "selected",
-				"optionId": optionID,
-			},
-		},
-	}
-
-	data, err := json.Marshal(resp)
-	if err != nil {
-		log.Printf("[acp] failed to marshal permission response: %v", err)
-		return
-	}
-
+// Info 返回当前唯一 Codex 运行时摘要。
+func (a *Codex) Info() RuntimeInfo {
 	a.mu.Lock()
-	fmt.Fprintf(a.stdin, "%s\n", data)
-	a.mu.Unlock()
-
-	log.Printf("[acp] auto-allowed permission request")
-}
-
-// Info returns metadata about this agent.
-func (a *ACPAgent) Info() AgentInfo {
-	info := AgentInfo{
-		Name:    a.command,
-		Type:    "acp",
+	defer a.mu.Unlock()
+	info := RuntimeInfo{
 		Model:   a.model,
 		Command: a.command,
+		Cwd:     a.cwd,
 	}
-	a.mu.Lock()
 	if a.cmd != nil && a.cmd.Process != nil {
 		info.PID = a.cmd.Process.Pid
 	}
-	a.mu.Unlock()
 	return info
 }
 
-func extractChunkText(update *sessionUpdate) string {
-	// The content field in agent_message_chunk can be a text content block
-	if update.Text != "" {
-		return update.Text
-	}
-
-	// Try to extract from content JSON
-	if update.Content != nil {
-		var content struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal(update.Content, &content); err == nil && content.Text != "" {
-			return content.Text
-		}
-	}
-
-	return ""
+func (a *Codex) settings() (cwd, model string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cwd, a.model
 }
 
-// extractPromptResultText tries to extract text from the session/prompt response.
-// Some ACP agents include response content in the result alongside stopReason.
-func extractPromptResultText(result json.RawMessage) string {
-	if result == nil {
-		return ""
-	}
-
-	// Try to extract content array from result
-	var r struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		// Some agents use a flat text field
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(result, &r); err != nil {
-		return ""
-	}
-
-	if r.Text != "" {
-		return r.Text
-	}
-
-	var parts []string
-	for _, c := range r.Content {
-		if c.Type == "text" && c.Text != "" {
-			parts = append(parts, c.Text)
-		}
-	}
-	return strings.Join(parts, "")
-}
-
-// acpStderrWriter forwards the ACP subprocess stderr to the application log
-// and captures the last meaningful error line.
-type acpStderrWriter struct {
+// codexStderrWriter 转发 stderr，并保留最后一条有效错误用于启动诊断。
+type codexStderrWriter struct {
 	prefix string
 	mu     sync.Mutex
 	last   string // last non-empty, non-traceback line
 }
 
-func (w *acpStderrWriter) Write(p []byte) (int, error) {
+func (w *codexStderrWriter) Write(p []byte) (int, error) {
 	lines := strings.Split(strings.TrimRight(string(p), "\n"), "\n")
 	w.mu.Lock()
 	for _, line := range lines {
@@ -1415,7 +1009,7 @@ func (w *acpStderrWriter) Write(p []byte) (int, error) {
 }
 
 // LastError returns the last captured error line and resets it.
-func (w *acpStderrWriter) LastError() string {
+func (w *codexStderrWriter) LastError() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s := w.last

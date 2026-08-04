@@ -12,35 +12,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/ilink"
-	"github.com/fastclaw-ai/weclaw/session"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/session"
 )
-
-// AgentFactory creates an agent by config name. Returns nil if the name is unknown.
-type AgentFactory func(ctx context.Context, name string) agent.Agent
-
-// SaveDefaultFunc persists the default agent name to config file.
-type SaveDefaultFunc func(name string) error
-
-// AgentMeta holds static config info about an agent (for /status display).
-type AgentMeta struct {
-	Name    string
-	Type    string // "acp", "cli", "http"
-	Command string // binary path or endpoint
-	Model   string
-}
 
 // Handler processes incoming WeChat messages and dispatches replies.
 type Handler struct {
-	mu            sync.RWMutex
-	defaultName   string
-	agents        map[string]agent.Agent // name -> running agent
-	agentMetas    []AgentMeta            // all configured agents (for /status)
-	agentWorkDirs map[string]string      // agent name -> configured/runtime cwd
-	customAliases map[string]string      // custom alias -> agent name (from config)
-	factory       AgentFactory
-	saveDefault   SaveDefaultFunc
+	codex         codex.Runtime
 	contextTokens sync.Map // map[userID]contextToken
 	saveDir       string   // Linkhoard archive directory
 	seenMsgs      sync.Map // map[int64]time.Time — dedup by message_id
@@ -54,14 +33,11 @@ func (h *Handler) SetSessionManager(manager *session.Manager) {
 	h.sessions = manager
 }
 
-// NewHandler creates a new message handler.
-func NewHandler(factory AgentFactory, saveDefault SaveDefaultFunc) *Handler {
+// NewHandler 创建只路由到 Codex 的微信消息处理器。
+func NewHandler(codex codex.Runtime) *Handler {
 	return &Handler{
-		agents:        make(map[string]agent.Agent),
-		agentWorkDirs: make(map[string]string),
-		factory:       factory,
-		saveDefault:   saveDefault,
-		progress:      DefaultProgressConfig(),
+		codex:    codex,
+		progress: DefaultProgressConfig(),
 	}
 }
 
@@ -84,202 +60,6 @@ func (h *Handler) cleanSeenMsgs() {
 		}
 		return true
 	})
-}
-
-// SetCustomAliases sets custom alias mappings from config.
-func (h *Handler) SetCustomAliases(aliases map[string]string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.customAliases = aliases
-}
-
-// SetAgentMetas sets the list of all configured agents (for /status).
-func (h *Handler) SetAgentMetas(metas []AgentMeta) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.agentMetas = metas
-}
-
-// SetAgentWorkDirs sets the configured working directory for each agent.
-func (h *Handler) SetAgentWorkDirs(workDirs map[string]string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.agentWorkDirs = make(map[string]string, len(workDirs))
-	for name, dir := range workDirs {
-		h.agentWorkDirs[name] = dir
-	}
-}
-
-// SetDefaultAgent sets the default agent (already started).
-func (h *Handler) SetDefaultAgent(name string, ag agent.Agent) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.defaultName = name
-	h.agents[name] = ag
-	log.Printf("[handler] default agent ready: %s (%s)", name, ag.Info())
-}
-
-// getAgent returns a running agent by name, or starts it on demand via factory.
-func (h *Handler) getAgent(ctx context.Context, name string) (agent.Agent, error) {
-	// Fast path: already running
-	h.mu.RLock()
-	ag, ok := h.agents[name]
-	h.mu.RUnlock()
-	if ok {
-		return ag, nil
-	}
-
-	// Slow path: create on demand
-	if h.factory == nil {
-		return nil, fmt.Errorf("agent %q not found and no factory configured", name)
-	}
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if ag, ok := h.agents[name]; ok {
-		return ag, nil
-	}
-
-	log.Printf("[handler] starting agent %q on demand...", name)
-	ag = h.factory(ctx, name)
-	if ag == nil {
-		return nil, fmt.Errorf("agent %q not available", name)
-	}
-
-	h.agents[name] = ag
-	log.Printf("[handler] agent started on demand: %s (%s)", name, ag.Info())
-	return ag, nil
-}
-
-// getDefaultAgent returns the default agent (may be nil if not ready yet).
-func (h *Handler) getDefaultAgent() agent.Agent {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	if h.defaultName == "" {
-		return nil
-	}
-	return h.agents[h.defaultName]
-}
-
-func (h *Handler) getDefaultAgentEntry() (string, agent.Agent) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	if h.defaultName == "" {
-		return "", nil
-	}
-	return h.defaultName, h.agents[h.defaultName]
-}
-
-// isKnownAgent checks if a name corresponds to a configured agent.
-func (h *Handler) isKnownAgent(name string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	// Check running agents
-	if _, ok := h.agents[name]; ok {
-		return true
-	}
-	// Check configured agents (metas)
-	for _, meta := range h.agentMetas {
-		if meta.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// agentAliases maps short aliases to agent config names.
-var agentAliases = map[string]string{
-	"cc":  "claude",
-	"cx":  "codex",
-	"oc":  "openclaw",
-	"cs":  "cursor",
-	"km":  "kimi",
-	"gm":  "gemini",
-	"ocd": "opencode",
-	"pi":  "pi",
-	"cp":  "copilot",
-	"dr":  "droid",
-	"if":  "iflow",
-	"kr":  "kiro",
-	"qw":  "qwen",
-}
-
-// resolveAlias returns the full agent name for an alias, or the original name if no alias matches.
-// Checks custom aliases (from config) first, then built-in aliases.
-func (h *Handler) resolveAlias(name string) string {
-	h.mu.RLock()
-	custom := h.customAliases
-	h.mu.RUnlock()
-	if custom != nil {
-		if full, ok := custom[name]; ok {
-			return full
-		}
-	}
-	if full, ok := agentAliases[name]; ok {
-		return full
-	}
-	return name
-}
-
-// parseCommand checks if text starts with "/" or "@" followed by agent name(s).
-// Supports multiple agents: "@cc @cx hello" returns (["claude","codex"], "hello").
-// Returns (agentNames, actualMessage). Aliases are resolved automatically.
-// If no command prefix, returns (nil, originalText).
-func (h *Handler) parseCommand(text string) ([]string, string) {
-	if !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") {
-		return nil, text
-	}
-
-	// Parse consecutive @name or /name tokens from the start
-	var names []string
-	rest := text
-	for {
-		rest = strings.TrimSpace(rest)
-		if !strings.HasPrefix(rest, "/") && !strings.HasPrefix(rest, "@") {
-			break
-		}
-
-		// Strip prefix
-		after := rest[1:]
-		idx := strings.IndexAny(after, " /@")
-		var token string
-		if idx < 0 {
-			// Rest is just the name, no message
-			token = after
-			rest = ""
-		} else if after[idx] == '/' || after[idx] == '@' {
-			// Next token is another @name or /name
-			token = after[:idx]
-			rest = after[idx:]
-		} else {
-			// Space — name ends here
-			token = after[:idx]
-			rest = strings.TrimSpace(after[idx+1:])
-		}
-
-		if token != "" {
-			names = append(names, h.resolveAlias(token))
-		}
-
-		if rest == "" {
-			break
-		}
-	}
-
-	// Deduplicate names preserving order
-	seen := make(map[string]bool)
-	unique := names[:0]
-	for _, n := range names {
-		if !seen[n] {
-			seen[n] = true
-			unique = append(unique, n)
-		}
-	}
-
-	return unique, rest
 }
 
 // HandleMessage processes a single incoming message.
@@ -385,7 +165,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		return
 	}
 
-	// Intercept URLs: save to Linkhoard directly without AI agent
+	// 纯链接归档直接处理，不消耗 Codex turn。
 	if len(images) == 0 && len(files) == 0 && h.saveDir != "" && IsURL(trimmed) {
 		rawURL := ExtractURL(trimmed)
 		if rawURL != "" {
@@ -420,61 +200,13 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		return
 	}
 
-	// Route: "/agentname message" or "@agent1 @agent2 message" -> specific agent(s)
-	agentNames, message := h.parseCommand(text)
-
-	// No command prefix -> send to default agent
-	if len(agentNames) == 0 {
-		h.sendToDefaultAgent(ctx, client, msg, text, images, files, clientID)
-		return
-	}
-
-	// No message -> switch default agent (only first name)
-	if message == "" && len(images) == 0 && len(files) == 0 {
-		if len(agentNames) == 1 && h.isKnownAgent(agentNames[0]) {
-			reply := h.switchDefault(ctx, agentNames[0])
-			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-				log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-			}
-		} else if len(agentNames) == 1 && !h.isKnownAgent(agentNames[0]) {
-			// Unknown agent -> forward to default
-			h.sendToDefaultAgent(ctx, client, msg, text, images, files, clientID)
-		} else {
-			reply := "Usage: specify one agent to switch, or add a message to broadcast"
-			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-				log.Printf("[handler] failed to send reply to %s: %v", msg.FromUserID, err)
-			}
-		}
-		return
-	}
-
-	// Filter to known agents; if single unknown agent -> forward to default
-	var knownNames []string
-	for _, name := range agentNames {
-		if h.isKnownAgent(name) {
-			knownNames = append(knownNames, name)
-		}
-	}
-	if len(knownNames) == 0 {
-		// No known agents -> forward entire text to default agent
-		h.sendToDefaultAgent(ctx, client, msg, text, images, files, clientID)
-		return
-	}
-
-	if len(knownNames) == 1 {
-		// Single agent
-		h.sendToNamedAgent(ctx, client, msg, knownNames[0], message, images, files, clientID)
-	} else {
-		// Multi-agent broadcast: parallel dispatch, send replies as they arrive
-		h.broadcastToAgents(ctx, client, msg, knownNames, message, images, files)
-	}
+	h.sendToCodex(ctx, client, msg, text, images, files, clientID)
 }
 
-// sendToDefaultAgent sends the message to the default agent and replies.
-func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) {
-	agentName, ag := h.getDefaultAgentEntry()
+// sendToCodex 把所有非内置命令统一发送到 Codex。
+func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) {
 	var reply, artifactDir string
-	if ag != nil {
+	if h.codex != nil {
 		reporter, ok := h.beginTask(ctx, client, msg)
 		if !ok {
 			return
@@ -492,7 +224,7 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, 
 		artifactDir = request.ArtifactDir
 
 		var err error
-		reply, err = h.chatWithAgent(reporter.task.context(), agentName, ag, msg.FromUserID, request, reporter.Report)
+		reply, err = h.chatWithCodex(reporter.task.context(), msg.FromUserID, request, reporter.Report)
 		if !h.finishTask(msg.FromUserID, reporter) {
 			log.Printf("[handler] task cancelled for %s", msg.FromUserID)
 			return
@@ -501,108 +233,11 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ilink.Client, 
 			reply = fmt.Sprintf("Error: %v", err)
 		}
 	} else {
-		log.Printf("[handler] default agent is unavailable for %s", msg.FromUserID)
+		log.Printf("[handler] codex is unavailable for %s", msg.FromUserID)
 		reply = "Codex 当前不可用，请稍后重试。"
 	}
 
 	h.sendReplyWithMedia(ctx, client, msg, reply, artifactDir, clientID)
-}
-
-// sendToNamedAgent sends the message to a specific agent and replies.
-func (h *Handler) sendToNamedAgent(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, name, message string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) {
-	reporter, ok := h.beginTask(ctx, client, msg)
-	if !ok {
-		return
-	}
-
-	ag, agErr := h.getAgent(ctx, name)
-	if agErr != nil {
-		log.Printf("[handler] agent %q not available: %v", name, agErr)
-		reply := fmt.Sprintf("Agent %q is not available: %v", name, agErr)
-		if h.finishTask(msg.FromUserID, reporter) {
-			SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
-		}
-		return
-	}
-	request, cleanup, prepareErr := h.prepareTaskInput(reporter, message, images, files)
-	if prepareErr != nil {
-		log.Printf("[handler] failed to prepare inbound attachments for %s: %v", msg.FromUserID, prepareErr)
-		if h.finishTask(msg.FromUserID, reporter) {
-			SendTextReply(ctx, client, msg.FromUserID, fmt.Sprintf("附件处理失败：%v", prepareErr), msg.ContextToken, clientID)
-		}
-		return
-	}
-	defer cleanup()
-
-	reply, err := h.chatWithAgent(reporter.task.context(), name, ag, msg.FromUserID, request, reporter.Report)
-	if !h.finishTask(msg.FromUserID, reporter) {
-		log.Printf("[handler] task cancelled for %s", msg.FromUserID)
-		return
-	}
-	if err != nil {
-		reply = fmt.Sprintf("Error: %v", err)
-	}
-	h.sendReplyWithMedia(ctx, client, msg, reply, request.ArtifactDir, clientID)
-}
-
-// broadcastToAgents sends the message to multiple agents in parallel.
-// Each reply is sent as a separate message with the agent name prefix.
-func (h *Handler) broadcastToAgents(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, names []string, message string, images []*ilink.ImageItem, files []*ilink.FileItem) {
-	reporter, ok := h.beginTask(ctx, client, msg)
-	if !ok {
-		return
-	}
-	request, cleanup, prepareErr := h.prepareTaskInput(reporter, message, images, files)
-	if prepareErr != nil {
-		log.Printf("[handler] failed to prepare inbound attachments for %s: %v", msg.FromUserID, prepareErr)
-		if h.finishTask(msg.FromUserID, reporter) {
-			SendTextReply(ctx, client, msg.FromUserID, fmt.Sprintf("附件处理失败：%v", prepareErr), msg.ContextToken, NewClientID())
-		}
-		return
-	}
-	defer cleanup()
-
-	type result struct {
-		name        string
-		reply       string
-		artifactDir string
-	}
-
-	ch := make(chan result, len(names))
-
-	for index, name := range names {
-		agentRequest := request
-		agentRequest.ArtifactDir = filepath.Join(request.ArtifactDir, fmt.Sprintf("agent-%02d", index+1))
-		if err := os.Mkdir(agentRequest.ArtifactDir, 0o700); err != nil {
-			ch <- result{name: name, reply: fmt.Sprintf("Error: 创建 Agent 交付目录失败：%v", err)}
-			continue
-		}
-		go func(n string, turnRequest agent.ChatRequest) {
-			ag, err := h.getAgent(ctx, n)
-			if err != nil {
-				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err), artifactDir: turnRequest.ArtifactDir}
-				return
-			}
-			reply, err := h.chatWithAgent(reporter.task.context(), n, ag, msg.FromUserID, turnRequest, reporter.Report)
-			if err != nil {
-				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err), artifactDir: turnRequest.ArtifactDir}
-				return
-			}
-			ch <- result{name: n, reply: reply, artifactDir: turnRequest.ArtifactDir}
-		}(name, agentRequest)
-	}
-
-	// Send replies as they arrive
-	for range names {
-		r := <-ch
-		if reporter.task.cancelRequested() {
-			continue
-		}
-		reply := fmt.Sprintf("[%s] %s", r.name, r.reply)
-		clientID := NewClientID()
-		h.sendReplyWithMedia(ctx, client, msg, reply, r.artifactDir, clientID)
-	}
-	h.finishTask(msg.FromUserID, reporter)
 }
 
 // sendReplyWithMedia 发送最终文字、远程图片和本次 turn 的专属交付物。
@@ -636,56 +271,56 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 	}
 }
 
-// chatWithAgent sends a message to an agent and returns the reply, with logging.
-func (h *Handler) chatWithAgent(ctx context.Context, agentName string, ag agent.Agent, userID string, request agent.ChatRequest, onProgress agent.ProgressHandler) (string, error) {
-	info := ag.Info()
-	log.Printf("[handler] dispatching to agent (%s) for %s", info, userID)
+// chatWithCodex 在归属明确的活动线程里执行一次 Codex turn。
+func (h *Handler) chatWithCodex(ctx context.Context, userID string, request codex.ChatRequest, onProgress codex.ProgressHandler) (string, error) {
+	if h.codex == nil {
+		return "", fmt.Errorf("codex is not initialized")
+	}
+	threadAgent, ok := h.codex.(codex.ThreadClient)
+	if !ok {
+		return "", fmt.Errorf("codex thread runtime is invalid")
+	}
+	if h.sessions == nil {
+		return "", fmt.Errorf("session manager is not initialized")
+	}
+	info := h.codex.Info()
+	log.Printf("[handler] dispatching to codex (%s) for %s", info, userID)
 
 	start := time.Now()
+	thread, err := h.sessions.EnsureActive(ctx, userID, threadAgent)
+	if err != nil {
+		return "", err
+	}
 	var reply string
-	var err error
-	if threadAgent, ok := ag.(agent.ThreadAgent); ok {
-		if h.sessions == nil {
-			return "", fmt.Errorf("session manager is not initialized")
-		}
-		thread, sessionErr := h.sessions.EnsureActive(ctx, userID, agentName, threadAgent)
-		if sessionErr != nil {
-			return "", sessionErr
-		}
-		if progressAgent, supportsProgress := ag.(agent.ThreadProgressAgent); supportsProgress {
-			reply, err = progressAgent.ChatThreadWithProgress(ctx, thread.ID, request, onProgress)
-		} else {
-			reply, err = threadAgent.ChatThread(ctx, thread.ID, request)
-		}
-		if touchErr := h.sessions.Touch(userID, agentName, thread.ID, time.Now().Unix()); touchErr != nil {
-			log.Printf("[handler] failed to persist session recency (agent=%s, thread=%s): %v", agentName, thread.ID, touchErr)
-		}
-	} else if progressAgent, ok := ag.(agent.ProgressAgent); ok {
-		reply, err = progressAgent.ChatWithProgress(ctx, userID, request, onProgress)
+	if progressCodex, supportsProgress := h.codex.(codex.ProgressClient); supportsProgress {
+		reply, err = progressCodex.ChatThreadWithProgress(ctx, thread.ID, request, onProgress)
 	} else {
-		reply, err = ag.Chat(ctx, userID, request)
+		reply, err = threadAgent.ChatThread(ctx, thread.ID, request)
+	}
+	if touchErr := h.sessions.Touch(userID, thread.ID, time.Now().Unix()); touchErr != nil {
+		log.Printf("[handler] failed to persist session recency (thread=%s): %v", thread.ID, touchErr)
 	}
 	elapsed := time.Since(start)
 
 	if err != nil {
-		log.Printf("[handler] agent error (%s, elapsed=%s): %v", info, elapsed, err)
+		log.Printf("[handler] codex error (%s, elapsed=%s): %v", info, elapsed, err)
 		return "", err
 	}
 
-	log.Printf("[handler] agent replied (%s, elapsed=%s): %q", info, elapsed, truncate(reply, 100))
+	log.Printf("[handler] codex replied (%s, elapsed=%s): %q", info, elapsed, truncate(reply, 100))
 	return reply, nil
 }
 
-func (h *Handler) prepareTaskInput(reporter *progressReporter, text string, images []*ilink.ImageItem, files []*ilink.FileItem) (agent.ChatRequest, func(), error) {
+func (h *Handler) prepareTaskInput(reporter *progressReporter, text string, images []*ilink.ImageItem, files []*ilink.FileItem) (codex.ChatRequest, func(), error) {
 	if len(images) > 0 || len(files) > 0 {
-		reporter.Report(agent.ProgressEvent{Kind: agent.ProgressActivity, Text: "正在接收微信附件"})
+		reporter.Report(codex.ProgressEvent{Kind: codex.ProgressActivity, Text: "正在接收微信附件"})
 	}
-	request, cleanup, err := prepareAgentInput(reporter.task.context(), text, images, files, "")
+	request, cleanup, err := prepareCodexInput(reporter.task.context(), text, images, files, "")
 	if err != nil {
-		return agent.ChatRequest{}, cleanup, err
+		return codex.ChatRequest{}, cleanup, err
 	}
 	if len(request.LocalImages) > 0 || len(request.LocalFiles) > 0 {
-		reporter.Report(agent.ProgressEvent{Kind: agent.ProgressActivity, Text: "附件已接收，正在交给 Codex 分析"})
+		reporter.Report(codex.ProgressEvent{Kind: codex.ProgressActivity, Text: "附件已接收，正在交给 Codex 分析"})
 	}
 	return request, cleanup, nil
 }
@@ -736,29 +371,28 @@ func (h *Handler) buildTaskStatus(userID string) string {
 	return "任务状态：空闲\n" + h.buildStatus()
 }
 
-func (h *Handler) sessionContext() (string, agent.ThreadAgent, error) {
+func (h *Handler) sessionContext() (codex.ThreadClient, error) {
 	if h.sessions == nil {
-		return "", nil, fmt.Errorf("会话管理器未初始化")
+		return nil, fmt.Errorf("会话管理器未初始化")
 	}
-	agentName, ag := h.getDefaultAgentEntry()
-	if ag == nil {
-		return "", nil, fmt.Errorf("当前没有可用的 Agent")
+	if h.codex == nil {
+		return nil, fmt.Errorf("Codex 当前不可用")
 	}
-	threadAgent, ok := ag.(agent.ThreadAgent)
+	threadAgent, ok := h.codex.(codex.ThreadClient)
 	if !ok {
-		return "", nil, fmt.Errorf("当前 Agent 不支持 Codex 会话管理")
+		return nil, fmt.Errorf("Codex 线程运行时无效")
 	}
-	return agentName, threadAgent, nil
+	return threadAgent, nil
 }
 
 func (h *Handler) handleSessionReadCommand(ctx context.Context, userID, command string) string {
-	agentName, threadAgent, err := h.sessionContext()
+	threadAgent, err := h.sessionContext()
 	if err != nil {
 		return err.Error()
 	}
 	fields := strings.Fields(command)
 	if len(fields) == 1 && fields[0] == "/session" {
-		current, currentErr := h.sessions.Current(ctx, userID, agentName, threadAgent)
+		current, currentErr := h.sessions.Current(ctx, userID, threadAgent)
 		if currentErr != nil {
 			if errors.Is(currentErr, session.ErrNoActive) {
 				return "当前没有会话。\n创建：/session new [名称]"
@@ -788,7 +422,7 @@ func (h *Handler) handleSessionReadCommand(ctx context.Context, userID, command 
 		}
 		pageNumber = parsed
 	}
-	page, listErr := h.sessions.List(ctx, userID, agentName, threadAgent, archived, pageNumber, session.DefaultPageSize)
+	page, listErr := h.sessions.List(ctx, userID, threadAgent, archived, pageNumber, session.DefaultPageSize)
 	if listErr != nil {
 		return formatSessionError(listErr)
 	}
@@ -796,7 +430,7 @@ func (h *Handler) handleSessionReadCommand(ctx context.Context, userID, command 
 }
 
 func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, command string) string {
-	agentName, threadAgent, err := h.sessionContext()
+	threadAgent, err := h.sessionContext()
 	if err != nil {
 		return err.Error()
 	}
@@ -809,7 +443,7 @@ func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, comm
 
 	switch subcommand {
 	case "new":
-		thread, createErr := h.sessions.New(ctx, userID, agentName, threadAgent, argument)
+		thread, createErr := h.sessions.New(ctx, userID, threadAgent, argument)
 		if createErr != nil {
 			return formatSessionError(createErr)
 		}
@@ -818,7 +452,7 @@ func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, comm
 		if argument == "" || len(strings.Fields(argument)) != 1 {
 			return "用法：/session use <短编号>"
 		}
-		thread, useErr := h.sessions.Use(ctx, userID, agentName, threadAgent, argument)
+		thread, useErr := h.sessions.Use(ctx, userID, threadAgent, argument)
 		if useErr != nil {
 			return formatSessionError(useErr)
 		}
@@ -827,7 +461,7 @@ func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, comm
 		if argument == "" {
 			return "用法：/session rename <名称>"
 		}
-		thread, renameErr := h.sessions.Rename(ctx, userID, agentName, threadAgent, argument)
+		thread, renameErr := h.sessions.Rename(ctx, userID, threadAgent, argument)
 		if renameErr != nil {
 			return formatSessionError(renameErr)
 		}
@@ -836,7 +470,7 @@ func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, comm
 		if len(strings.Fields(argument)) > 1 {
 			return "用法：/session archive [短编号]"
 		}
-		nextActive, archiveErr := h.sessions.Archive(ctx, userID, agentName, threadAgent, argument)
+		nextActive, archiveErr := h.sessions.Archive(ctx, userID, threadAgent, argument)
 		if archiveErr != nil {
 			return formatSessionError(archiveErr)
 		}
@@ -848,7 +482,7 @@ func (h *Handler) handleSessionMutationCommand(ctx context.Context, userID, comm
 		if argument == "" || len(strings.Fields(argument)) != 1 {
 			return "用法：/session restore <短编号>"
 		}
-		thread, restoreErr := h.sessions.Restore(ctx, userID, agentName, threadAgent, argument)
+		thread, restoreErr := h.sessions.Restore(ctx, userID, threadAgent, argument)
 		if restoreErr != nil {
 			return formatSessionError(restoreErr)
 		}
@@ -918,11 +552,11 @@ func formatSessionDetail(thread session.ManagedThread) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatThreadIdentity(thread agent.ThreadInfo) string {
+func formatThreadIdentity(thread codex.ThreadInfo) string {
 	return fmt.Sprintf("名称：%s\n短编号：%s\n状态：%s", threadTitle(thread), session.ShortCode(thread.ID), formatThreadStatus(thread.Status))
 }
 
-func threadTitle(thread agent.ThreadInfo) string {
+func threadTitle(thread codex.ThreadInfo) string {
 	if name := strings.TrimSpace(thread.Name); name != "" {
 		return normalizeSessionLine(name, 60)
 	}
@@ -941,7 +575,7 @@ func normalizeSessionLine(value string, limit int) string {
 	return string(runes[:limit]) + "..."
 }
 
-func formatThreadStatus(status agent.ThreadStatus) string {
+func formatThreadStatus(status codex.ThreadStatus) string {
 	switch status.Type {
 	case "active":
 		for _, flag := range status.ActiveFlags {
@@ -990,46 +624,14 @@ func sessionCommandUsage() string {
 /session restore <短编号>`
 }
 
-// switchDefault switches the default agent. Starts it on demand if needed.
-// The change is persisted to config file.
-func (h *Handler) switchDefault(ctx context.Context, name string) string {
-	ag, err := h.getAgent(ctx, name)
-	if err != nil {
-		log.Printf("[handler] failed to switch default to %q: %v", name, err)
-		return fmt.Sprintf("Failed to switch to %q: %v", name, err)
-	}
-
-	h.mu.Lock()
-	old := h.defaultName
-	h.defaultName = name
-	h.agents[name] = ag
-	h.mu.Unlock()
-
-	// Persist to config file
-	if h.saveDefault != nil {
-		if err := h.saveDefault(name); err != nil {
-			log.Printf("[handler] failed to save default agent to config: %v", err)
-		} else {
-			log.Printf("[handler] saved default agent %q to config", name)
-		}
-	}
-
-	info := ag.Info()
-	log.Printf("[handler] switched default agent: %s -> %s (%s)", old, name, info)
-	return fmt.Sprintf("switch to %s", name)
-}
-
-// handleCwd handles the /cwd command. It updates the working directory for all running agents.
+// handleCwd 查询或修改 Codex 后续 thread/turn 的工作目录。
 func (h *Handler) handleCwd(trimmed string) string {
 	arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/cwd"))
 	if arg == "" {
-		// No path provided — show current cwd of default agent
-		ag := h.getDefaultAgent()
-		if ag == nil {
-			return "No agent running."
+		if h.codex == nil {
+			return "Codex 当前不可用。"
 		}
-		info := ag.Info()
-		return fmt.Sprintf("cwd: (check agent config)\nagent: %s", info.Name)
+		return fmt.Sprintf("cwd: %s", h.codex.Info().Cwd)
 	}
 
 	// Expand ~ to home directory
@@ -1060,44 +662,26 @@ func (h *Handler) handleCwd(trimmed string) string {
 		return fmt.Sprintf("Not a directory: %s", absPath)
 	}
 
-	// Update cwd on all running agents
-	h.mu.RLock()
-	agents := make(map[string]agent.Agent, len(h.agents))
-	for name, ag := range h.agents {
-		agents[name] = ag
+	if h.codex == nil {
+		return "Codex 当前不可用。"
 	}
-	h.mu.RUnlock()
-
-	for name, ag := range agents {
-		ag.SetCwd(absPath)
-		log.Printf("[handler] updated cwd for agent %s: %s", name, absPath)
-	}
-
-	h.mu.Lock()
-	for name := range agents {
-		h.agentWorkDirs[name] = absPath
-	}
-	h.mu.Unlock()
+	h.codex.SetCwd(absPath)
+	log.Printf("[handler] updated codex cwd: %s", absPath)
 
 	return fmt.Sprintf("cwd: %s", absPath)
 }
 
-// buildStatus returns a short status string showing the current default agent.
+// buildStatus 返回唯一 Codex 运行时摘要。
 func (h *Handler) buildStatus() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	if h.defaultName == "" {
-		return "agent: none (echo mode)"
+	if h.codex == nil {
+		return "Codex：不可用"
 	}
-
-	ag, ok := h.agents[h.defaultName]
-	if !ok {
-		return fmt.Sprintf("agent: %s (not started)", h.defaultName)
+	info := h.codex.Info()
+	model := info.Model
+	if model == "" {
+		model = "使用 Codex 默认配置"
 	}
-
-	info := ag.Info()
-	return fmt.Sprintf("agent: %s\ntype: %s\nmodel: %s", h.defaultName, info.Type, info.Model)
+	return fmt.Sprintf("Codex：运行中\n协议：App Server\n模型：%s\n工作目录：%s\nPID：%d", model, info.Cwd, info.PID)
 }
 
 func buildHelpText() string {
@@ -1106,7 +690,7 @@ func buildHelpText() string {
 直接发送 PDF、代码、压缩包或日志 - 交给 Codex 检查
 /status - 查看当前任务状态
 /cancel - 取消当前任务
-/info - 查看当前 Agent 信息
+/info - 查看 Codex 运行信息
 /sessions [页码] - 查看会话列表
 /session - 查看当前会话
 /session new [名称] - 创建会话
@@ -1116,12 +700,7 @@ func buildHelpText() string {
 /sessions archived [页码] - 查看已归档会话
 /session restore 短编号 - 恢复会话
 /cwd /path - 切换工作目录
-/agent - 切换默认 Agent
-/agent 消息 - 发送给指定 Agent
-@a @b 消息 - 同时发送给多个 Agent
-/help - 查看命令列表
-
-快捷别名：/cc(claude) /cx(codex) /cs(cursor) /km(kimi) /gm(gemini) /oc(openclaw) /ocd(opencode) /pi(pi) /cp(copilot) /dr(droid) /if(iflow) /kr(kiro) /qw(qwen)`
+/help - 查看命令列表`
 }
 
 func extractText(msg ilink.WeixinMessage) string {

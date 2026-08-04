@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/fastclaw-ai/weclaw/ilink"
-	"github.com/fastclaw-ai/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/messaging"
 )
 
 // Server provides an HTTP API for sending messages.

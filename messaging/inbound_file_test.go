@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 func TestPrepareAgentInputDownloadsFileAndBuildsSafePrompt(t *testing.T) {
@@ -21,13 +21,13 @@ func TestPrepareAgentInputDownloadsFileAndBuildsSafePrompt(t *testing.T) {
 	defer server.Close()
 
 	root := filepath.Join(t.TempDir(), "turns")
-	request, cleanup, err := prepareAgentInput(context.Background(), "", nil, []*ilink.FileItem{{
+	request, cleanup, err := prepareCodexInput(context.Background(), "", nil, []*ilink.FileItem{{
 		URL:      server.URL,
 		FileName: "../../需求文档.pdf",
 		Len:      "38",
 	}}, root)
 	if err != nil {
-		t.Fatalf("prepareAgentInput() error: %v", err)
+		t.Fatalf("prepareCodexInput() error: %v", err)
 	}
 	if request.Text != defaultFilePrompt || len(request.LocalFiles) != 1 {
 		t.Fatalf("request = %#v", request)
@@ -79,9 +79,9 @@ func TestPrepareAgentInputRejectsTooManyFiles(t *testing.T) {
 	for index := range files {
 		files[index] = &ilink.FileItem{FileName: "code.zip"}
 	}
-	_, _, err := prepareAgentInput(context.Background(), "检查", nil, files, t.TempDir())
+	_, _, err := prepareCodexInput(context.Background(), "检查", nil, files, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "最多支持") {
-		t.Fatalf("prepareAgentInput() error = %v", err)
+		t.Fatalf("prepareCodexInput() error = %v", err)
 	}
 }
 

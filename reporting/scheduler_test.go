@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/config"
-	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/config"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 func TestSchedulerSendsOnceAndPersistsDailyState(t *testing.T) {

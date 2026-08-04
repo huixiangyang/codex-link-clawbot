@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const githubRepo = "fastclaw-ai/weclaw"
+const githubRepo = "huixiangyang/weclaw"
 
 func init() {
 	rootCmd.AddCommand(updateCmd)

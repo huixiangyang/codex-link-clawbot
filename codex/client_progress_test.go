@@ -1,4 +1,4 @@
-package agent
+package codex
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func newProgressTestAgent(threadID string) (*ACPAgent, chan *codexTurnEvent) {
+func newProgressTestAgent(threadID string) (*Codex, chan *codexTurnEvent) {
 	ch := make(chan *codexTurnEvent, 4)
-	return &ACPAgent{turnCh: map[string]chan *codexTurnEvent{threadID: ch}}, ch
+	return &Codex{turnCh: map[string]chan *codexTurnEvent{threadID: ch}}, ch
 }
 
 func TestHandleCodexPlanUpdated(t *testing.T) {
@@ -60,9 +60,8 @@ func TestHandleCodexActivityDoesNotExposeRawOutput(t *testing.T) {
 }
 
 func TestChatCodexAppServerSeparatesCommentaryAndFinalAnswer(t *testing.T) {
-	a := &ACPAgent{
+	a := &Codex{
 		started:       true,
-		protocol:      protocolCodexAppServer,
 		loadedThreads: map[string]bool{"thread-1": true},
 		threadStatus:  make(map[string]ThreadStatus),
 		turnCh:        make(map[string]chan *codexTurnEvent),
@@ -92,7 +91,7 @@ func TestChatCodexAppServerSeparatesCommentaryAndFinalAnswer(t *testing.T) {
 		a.handleCodexItemCompleted(json.RawMessage(`{
 			"threadId":"thread-1","item":{"id":"final-1","type":"agentMessage","phase":"final_answer","text":"改造完成"}
 		}`))
-		a.handleCodexTurnEvent("turn/completed", json.RawMessage(`{"threadId":"thread-1"}`))
+		a.handleCodexTurnEvent("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"status":"completed"}}`))
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
 	}
 
@@ -112,9 +111,8 @@ func TestChatCodexAppServerSeparatesCommentaryAndFinalAnswer(t *testing.T) {
 }
 
 func TestChatCodexAppServerSendsTextAndLocalImages(t *testing.T) {
-	a := &ACPAgent{
+	a := &Codex{
 		started:       true,
-		protocol:      protocolCodexAppServer,
 		loadedThreads: map[string]bool{"thread-1": true},
 		threadStatus:  make(map[string]ThreadStatus),
 		turnCh:        make(map[string]chan *codexTurnEvent),
@@ -143,7 +141,7 @@ func TestChatCodexAppServerSendsTextAndLocalImages(t *testing.T) {
 		a.handleCodexItemCompleted(json.RawMessage(`{
 			"threadId":"thread-1","item":{"id":"final-1","type":"agentMessage","phase":"final_answer","text":"图片分析完成"}
 		}`))
-		a.handleCodexTurnEvent("turn/completed", json.RawMessage(`{"threadId":"thread-1"}`))
+		a.handleCodexTurnEvent("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"status":"completed"}}`))
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
 	}
 
@@ -176,21 +174,9 @@ func TestChatRequestPromptTextIncludesInboundFilesAndOutboxContract(t *testing.T
 	}
 }
 
-func TestLegacyACPRejectsLocalImages(t *testing.T) {
-	a := &ACPAgent{started: true, protocol: protocolLegacyACP}
-	_, err := a.Chat(context.Background(), "user-1", ChatRequest{
-		Text:        "分析图片",
-		LocalImages: []string{"/tmp/image.png"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "does not support image input") {
-		t.Fatalf("Chat() error = %v, want unsupported image error", err)
-	}
-}
-
 func TestChatCodexAppServerInterruptsCancelledTurn(t *testing.T) {
-	a := &ACPAgent{
+	a := &Codex{
 		started:       true,
-		protocol:      protocolCodexAppServer,
 		loadedThreads: map[string]bool{"thread-1": true},
 		threadStatus:  make(map[string]ThreadStatus),
 		turnCh:        make(map[string]chan *codexTurnEvent),

@@ -1,9 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,12 +15,33 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	DefaultAgent     string                  `json:"default_agent"`
 	APIAddr          string                  `json:"api_addr,omitempty"`
 	SaveDir          string                  `json:"save_dir,omitempty"` // Linkhoard archive directory
 	Progress         ProgressConfig          `json:"progress"`
 	ScheduledReports []ScheduledReportConfig `json:"scheduled_reports,omitempty"`
-	Agents           map[string]AgentConfig  `json:"agents"`
+	Codex            CodexConfig             `json:"codex"`
+}
+
+// CodexConfig 是唯一智能体运行配置。App Server 参数由程序固定，避免协议分叉。
+type CodexConfig struct {
+	Command string            `json:"command"`
+	Cwd     string            `json:"cwd"`
+	Env     map[string]string `json:"env,omitempty"`
+	Model   string            `json:"model,omitempty"`
+}
+
+func defaultCodexConfig() CodexConfig {
+	return CodexConfig{Command: "codex"}
+}
+
+func (c CodexConfig) validate() error {
+	if strings.TrimSpace(c.Command) == "" {
+		return fmt.Errorf("codex.command is required")
+	}
+	if c.Cwd != "" && !filepath.IsAbs(c.Cwd) {
+		return fmt.Errorf("codex.cwd must be an absolute path")
+	}
+	return nil
 }
 
 // ScheduledReportConfig 定义每日一次的确定性项目巡检。
@@ -104,60 +126,11 @@ func (c ProgressConfig) validate() error {
 	return nil
 }
 
-// AgentConfig holds configuration for a single agent.
-type AgentConfig struct {
-	Type         string            `json:"type"`                    // "acp", "cli", or "http"
-	Command      string            `json:"command,omitempty"`       // binary path (cli/acp type)
-	Args         []string          `json:"args,omitempty"`          // extra args for command (e.g. ["acp"] for cursor)
-	Aliases      []string          `json:"aliases,omitempty"`       // custom trigger commands (e.g. ["gpt", "4o"])
-	Cwd          string            `json:"cwd,omitempty"`           // working directory (workspace)
-	Env          map[string]string `json:"env,omitempty"`           // extra environment variables (cli/acp type)
-	Model        string            `json:"model,omitempty"`         // model name
-	SystemPrompt string            `json:"system_prompt,omitempty"` // system prompt
-	Endpoint     string            `json:"endpoint,omitempty"`      // API endpoint (http type)
-	APIKey       string            `json:"api_key,omitempty"`       // API key (http type)
-	Headers      map[string]string `json:"headers,omitempty"`       // extra HTTP headers (http type)
-	MaxHistory   int               `json:"max_history,omitempty"`   // max history (http type)
-}
-
-// BuildAliasMap builds a map from custom alias to agent name from all agent configs.
-// It logs warnings for conflicts: duplicate aliases and aliases shadowing agent keys.
-func BuildAliasMap(agents map[string]AgentConfig) map[string]string {
-	// Built-in commands that cannot be overridden
-	reserved := map[string]bool{
-		"status": true, "cancel": true, "info": true, "help": true,
-		"new": true, "clear": true, "cwd": true,
-	}
-
-	m := make(map[string]string)
-	for name, cfg := range agents {
-		for _, alias := range cfg.Aliases {
-			if reserved[alias] {
-				log.Printf("[config] WARNING: alias %q for agent %q conflicts with built-in command, ignored", alias, name)
-				continue
-			}
-			if existing, ok := m[alias]; ok {
-				log.Printf("[config] WARNING: alias %q is defined by both %q and %q, using %q", alias, existing, name, name)
-			}
-			m[alias] = name
-		}
-	}
-
-	// Warn if a custom alias shadows an agent key
-	for alias, target := range m {
-		if _, isAgent := agents[alias]; isAgent && alias != target {
-			log.Printf("[config] WARNING: alias %q (-> %q) shadows agent key %q", alias, target, alias)
-		}
-	}
-
-	return m
-}
-
 // DefaultConfig returns an empty configuration.
 func DefaultConfig() *Config {
 	return &Config{
 		Progress: defaultProgressConfig(),
-		Agents:   make(map[string]AgentConfig),
+		Codex:    defaultCodexConfig(),
 	}
 }
 
@@ -183,37 +156,51 @@ func Load() (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			loadEnv(cfg)
-			return cfg, nil
+			return cfg, cfg.validate()
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
-	if err := json.Unmarshal(data, cfg); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	if cfg.Agents == nil {
-		cfg.Agents = make(map[string]AgentConfig)
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("parse config: trailing data")
 	}
-	if err := cfg.Progress.validate(); err != nil {
-		return nil, err
-	}
-	if err := validateScheduledReports(cfg.ScheduledReports); err != nil {
-		return nil, err
-	}
-
 	loadEnv(cfg)
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
-func loadEnv(cfg *Config) {
-	if v := os.Getenv("WECLAW_DEFAULT_AGENT"); v != "" {
-		cfg.DefaultAgent = v
+func (c *Config) validate() error {
+	if err := c.Progress.validate(); err != nil {
+		return err
 	}
+	if err := c.Codex.validate(); err != nil {
+		return err
+	}
+	return validateScheduledReports(c.ScheduledReports)
+}
+
+func loadEnv(cfg *Config) {
 	if v := os.Getenv("WECLAW_API_ADDR"); v != "" {
 		cfg.APIAddr = v
 	}
 	if v := os.Getenv("WECLAW_SAVE_DIR"); v != "" {
 		cfg.SaveDir = v
+	}
+	if v := os.Getenv("WECLAW_CODEX_COMMAND"); v != "" {
+		cfg.Codex.Command = v
+	}
+	if v := os.Getenv("WECLAW_CODEX_CWD"); v != "" {
+		cfg.Codex.Cwd = v
+	}
+	if v := os.Getenv("WECLAW_CODEX_MODEL"); v != "" {
+		cfg.Codex.Model = v
 	}
 }
 

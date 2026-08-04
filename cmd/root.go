@@ -12,8 +12,8 @@ var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:     "weclaw",
-	Short:   "WeChat AI agent bridge",
-	Long:    "weclaw bridges WeChat messages to AI agents via the iLink API.",
+	Short:   "WeChat to Codex bridge",
+	Long:    "weclaw connects a bound WeChat account to a local Codex App Server.",
 	Version: Version,
 	RunE:    runStart, // default command is start
 }

@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
+	"github.com/huixiangyang/weclaw/codex"
 )
 
 func TestFormatProgressEventPlan(t *testing.T) {
-	got := formatProgressEvent(agent.ProgressEvent{
-		Kind:      agent.ProgressPlan,
+	got := formatProgressEvent(codex.ProgressEvent{
+		Kind:      codex.ProgressPlan,
 		Text:      "替换桥接服务",
 		Completed: 2,
 		Total:     4,
@@ -22,8 +22,8 @@ func TestFormatProgressEventPlan(t *testing.T) {
 }
 
 func TestFormatProgressEventTruncatesByRune(t *testing.T) {
-	got := formatProgressEvent(agent.ProgressEvent{
-		Kind: agent.ProgressCommentary,
+	got := formatProgressEvent(codex.ProgressEvent{
+		Kind: codex.ProgressCommentary,
 		Text: strings.Repeat("测", 500),
 	})
 	if len([]rune(got)) != len([]rune("进度："))+421 {

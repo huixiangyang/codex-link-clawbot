@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 // ProgressConfig 使用 duration 表达内部节奏，配置层负责从秒数转换。
@@ -132,7 +132,7 @@ type progressReporter struct {
 	contextToken string
 	config       ProgressConfig
 	task         *activeTask
-	events       chan agent.ProgressEvent
+	events       chan codex.ProgressEvent
 	closeOnce    sync.Once
 }
 
@@ -147,13 +147,13 @@ func newProgressReporter(ctx context.Context, client *ilink.Client, userID, cont
 		contextToken: contextToken,
 		config:       config,
 		task:         task,
-		events:       make(chan agent.ProgressEvent, 32),
+		events:       make(chan codex.ProgressEvent, 32),
 	}
 	go r.run()
 	return r
 }
 
-func (r *progressReporter) Report(event agent.ProgressEvent) {
+func (r *progressReporter) Report(event codex.ProgressEvent) {
 	select {
 	case r.events <- event:
 	default:
@@ -181,7 +181,7 @@ func (r *progressReporter) run() {
 
 	r.sendTyping()
 	latest := "任务已接收，正在分析"
-	latestKind := agent.ProgressKind("")
+	latestKind := codex.ProgressKind("")
 	sentMessages := make(map[string]struct{})
 
 	for {
@@ -193,7 +193,7 @@ func (r *progressReporter) run() {
 		case event := <-r.events:
 			if status := formatProgressEvent(event); status != "" {
 				// 命令活动是最低优先级状态，不能覆盖更有信息量的阶段说明或计划。
-				if event.Kind == agent.ProgressActivity && latestKind != "" && latestKind != agent.ProgressActivity {
+				if event.Kind == codex.ProgressActivity && latestKind != "" && latestKind != codex.ProgressActivity {
 					continue
 				}
 				latest = status
@@ -235,15 +235,15 @@ func (r *progressReporter) sendTyping() {
 	}()
 }
 
-func formatProgressEvent(event agent.ProgressEvent) string {
+func formatProgressEvent(event codex.ProgressEvent) string {
 	text := truncateRunes(strings.TrimSpace(event.Text), 420)
 	switch event.Kind {
-	case agent.ProgressCommentary:
+	case codex.ProgressCommentary:
 		if text == "" {
 			return ""
 		}
 		return "进度：" + text
-	case agent.ProgressPlan:
+	case codex.ProgressPlan:
 		if event.Total <= 0 {
 			return ""
 		}
@@ -251,7 +251,7 @@ func formatProgressEvent(event agent.ProgressEvent) string {
 			return fmt.Sprintf("进度：已完成 %d/%d 个计划步骤", event.Completed, event.Total)
 		}
 		return fmt.Sprintf("进度：已完成 %d/%d 个计划步骤\n当前：%s", event.Completed, event.Total, text)
-	case agent.ProgressActivity:
+	case codex.ProgressActivity:
 		if text == "" {
 			return "进度：正在执行本机操作"
 		}

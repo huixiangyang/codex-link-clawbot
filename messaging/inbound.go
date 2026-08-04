@@ -13,8 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 const (
@@ -48,17 +48,17 @@ type inboundDownloaders struct {
 	file  func(context.Context, *ilink.FileItem) ([]byte, error)
 }
 
-// prepareAgentInput 为一次 turn 创建私有 inbox/outbox，并把微信媒体整理为本机结构化输入。
+// prepareCodexInput 为一次 turn 创建私有 inbox/outbox，并把微信媒体整理为本机结构化输入。
 // cleanup 必须在最终回复及附件发送完成后调用。
-func prepareAgentInput(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem, root string) (agent.ChatRequest, func(), error) {
-	return prepareAgentInputWithDownloaders(ctx, text, images, files, root, inboundDownloaders{
+func prepareCodexInput(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem, root string) (codex.ChatRequest, func(), error) {
+	return prepareCodexInputWithDownloaders(ctx, text, images, files, root, inboundDownloaders{
 		image: downloadInboundImage,
 		file:  downloadInboundFile,
 	})
 }
 
-func prepareAgentInputWithDownloaders(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem, root string, downloaders inboundDownloaders) (agent.ChatRequest, func(), error) {
-	request := agent.ChatRequest{Text: strings.TrimSpace(text)}
+func prepareCodexInputWithDownloaders(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem, root string, downloaders inboundDownloaders) (codex.ChatRequest, func(), error) {
+	request := codex.ChatRequest{Text: strings.TrimSpace(text)}
 	cleanup := func() {}
 	if len(images) > maxInboundImages {
 		return request, cleanup, fmt.Errorf("单条消息最多支持 %d 张图片", maxInboundImages)
@@ -108,7 +108,7 @@ func prepareAgentInputWithDownloaders(ctx context.Context, text string, images [
 	for _, dir := range []string{inboxDir, artifactDir} {
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("创建 turn 子目录: %w", err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("创建 turn 子目录: %w", err)
 		}
 	}
 	request.ArtifactDir = artifactDir
@@ -118,22 +118,22 @@ func prepareAgentInputWithDownloaders(ctx context.Context, text string, images [
 		data, err := downloaders.image(ctx, image)
 		if err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("接收第 %d 张图片: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("接收第 %d 张图片: %w", index+1, err)
 		}
 		totalBytes += int64(len(data))
 		if totalBytes > maxInboundTotalBytes {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("单条消息的附件总大小超过 100 MiB")
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("单条消息的附件总大小超过 100 MiB")
 		}
 		ext, err := validatedImageExtension(data)
 		if err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 张图片: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 张图片: %w", index+1, err)
 		}
 		path := filepath.Join(inboxDir, fmt.Sprintf("image-%02d%s", index+1, ext))
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("保存第 %d 张图片: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("保存第 %d 张图片: %w", index+1, err)
 		}
 		request.LocalImages = append(request.LocalImages, path)
 	}
@@ -141,29 +141,29 @@ func prepareAgentInputWithDownloaders(ctx context.Context, text string, images [
 	for index, file := range files {
 		if err := validateInboundFileMetadata(file); err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 个文件: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 个文件: %w", index+1, err)
 		}
 		data, err := downloaders.file(ctx, file)
 		if err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("接收第 %d 个文件: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("接收第 %d 个文件: %w", index+1, err)
 		}
 		totalBytes += int64(len(data))
 		if totalBytes > maxInboundTotalBytes {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("单条消息的附件总大小超过 100 MiB")
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("单条消息的附件总大小超过 100 MiB")
 		}
 		name, contentType, err := validateInboundFile(file.FileName, data)
 		if err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 个文件: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 个文件: %w", index+1, err)
 		}
 		path := filepath.Join(inboxDir, fmt.Sprintf("file-%02d-%s", index+1, name))
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			cleanup()
-			return agent.ChatRequest{}, func() {}, fmt.Errorf("保存第 %d 个文件: %w", index+1, err)
+			return codex.ChatRequest{}, func() {}, fmt.Errorf("保存第 %d 个文件: %w", index+1, err)
 		}
-		request.LocalFiles = append(request.LocalFiles, agent.LocalFile{
+		request.LocalFiles = append(request.LocalFiles, codex.LocalFile{
 			Path:        path,
 			Name:        name,
 			ContentType: contentType,

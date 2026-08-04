@@ -4,7 +4,7 @@
 
 微信不再隐式绑定一个进程内 thread。每个扫码授权用户拥有独立的 Codex 会话集合、明确的当前会话和可恢复的历史选择；服务重启不会创建无关的新 thread，也不会把 Codex Desktop 或其他客户端的历史暴露到微信。
 
-该功能只适用于 Codex App Server。CLI、HTTP 和旧 ACP Agent 保持各自的上下文机制，不伪造 Codex thread 能力。
+项目只存在 Codex App Server 会话，不再维护其他协议或智能体的上下文分支。
 
 ## 状态分工
 
@@ -20,21 +20,17 @@ WeClaw 只保存访问控制和用户选择：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "owners": {
     "user-id@im.wechat": {
-      "agents": {
-        "codex": {
-          "active_thread_id": "019f...",
-          "threads": {
-            "019f...": {
-              "id": "019f...",
-              "archived": false,
-              "created_at": 1785830000,
-              "updated_at": 1785831000,
-              "last_selected_at": 1785831000
-            }
-          }
+      "active_thread_id": "019f...",
+      "threads": {
+        "019f...": {
+          "id": "019f...",
+          "archived": false,
+          "created_at": 1785830000,
+          "updated_at": 1785831000,
+          "last_selected_at": 1785831000
         }
       }
     }
@@ -65,7 +61,7 @@ WeClaw 只保存访问控制和用户选择：
 
 普通消息进入 Codex 前执行以下流程：
 
-1. 按微信用户和 Agent 配置名读取当前 thread。
+1. 按微信绑定者读取当前 thread。
 2. 没有当前 thread 时调用 `thread/start` 并原子写入索引。
 3. 调用 `thread/read` 验证 thread 仍存在并取得最新摘要。
 4. app-server 进程尚未加载该 thread 时调用 `thread/resume`。
@@ -100,7 +96,7 @@ Codex `thread/read` 返回值是查询时的权威状态。`thread/status/change
 
 服务启动时严格读取索引，但不会主动恢复所有 thread。第一次普通消息或显式切换时才调用 `thread/resume`，降低空闲资源占用。
 
-旧版只有进程内 `conversationID -> threadID` 映射，无法从 Codex 的公开 Thread 对象可靠还原微信用户归属，因此运行时代码不做模糊兼容。升级部署可以在停服窗口内读取 Codex 会话文件的 `session_meta`，只把明确标记为 WeClaw 创建的 thread 一次性写入所有者索引；其他 Codex Desktop、CLI 和第三方 thread 必须保持不可见。
+v2 删除了 `owners → agents → codex` 冗余层。运行时代码不会读取或转换 v1；升级部署必须在停服窗口内把已经确认属于 WeClaw 的记录一次性写成 v2。其他 Codex Desktop、CLI 和第三方 thread 始终保持不可见。
 
 ## Codex 接口范围
 
@@ -123,7 +119,7 @@ Codex `thread/read` 返回值是查询时的权威状态。`thread/status/change
 
 ```bash
 go test ./...
-go test -race ./agent ./messaging ./session
+go test -race ./codex ./messaging ./session
 go vet ./...
 ```
 

@@ -12,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/api"
-	"github.com/fastclaw-ai/weclaw/config"
-	"github.com/fastclaw-ai/weclaw/ilink"
-	"github.com/fastclaw-ai/weclaw/messaging"
-	"github.com/fastclaw-ai/weclaw/reporting"
-	"github.com/fastclaw-ai/weclaw/session"
+	"github.com/huixiangyang/weclaw/api"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/config"
+	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/reporting"
+	"github.com/huixiangyang/weclaw/session"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
@@ -81,67 +81,30 @@ func runStart(cmd *cobra.Command, args []string) error {
 		accounts = append(accounts, creds)
 	}
 
-	// Load config and auto-detect agents
+	// 配置只允许单一 Codex App Server，旧 agents/default_agent 字段会被严格拒绝。
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// 已显式配置 Agent 时不再自动发现，确保微信只路由到指定的 Codex。
-	if len(cfg.Agents) == 0 && config.DetectAndConfigure(cfg) {
-		if err := config.Save(cfg); err != nil {
-			log.Printf("Warning: failed to save auto-detected config: %v", err)
-		} else {
-			path, _ := config.ConfigPath()
-			log.Printf("Auto-detected agents saved to %s", path)
-		}
+	codex := codex.NewCodex(codex.CodexConfig{
+		Command: cfg.Codex.Command,
+		Cwd:     cfg.Codex.Cwd,
+		Env:     cfg.Codex.Env,
+		Model:   cfg.Codex.Model,
+	})
+	log.Printf("Initializing Codex App Server (command=%s, cwd=%s, model=%s)...", cfg.Codex.Command, cfg.Codex.Cwd, cfg.Codex.Model)
+	if err := codex.Start(ctx); err != nil {
+		return fmt.Errorf("initialize codex: %w", err)
 	}
-
-	// Log all available agents
-	if len(cfg.Agents) > 0 {
-		names := make([]string, 0, len(cfg.Agents))
-		for name := range cfg.Agents {
-			names = append(names, name)
-		}
-		log.Printf("Available agents: %v (default: %s)", names, cfg.DefaultAgent)
-	}
-
-	// Create handler with an agent factory for on-demand agent creation
-	handler := messaging.NewHandler(
-		func(ctx context.Context, name string) agent.Agent {
-			return createAgentByName(ctx, cfg, name)
-		},
-		func(name string) error {
-			cfg.DefaultAgent = name
-			return config.Save(cfg)
-		},
-	)
+	defer codex.Stop()
+	handler := messaging.NewHandler(codex)
 	sessionManager, err := session.NewManager("")
 	if err != nil {
 		return fmt.Errorf("initialize session manager: %w", err)
 	}
 	handler.SetSessionManager(sessionManager)
 
-	// Populate agent metas for /status
-	var metas []messaging.AgentMeta
-	workDirs := make(map[string]string, len(cfg.Agents))
-	for name, agCfg := range cfg.Agents {
-		command := agCfg.Command
-		if agCfg.Type == "http" {
-			command = agCfg.Endpoint
-		}
-		metas = append(metas, messaging.AgentMeta{
-			Name:    name,
-			Type:    agCfg.Type,
-			Command: command,
-			Model:   agCfg.Model,
-		})
-		if agCfg.Cwd != "" {
-			workDirs[name] = agCfg.Cwd
-		}
-	}
-	handler.SetAgentMetas(metas)
-	handler.SetAgentWorkDirs(workDirs)
 	handler.SetProgressConfig(messaging.ProgressConfig{
 		Enabled:           cfg.Progress.Enabled,
 		TypingInterval:    time.Duration(cfg.Progress.TypingIntervalSeconds) * time.Second,
@@ -149,26 +112,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 		MessageInterval:   time.Duration(cfg.Progress.MessageIntervalSeconds) * time.Second,
 	})
 
-	// Load custom aliases from agent configs
-	handler.SetCustomAliases(config.BuildAliasMap(cfg.Agents))
-
 	// 可选的 Linkhoard 网页归档目录，与 turn 附件沙箱无关。
 	if cfg.SaveDir != "" {
 		handler.SetSaveDir(cfg.SaveDir)
 		log.Printf("Linkhoard archive directory: %s", cfg.SaveDir)
 	}
-
-	// 默认 Agent 必须先完成握手，健康端点和微信轮询随后才开放。
-	// 启动失败直接退出交给 systemd 重试，不再以 echo 模式接收真实用户消息。
-	if cfg.DefaultAgent == "" {
-		return fmt.Errorf("default agent is required")
-	}
-	log.Printf("Initializing default agent %q...", cfg.DefaultAgent)
-	ag := createAgentByName(ctx, cfg, cfg.DefaultAgent)
-	if ag == nil {
-		return fmt.Errorf("failed to initialize default agent %q", cfg.DefaultAgent)
-	}
-	handler.SetDefaultAgent(cfg.DefaultAgent, ag)
 
 	// Start HTTP API server for sending messages
 	var clients []*ilink.Client
@@ -205,7 +153,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	go reportScheduler.Run(ctx)
 
-	// Agent 就绪后才启动消息轮询。
+	// Codex 就绪后才启动消息轮询。
 	log.Printf("Starting message bridge for %d account(s)...", len(accounts))
 
 	var wg sync.WaitGroup
@@ -217,9 +165,29 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}(creds)
 	}
 
-	wg.Wait()
-	log.Println("All monitors stopped")
-	return nil
+	monitorsDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(monitorsDone)
+	}()
+
+	select {
+	case <-monitorsDone:
+		log.Println("All monitors stopped")
+		return nil
+	case <-codex.Done():
+		if ctx.Err() != nil {
+			<-monitorsDone
+			return nil
+		}
+		if exitErr := codex.ExitError(); exitErr != nil {
+			return fmt.Errorf("codex app-server exited: %w", exitErr)
+		}
+		return fmt.Errorf("codex app-server exited unexpectedly")
+	case <-ctx.Done():
+		<-monitorsDone
+		return nil
+	}
 }
 
 // runMonitorWithRestart runs a monitor with automatic restart on failure.
@@ -255,64 +223,6 @@ func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handle
 		if restartDelay > maxRestartDelay {
 			restartDelay = maxRestartDelay
 		}
-	}
-}
-
-// createAgentByName creates and starts an agent by its config name.
-// Returns nil if the agent is not configured or fails to start.
-func createAgentByName(ctx context.Context, cfg *config.Config, name string) agent.Agent {
-	agCfg, ok := cfg.Agents[name]
-	if !ok {
-		log.Printf("[agent] %q not found in config", name)
-		return nil
-	}
-
-	switch agCfg.Type {
-	case "acp":
-		ag := agent.NewACPAgent(agent.ACPAgentConfig{
-			Command:      agCfg.Command,
-			Args:         agCfg.Args,
-			Cwd:          agCfg.Cwd,
-			Env:          agCfg.Env,
-			Model:        agCfg.Model,
-			SystemPrompt: agCfg.SystemPrompt,
-		})
-		if err := ag.Start(ctx); err != nil {
-			log.Printf("[agent] failed to start ACP agent %q: %v", name, err)
-			return nil
-		}
-		log.Printf("[agent] started ACP agent: %s (command=%s, type=%s, model=%s)", name, agCfg.Command, agCfg.Type, agCfg.Model)
-		return ag
-	case "cli":
-		ag := agent.NewCLIAgent(agent.CLIAgentConfig{
-			Name:         name,
-			Command:      agCfg.Command,
-			Args:         agCfg.Args,
-			Cwd:          agCfg.Cwd,
-			Env:          agCfg.Env,
-			Model:        agCfg.Model,
-			SystemPrompt: agCfg.SystemPrompt,
-		})
-		log.Printf("[agent] created CLI agent: %s (command=%s, type=%s, model=%s)", name, agCfg.Command, agCfg.Type, agCfg.Model)
-		return ag
-	case "http":
-		if agCfg.Endpoint == "" {
-			log.Printf("[agent] HTTP agent %q has no endpoint", name)
-			return nil
-		}
-		ag := agent.NewHTTPAgent(agent.HTTPAgentConfig{
-			Endpoint:     agCfg.Endpoint,
-			APIKey:       agCfg.APIKey,
-			Headers:      agCfg.Headers,
-			Model:        agCfg.Model,
-			SystemPrompt: agCfg.SystemPrompt,
-			MaxHistory:   agCfg.MaxHistory,
-		})
-		log.Printf("[agent] created HTTP agent: %s (endpoint=%s, model=%s)", name, agCfg.Endpoint, agCfg.Model)
-		return ag
-	default:
-		log.Printf("[agent] unknown type %q for %q", agCfg.Type, name)
-		return nil
 	}
 }
 

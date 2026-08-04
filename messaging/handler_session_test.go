@@ -6,75 +6,69 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/session"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/session"
 )
 
-type handlerThreadAgent struct {
-	next           int
-	threads        map[string]agent.ThreadInfo
-	archived       map[string]bool
-	implicitCalled bool
-	chatThreadID   string
+type handlerThreadClient struct {
+	next         int
+	threads      map[string]codex.ThreadInfo
+	archived     map[string]bool
+	chatThreadID string
 }
 
-func newHandlerThreadAgent() *handlerThreadAgent {
-	return &handlerThreadAgent{
-		threads:  make(map[string]agent.ThreadInfo),
+func newHandlerThreadClient() *handlerThreadClient {
+	return &handlerThreadClient{
+		threads:  make(map[string]codex.ThreadInfo),
 		archived: make(map[string]bool),
 	}
 }
 
-func (a *handlerThreadAgent) Chat(context.Context, string, agent.ChatRequest) (string, error) {
-	a.implicitCalled = true
-	return "", fmt.Errorf("implicit chat should not be used")
+func (a *handlerThreadClient) Info() codex.RuntimeInfo {
+	return codex.RuntimeInfo{Command: "codex", Cwd: "/workspace"}
 }
 
-func (a *handlerThreadAgent) Info() agent.AgentInfo {
-	return agent.AgentInfo{Name: "codex", Type: "acp", Command: "codex"}
-}
+func (a *handlerThreadClient) SetCwd(string) {}
 
-func (a *handlerThreadAgent) SetCwd(string) {}
-
-func (a *handlerThreadAgent) StartThread(context.Context) (agent.ThreadInfo, error) {
+func (a *handlerThreadClient) StartThread(context.Context) (codex.ThreadInfo, error) {
 	a.next++
 	id := fmt.Sprintf("019fcc03-fc8b-7842-a812-%012d", a.next)
-	thread := agent.ThreadInfo{
+	thread := codex.ThreadInfo{
 		ID: id, Preview: fmt.Sprintf("测试会话 %d", a.next), Cwd: "/workspace",
 		CreatedAt: int64(100 + a.next), UpdatedAt: int64(100 + a.next),
-		Status: agent.ThreadStatus{Type: "idle"},
+		Status: codex.ThreadStatus{Type: "idle"},
 	}
 	a.threads[id] = thread
 	return thread, nil
 }
 
-func (a *handlerThreadAgent) ResumeThread(_ context.Context, threadID string) (agent.ThreadInfo, error) {
+func (a *handlerThreadClient) ResumeThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
 	thread, ok := a.threads[threadID]
 	if !ok || a.archived[threadID] {
-		return agent.ThreadInfo{}, fmt.Errorf("thread unavailable")
+		return codex.ThreadInfo{}, fmt.Errorf("thread unavailable")
 	}
 	return thread, nil
 }
 
-func (a *handlerThreadAgent) ReadThread(_ context.Context, threadID string) (agent.ThreadInfo, error) {
+func (a *handlerThreadClient) ReadThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
 	thread, ok := a.threads[threadID]
 	if !ok {
-		return agent.ThreadInfo{}, fmt.Errorf("thread not found")
+		return codex.ThreadInfo{}, fmt.Errorf("thread not found")
 	}
 	return thread, nil
 }
 
-func (a *handlerThreadAgent) ListThreads(_ context.Context, options agent.ThreadListOptions) (agent.ThreadPage, error) {
-	var threads []agent.ThreadInfo
+func (a *handlerThreadClient) ListThreads(_ context.Context, options codex.ThreadListOptions) (codex.ThreadPage, error) {
+	var threads []codex.ThreadInfo
 	for id, thread := range a.threads {
 		if a.archived[id] == options.Archived {
 			threads = append(threads, thread)
 		}
 	}
-	return agent.ThreadPage{Threads: threads}, nil
+	return codex.ThreadPage{Threads: threads}, nil
 }
 
-func (a *handlerThreadAgent) SetThreadName(_ context.Context, threadID, name string) error {
+func (a *handlerThreadClient) SetThreadName(_ context.Context, threadID, name string) error {
 	thread, ok := a.threads[threadID]
 	if !ok {
 		return fmt.Errorf("thread not found")
@@ -84,7 +78,7 @@ func (a *handlerThreadAgent) SetThreadName(_ context.Context, threadID, name str
 	return nil
 }
 
-func (a *handlerThreadAgent) ArchiveThread(_ context.Context, threadID string) error {
+func (a *handlerThreadClient) ArchiveThread(_ context.Context, threadID string) error {
 	if _, ok := a.threads[threadID]; !ok {
 		return fmt.Errorf("thread not found")
 	}
@@ -92,33 +86,37 @@ func (a *handlerThreadAgent) ArchiveThread(_ context.Context, threadID string) e
 	return nil
 }
 
-func (a *handlerThreadAgent) UnarchiveThread(_ context.Context, threadID string) (agent.ThreadInfo, error) {
+func (a *handlerThreadClient) UnarchiveThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
 	thread, ok := a.threads[threadID]
 	if !ok || !a.archived[threadID] {
-		return agent.ThreadInfo{}, fmt.Errorf("archived thread not found")
+		return codex.ThreadInfo{}, fmt.Errorf("archived thread not found")
 	}
 	delete(a.archived, threadID)
 	return thread, nil
 }
 
-func (a *handlerThreadAgent) UnsubscribeThread(context.Context, string) error { return nil }
+func (a *handlerThreadClient) UnsubscribeThread(context.Context, string) error { return nil }
 
-func (a *handlerThreadAgent) ChatThread(_ context.Context, threadID string, _ agent.ChatRequest) (string, error) {
+func (a *handlerThreadClient) ChatThread(_ context.Context, threadID string, _ codex.ChatRequest) (string, error) {
 	a.chatThreadID = threadID
 	return "显式线程回复", nil
 }
 
-func newSessionHandler(t *testing.T) (*Handler, *handlerThreadAgent) {
+func newSessionHandler(t *testing.T) (*Handler, *handlerThreadClient) {
+	t.Helper()
+	threadAgent := newHandlerThreadClient()
+	handler := NewHandler(threadAgent)
+	attachTestSessionManager(t, handler)
+	return handler, threadAgent
+}
+
+func attachTestSessionManager(t *testing.T, handler *Handler) {
 	t.Helper()
 	manager, err := session.NewManager(t.TempDir() + "/session-index.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewHandler(nil, nil)
 	handler.SetSessionManager(manager)
-	threadAgent := newHandlerThreadAgent()
-	handler.SetDefaultAgent("codex", threadAgent)
-	return handler, threadAgent
 }
 
 func TestSessionCommandsCreateListSwitchRenameArchiveRestore(t *testing.T) {
@@ -167,17 +165,11 @@ func TestSessionCommandsCreateListSwitchRenameArchiveRestore(t *testing.T) {
 	}
 }
 
-func TestChatWithAgentUsesOwnedExplicitThread(t *testing.T) {
+func TestChatWithCodexUsesOwnedExplicitThread(t *testing.T) {
 	handler, threadAgent := newSessionHandler(t)
-	reply, err := handler.chatWithAgent(
-		context.Background(), "codex", threadAgent, "owner-1",
-		agent.ChatRequest{Text: "检查项目"}, nil,
-	)
+	reply, err := handler.chatWithCodex(context.Background(), "owner-1", codex.ChatRequest{Text: "检查项目"}, nil)
 	if err != nil || reply != "显式线程回复" {
-		t.Fatalf("chatWithAgent() = %q, %v", reply, err)
-	}
-	if threadAgent.implicitCalled {
-		t.Fatal("generic Chat() must not be used for Codex thread agents")
+		t.Fatalf("chatWithCodex() = %q, %v", reply, err)
 	}
 	if threadAgent.chatThreadID == "" {
 		t.Fatal("ChatThread() did not receive an explicit thread id")

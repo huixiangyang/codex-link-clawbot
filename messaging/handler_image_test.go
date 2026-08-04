@@ -8,16 +8,17 @@ import (
 	"os"
 	"testing"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 type imageCaptureAgent struct {
-	request   agent.ChatRequest
+	*handlerThreadClient
+	request   codex.ChatRequest
 	imageData []byte
 }
 
-func (a *imageCaptureAgent) Chat(_ context.Context, _ string, request agent.ChatRequest) (string, error) {
+func (a *imageCaptureAgent) ChatThread(_ context.Context, _ string, request codex.ChatRequest) (string, error) {
 	a.request = request
 	if len(request.LocalImages) > 0 {
 		data, err := os.ReadFile(request.LocalImages[0])
@@ -28,12 +29,6 @@ func (a *imageCaptureAgent) Chat(_ context.Context, _ string, request agent.Chat
 	}
 	return "已收到图片", nil
 }
-
-func (a *imageCaptureAgent) Info() agent.AgentInfo {
-	return agent.AgentInfo{Name: "capture", Type: "test"}
-}
-
-func (a *imageCaptureAgent) SetCwd(string) {}
 
 func TestHandleMessagePassesWechatImageToAgent(t *testing.T) {
 	imageData := testPNG(t)
@@ -59,10 +54,10 @@ func TestHandleMessagePassesWechatImageToAgent(t *testing.T) {
 		ILinkUserID: "user-1",
 		BaseURL:     server.URL,
 	})
-	capture := &imageCaptureAgent{}
-	handler := NewHandler(nil, nil)
+	capture := &imageCaptureAgent{handlerThreadClient: newHandlerThreadClient()}
+	handler := NewHandler(capture)
+	attachTestSessionManager(t, handler)
 	handler.SetProgressConfig(ProgressConfig{Enabled: false})
-	handler.SetDefaultAgent("capture", capture)
 
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID:    1,

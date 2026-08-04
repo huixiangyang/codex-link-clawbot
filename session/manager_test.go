@@ -9,75 +9,75 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
+	"github.com/huixiangyang/weclaw/codex"
 )
 
 type fakeThreadClient struct {
 	mu           sync.Mutex
 	next         int
-	threads      map[string]agent.ThreadInfo
+	threads      map[string]codex.ThreadInfo
 	archived     map[string]bool
 	resumed      []string
 	unsubscribed []string
-	listOptions  []agent.ThreadListOptions
+	listOptions  []codex.ThreadListOptions
 }
 
 func newFakeThreadClient() *fakeThreadClient {
 	return &fakeThreadClient{
-		threads:  make(map[string]agent.ThreadInfo),
+		threads:  make(map[string]codex.ThreadInfo),
 		archived: make(map[string]bool),
 	}
 }
 
-func (f *fakeThreadClient) StartThread(context.Context) (agent.ThreadInfo, error) {
+func (f *fakeThreadClient) StartThread(context.Context) (codex.ThreadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.next++
 	id := fmt.Sprintf("019fcc03-fc8b-7842-a812-%012d", f.next)
-	thread := agent.ThreadInfo{
+	thread := codex.ThreadInfo{
 		ID: id, Preview: fmt.Sprintf("会话 %d", f.next),
 		Cwd: "/workspace", CreatedAt: int64(100 + f.next), UpdatedAt: int64(100 + f.next),
-		Status: agent.ThreadStatus{Type: "idle"},
+		Status: codex.ThreadStatus{Type: "idle"},
 	}
 	f.threads[id] = thread
 	return thread, nil
 }
 
-func (f *fakeThreadClient) ResumeThread(_ context.Context, threadID string) (agent.ThreadInfo, error) {
+func (f *fakeThreadClient) ResumeThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	thread, ok := f.threads[threadID]
 	if !ok || f.archived[threadID] {
-		return agent.ThreadInfo{}, fmt.Errorf("thread not available")
+		return codex.ThreadInfo{}, fmt.Errorf("thread not available")
 	}
 	f.resumed = append(f.resumed, threadID)
-	thread.Status = agent.ThreadStatus{Type: "idle"}
+	thread.Status = codex.ThreadStatus{Type: "idle"}
 	f.threads[threadID] = thread
 	return thread, nil
 }
 
-func (f *fakeThreadClient) ReadThread(_ context.Context, threadID string) (agent.ThreadInfo, error) {
+func (f *fakeThreadClient) ReadThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	thread, ok := f.threads[threadID]
 	if !ok {
-		return agent.ThreadInfo{}, fmt.Errorf("thread not found")
+		return codex.ThreadInfo{}, fmt.Errorf("thread not found")
 	}
 	return thread, nil
 }
 
-func (f *fakeThreadClient) ListThreads(_ context.Context, options agent.ThreadListOptions) (agent.ThreadPage, error) {
+func (f *fakeThreadClient) ListThreads(_ context.Context, options codex.ThreadListOptions) (codex.ThreadPage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listOptions = append(f.listOptions, options)
-	var threads []agent.ThreadInfo
+	var threads []codex.ThreadInfo
 	for id, thread := range f.threads {
 		if f.archived[id] == options.Archived {
 			threads = append(threads, thread)
 		}
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].UpdatedAt > threads[j].UpdatedAt })
-	return agent.ThreadPage{Threads: threads}, nil
+	return codex.ThreadPage{Threads: threads}, nil
 }
 
 func (f *fakeThreadClient) SetThreadName(_ context.Context, threadID, name string) error {
@@ -102,12 +102,12 @@ func (f *fakeThreadClient) ArchiveThread(_ context.Context, threadID string) err
 	return nil
 }
 
-func (f *fakeThreadClient) UnarchiveThread(_ context.Context, threadID string) (agent.ThreadInfo, error) {
+func (f *fakeThreadClient) UnarchiveThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	thread, ok := f.threads[threadID]
 	if !ok || !f.archived[threadID] {
-		return agent.ThreadInfo{}, fmt.Errorf("archived thread not found")
+		return codex.ThreadInfo{}, fmt.Errorf("archived thread not found")
 	}
 	delete(f.archived, threadID)
 	return thread, nil
@@ -120,7 +120,7 @@ func (f *fakeThreadClient) UnsubscribeThread(_ context.Context, threadID string)
 	return nil
 }
 
-func (f *fakeThreadClient) ChatThread(context.Context, string, agent.ChatRequest) (string, error) {
+func (f *fakeThreadClient) ChatThread(context.Context, string, codex.ChatRequest) (string, error) {
 	return "ok", nil
 }
 
@@ -132,18 +132,18 @@ func TestManagerPersistsSelectionAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.now = func() time.Time { return time.Unix(1000, 0) }
-	first, err := manager.New(context.Background(), "owner-1", "codex", client, "第一个会话")
+	first, err := manager.New(context.Background(), "owner-1", client, "第一个会话")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := manager.New(context.Background(), "owner-1", "codex", client, "第二个会话")
+	second, err := manager.New(context.Background(), "owner-1", client, "第二个会话")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID == second.ID {
 		t.Fatal("new sessions should have different thread ids")
 	}
-	selected, err := manager.Use(context.Background(), "owner-1", "codex", client, ShortCode(first.ID))
+	selected, err := manager.Use(context.Background(), "owner-1", client, ShortCode(first.ID))
 	if err != nil || selected.ID != first.ID {
 		t.Fatalf("Use() = %#v, %v", selected, err)
 	}
@@ -152,11 +152,11 @@ func TestManagerPersistsSelectionAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := restarted.Current(context.Background(), "owner-1", "codex", client)
+	current, err := restarted.Current(context.Background(), "owner-1", client)
 	if err != nil || current.Info.ID != first.ID {
 		t.Fatalf("Current() after restart = %#v, %v", current, err)
 	}
-	if _, err := restarted.Use(context.Background(), "owner-2", "codex", client, ShortCode(first.ID)); !errors.Is(err, ErrNotOwned) {
+	if _, err := restarted.Use(context.Background(), "owner-2", client, ShortCode(first.ID)); !errors.Is(err, ErrNotOwned) {
 		t.Fatalf("foreign Use() error = %v, want ErrNotOwned", err)
 	}
 }
@@ -167,22 +167,22 @@ func TestManagerListsRenamesArchivesAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := newFakeThreadClient()
-	first, err := manager.New(context.Background(), "owner-1", "codex", client, "第一项")
+	first, err := manager.New(context.Background(), "owner-1", client, "第一项")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := manager.New(context.Background(), "owner-1", "codex", client, "第二项")
+	second, err := manager.New(context.Background(), "owner-1", client, "第二项")
 	if err != nil {
 		t.Fatal(err)
 	}
-	renamed, err := manager.Rename(context.Background(), "owner-1", "codex", client, "发布排障")
+	renamed, err := manager.Rename(context.Background(), "owner-1", client, "发布排障")
 	if err != nil || renamed.Name != "发布排障" {
 		t.Fatalf("Rename() = %#v, %v", renamed, err)
 	}
-	client.threads["019fcc03-fc8b-7842-a812-999999999999"] = agent.ThreadInfo{
+	client.threads["019fcc03-fc8b-7842-a812-999999999999"] = codex.ThreadInfo{
 		ID: "019fcc03-fc8b-7842-a812-999999999999", Name: "其他客户端会话", UpdatedAt: 999,
 	}
-	page, err := manager.List(context.Background(), "owner-1", "codex", client, false, 1, 1)
+	page, err := manager.List(context.Background(), "owner-1", client, false, 1, 1)
 	if err != nil || page.Total != 2 || page.TotalPages != 2 || len(page.Items) != 1 {
 		t.Fatalf("List() = %#v, %v", page, err)
 	}
@@ -193,23 +193,23 @@ func TestManagerListsRenamesArchivesAndRestores(t *testing.T) {
 		t.Fatal("List() should request every Codex source before applying ownership filtering")
 	}
 
-	next, err := manager.Archive(context.Background(), "owner-1", "codex", client, "")
+	next, err := manager.Archive(context.Background(), "owner-1", client, "")
 	if err != nil || next != first.ID {
 		t.Fatalf("Archive() next = %q, err = %v", next, err)
 	}
-	current, err := manager.Current(context.Background(), "owner-1", "codex", client)
+	current, err := manager.Current(context.Background(), "owner-1", client)
 	if err != nil || current.Info.ID != first.ID {
 		t.Fatalf("Current() after archive = %#v, %v", current, err)
 	}
-	archivedPage, err := manager.List(context.Background(), "owner-1", "codex", client, true, 1, 6)
+	archivedPage, err := manager.List(context.Background(), "owner-1", client, true, 1, 6)
 	if err != nil || archivedPage.Total != 1 || archivedPage.Items[0].Info.ID != second.ID {
 		t.Fatalf("archived List() = %#v, %v", archivedPage, err)
 	}
-	restored, err := manager.Restore(context.Background(), "owner-1", "codex", client, ShortCode(second.ID))
+	restored, err := manager.Restore(context.Background(), "owner-1", client, ShortCode(second.ID))
 	if err != nil || restored.ID != second.ID {
 		t.Fatalf("Restore() = %#v, %v", restored, err)
 	}
-	activePage, err := manager.List(context.Background(), "owner-1", "codex", client, false, 1, 6)
+	activePage, err := manager.List(context.Background(), "owner-1", client, false, 1, 6)
 	if err != nil || activePage.Total != 2 {
 		t.Fatalf("active List() = %#v, %v", activePage, err)
 	}
@@ -221,10 +221,10 @@ func TestManagerValidatesSessionNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := newFakeThreadClient()
-	if _, err := manager.New(context.Background(), "owner-1", "codex", client, "两行\n名称"); err == nil {
+	if _, err := manager.New(context.Background(), "owner-1", client, "两行\n名称"); err == nil {
 		t.Fatal("New() should reject multiline name")
 	}
-	if _, err := manager.New(context.Background(), "owner-1", "codex", client, string(make([]rune, MaxSessionName+1))); err == nil {
+	if _, err := manager.New(context.Background(), "owner-1", client, string(make([]rune, MaxSessionName+1))); err == nil {
 		t.Fatal("New() should reject oversized name")
 	}
 }

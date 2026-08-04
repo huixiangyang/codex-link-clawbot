@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
+	"github.com/huixiangyang/weclaw/codex"
 )
 
-const indexVersion = 1
+const indexVersion = 2
 
 var (
 	ErrNotOwned      = errors.New("session does not belong to this user")
@@ -30,10 +30,6 @@ type indexFile struct {
 }
 
 type ownerData struct {
-	Agents map[string]*agentData `json:"agents"`
-}
-
-type agentData struct {
 	ActiveThreadID string                    `json:"active_thread_id,omitempty"`
 	Threads        map[string]*trackedThread `json:"threads"`
 }
@@ -116,43 +112,38 @@ func validateIndex(index indexFile) error {
 		return fmt.Errorf("session index owners are missing")
 	}
 	for ownerID, owner := range index.Owners {
-		if strings.TrimSpace(ownerID) == "" || owner == nil || owner.Agents == nil {
+		if strings.TrimSpace(ownerID) == "" || owner == nil || owner.Threads == nil {
 			return fmt.Errorf("invalid session owner %q", ownerID)
 		}
-		for agentName, state := range owner.Agents {
-			if strings.TrimSpace(agentName) == "" || state == nil || state.Threads == nil {
-				return fmt.Errorf("invalid agent state %q for owner %q", agentName, ownerID)
+		if owner.ActiveThreadID != "" {
+			thread, ok := owner.Threads[owner.ActiveThreadID]
+			if !ok || thread == nil || thread.Archived {
+				return fmt.Errorf("active thread %q is missing or archived", owner.ActiveThreadID)
 			}
-			if state.ActiveThreadID != "" {
-				thread, ok := state.Threads[state.ActiveThreadID]
-				if !ok || thread == nil || thread.Archived {
-					return fmt.Errorf("active thread %q is missing or archived", state.ActiveThreadID)
-				}
-			}
-			for id, thread := range state.Threads {
-				if thread == nil || id == "" || thread.ID != id {
-					return fmt.Errorf("invalid thread record %q", id)
-				}
+		}
+		for id, thread := range owner.Threads {
+			if thread == nil || id == "" || thread.ID != id {
+				return fmt.Errorf("invalid thread record %q", id)
 			}
 		}
 	}
 	return nil
 }
 
-func (s *Store) Active(ownerID, agentName string) (string, bool) {
+func (s *Store) Active(ownerID string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	state := findAgent(s.index, ownerID, agentName)
+	state := findOwner(s.index, ownerID)
 	if state == nil || state.ActiveThreadID == "" {
 		return "", false
 	}
 	return state.ActiveThreadID, true
 }
 
-func (s *Store) Owns(ownerID, agentName, threadID string) bool {
+func (s *Store) Owns(ownerID, threadID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	state := findAgent(s.index, ownerID, agentName)
+	state := findOwner(s.index, ownerID)
 	if state == nil {
 		return false
 	}
@@ -160,10 +151,10 @@ func (s *Store) Owns(ownerID, agentName, threadID string) bool {
 	return ok
 }
 
-func (s *Store) Records(ownerID, agentName string, archived bool) []Record {
+func (s *Store) Records(ownerID string, archived bool) []Record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	state := findAgent(s.index, ownerID, agentName)
+	state := findOwner(s.index, ownerID)
 	if state == nil {
 		return nil
 	}
@@ -187,13 +178,13 @@ func (s *Store) Records(ownerID, agentName string, archived bool) []Record {
 	return records
 }
 
-func (s *Store) Resolve(ownerID, agentName, reference string, archived bool) (Record, error) {
+func (s *Store) Resolve(ownerID, reference string, archived bool) (Record, error) {
 	reference = strings.TrimSpace(reference)
 	if len(reference) < 6 {
 		return Record{}, fmt.Errorf("session code must contain at least 6 characters")
 	}
 	var matches []Record
-	for _, record := range s.Records(ownerID, agentName, archived) {
+	for _, record := range s.Records(ownerID, archived) {
 		if record.ID == reference || strings.HasSuffix(record.ID, reference) {
 			matches = append(matches, record)
 		}
@@ -207,12 +198,12 @@ func (s *Store) Resolve(ownerID, agentName, reference string, archived bool) (Re
 	return matches[0], nil
 }
 
-func (s *Store) Register(ownerID, agentName string, thread agent.ThreadInfo, makeActive bool, now time.Time) error {
-	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(agentName) == "" || strings.TrimSpace(thread.ID) == "" {
-		return fmt.Errorf("owner, agent and thread id are required")
+func (s *Store) Register(ownerID string, thread codex.ThreadInfo, makeActive bool, now time.Time) error {
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(thread.ID) == "" {
+		return fmt.Errorf("owner and thread id are required")
 	}
 	return s.mutate(func(index *indexFile) error {
-		state := ensureAgent(index, ownerID, agentName)
+		state := ensureOwner(index, ownerID)
 		record := state.Threads[thread.ID]
 		if record == nil {
 			record = &trackedThread{ID: thread.ID}
@@ -237,9 +228,9 @@ func (s *Store) Register(ownerID, agentName string, thread agent.ThreadInfo, mak
 	})
 }
 
-func (s *Store) SetActive(ownerID, agentName, threadID string, now time.Time) error {
+func (s *Store) SetActive(ownerID, threadID string, now time.Time) error {
 	return s.mutate(func(index *indexFile) error {
-		state := findAgent(*index, ownerID, agentName)
+		state := findOwner(*index, ownerID)
 		if state == nil {
 			return ErrNotOwned
 		}
@@ -254,9 +245,9 @@ func (s *Store) SetActive(ownerID, agentName, threadID string, now time.Time) er
 	})
 }
 
-func (s *Store) MarkArchived(ownerID, agentName, threadID, nextActive string, archived bool, now time.Time) error {
+func (s *Store) MarkArchived(ownerID, threadID, nextActive string, archived bool, now time.Time) error {
 	return s.mutate(func(index *indexFile) error {
-		state := findAgent(*index, ownerID, agentName)
+		state := findOwner(*index, ownerID)
 		if state == nil {
 			return ErrNotOwned
 		}
@@ -277,9 +268,9 @@ func (s *Store) MarkArchived(ownerID, agentName, threadID, nextActive string, ar
 	})
 }
 
-func (s *Store) Touch(ownerID, agentName, threadID string, updatedAt int64) error {
+func (s *Store) Touch(ownerID, threadID string, updatedAt int64) error {
 	return s.mutate(func(index *indexFile) error {
-		state := findAgent(*index, ownerID, agentName)
+		state := findOwner(*index, ownerID)
 		if state == nil {
 			return ErrNotOwned
 		}
@@ -366,26 +357,17 @@ func cloneIndex(index indexFile) (indexFile, error) {
 	return cloned, nil
 }
 
-func ensureAgent(index *indexFile, ownerID, agentName string) *agentData {
+func ensureOwner(index *indexFile, ownerID string) *ownerData {
 	owner := index.Owners[ownerID]
 	if owner == nil {
-		owner = &ownerData{Agents: make(map[string]*agentData)}
+		owner = &ownerData{Threads: make(map[string]*trackedThread)}
 		index.Owners[ownerID] = owner
 	}
-	state := owner.Agents[agentName]
-	if state == nil {
-		state = &agentData{Threads: make(map[string]*trackedThread)}
-		owner.Agents[agentName] = state
-	}
-	return state
+	return owner
 }
 
-func findAgent(index indexFile, ownerID, agentName string) *agentData {
-	owner := index.Owners[ownerID]
-	if owner == nil {
-		return nil
-	}
-	return owner.Agents[agentName]
+func findOwner(index indexFile, ownerID string) *ownerData {
+	return index.Owners[ownerID]
 }
 
 func maxInt64(a, b int64) int64 {

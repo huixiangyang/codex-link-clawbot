@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/config"
+	"github.com/huixiangyang/weclaw/config"
 )
 
 func TestCollectorBuildsGitServiceAndHealthReport(t *testing.T) {

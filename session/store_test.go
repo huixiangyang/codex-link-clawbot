@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/agent"
+	"github.com/huixiangyang/weclaw/codex"
 )
 
 func TestStorePersistsOwnershipAndActiveThread(t *testing.T) {
@@ -18,17 +18,17 @@ func TestStorePersistsOwnershipAndActiveThread(t *testing.T) {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
 	now := time.Unix(1000, 0)
-	thread := agent.ThreadInfo{ID: "019fcc03-fc8b-7842-a812-a132a87b9898", CreatedAt: 900, UpdatedAt: 950}
-	if err := store.Register("owner-1", "codex", thread, true, now); err != nil {
+	thread := codex.ThreadInfo{ID: "019fcc03-fc8b-7842-a812-a132a87b9898", CreatedAt: 900, UpdatedAt: 950}
+	if err := store.Register("owner-1", thread, true, now); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if !store.Owns("owner-1", "codex", thread.ID) {
+	if !store.Owns("owner-1", thread.ID) {
 		t.Fatal("registered thread should belong to owner-1")
 	}
-	if store.Owns("owner-2", "codex", thread.ID) {
+	if store.Owns("owner-2", thread.ID) {
 		t.Fatal("thread ownership leaked to owner-2")
 	}
-	if active, ok := store.Active("owner-1", "codex"); !ok || active != thread.ID {
+	if active, ok := store.Active("owner-1"); !ok || active != thread.ID {
 		t.Fatalf("Active() = %q, %v", active, ok)
 	}
 	info, err := os.Stat(path)
@@ -43,10 +43,10 @@ func TestStorePersistsOwnershipAndActiveThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen error = %v", err)
 	}
-	if active, ok := reopened.Active("owner-1", "codex"); !ok || active != thread.ID {
+	if active, ok := reopened.Active("owner-1"); !ok || active != thread.ID {
 		t.Fatalf("reopened Active() = %q, %v", active, ok)
 	}
-	record, err := reopened.Resolve("owner-1", "codex", "a87b9898", false)
+	record, err := reopened.Resolve("owner-1", "a87b9898", false)
 	if err != nil || record.ID != thread.ID {
 		t.Fatalf("Resolve() = %#v, %v", record, err)
 	}
@@ -58,10 +58,10 @@ func TestStoreRejectsCorruptOrUnknownSchema(t *testing.T) {
 		data string
 	}{
 		{name: "invalid json", data: `{`},
-		{name: "unknown version", data: `{"version":2,"owners":{}}`},
-		{name: "unknown field", data: `{"version":1,"owners":{},"legacy":true}`},
-		{name: "trailing data", data: `{"version":1,"owners":{}} {}`},
-		{name: "missing owners", data: `{"version":1}`},
+		{name: "unknown version", data: `{"version":3,"owners":{}}`},
+		{name: "unknown field", data: `{"version":2,"owners":{},"legacy":true}`},
+		{name: "trailing data", data: `{"version":2,"owners":{}} {}`},
+		{name: "missing owners", data: `{"version":2}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -86,14 +86,14 @@ func TestStoreRejectsAmbiguousOrForeignShortCode(t *testing.T) {
 		"019fcc03-fc8b-7842-a812-1111a87b9898",
 		"019fcc03-fc8b-7842-a812-2222a87b9898",
 	} {
-		if err := store.Register("owner-1", "codex", agent.ThreadInfo{ID: id}, false, now); err != nil {
+		if err := store.Register("owner-1", codex.ThreadInfo{ID: id}, false, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.Resolve("owner-1", "codex", "a87b9898", false); !errors.Is(err, ErrAmbiguousCode) {
+	if _, err := store.Resolve("owner-1", "a87b9898", false); !errors.Is(err, ErrAmbiguousCode) {
 		t.Fatalf("Resolve() error = %v, want ErrAmbiguousCode", err)
 	}
-	if _, err := store.Resolve("owner-2", "codex", "a87b9898", false); !errors.Is(err, ErrNotOwned) {
+	if _, err := store.Resolve("owner-2", "a87b9898", false); !errors.Is(err, ErrNotOwned) {
 		t.Fatalf("foreign Resolve() error = %v, want ErrNotOwned", err)
 	}
 }
@@ -109,13 +109,13 @@ func TestStoreSerializesConcurrentMutations(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			id := "019fcc03-fc8b-7842-a812-" + time.Unix(int64(index), 0).UTC().Format("150405")
-			if err := store.Register("owner-1", "codex", agent.ThreadInfo{ID: id}, false, time.Unix(int64(index+1), 0)); err != nil {
+			if err := store.Register("owner-1", codex.ThreadInfo{ID: id}, false, time.Unix(int64(index+1), 0)); err != nil {
 				t.Errorf("Register(%d) error = %v", index, err)
 			}
 		}(i)
 	}
 	wg.Wait()
-	if got := len(store.Records("owner-1", "codex", false)); got != 12 {
+	if got := len(store.Records("owner-1", false)); got != 12 {
 		t.Fatalf("record count = %d, want 12", got)
 	}
 }

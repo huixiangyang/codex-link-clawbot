@@ -1,20 +1,18 @@
-package agent
+package codex
 
 import (
 	"context"
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 )
 
-var _ ThreadAgent = (*ACPAgent)(nil)
-var _ ThreadProgressAgent = (*ACPAgent)(nil)
+var _ ThreadClient = (*Codex)(nil)
+var _ ProgressClient = (*Codex)(nil)
 
-func newCodexSessionTestAgent(call func(context.Context, string, interface{}) (json.RawMessage, error)) *ACPAgent {
-	return &ACPAgent{
+func newCodexSessionTestAgent(call func(context.Context, string, interface{}) (json.RawMessage, error)) *Codex {
+	return &Codex{
 		started:       true,
-		protocol:      protocolCodexAppServer,
 		cwd:           "/workspace",
 		model:         "gpt-test",
 		loadedThreads: make(map[string]bool),
@@ -28,7 +26,7 @@ func threadResult(id, status string) json.RawMessage {
 	return json.RawMessage(`{"thread":{"id":"` + id + `","sessionId":"session-1","name":null,"preview":"检查项目","cwd":"/workspace","createdAt":100,"updatedAt":200,"recencyAt":201,"modelProvider":"openai","isPinned":false,"status":{"type":"` + status + `"}}}`)
 }
 
-func TestACPAgentCodexThreadLifecycleRPCs(t *testing.T) {
+func TestCodexThreadLifecycleRPCs(t *testing.T) {
 	const threadID = "019fcc03-fc8b-7842-a812-a132a87b9898"
 	var methods []string
 	a := newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
@@ -102,7 +100,7 @@ func TestACPAgentCodexThreadLifecycleRPCs(t *testing.T) {
 	}
 }
 
-func TestACPAgentResumeAndListThreads(t *testing.T) {
+func TestCodexResumeAndListThreads(t *testing.T) {
 	const threadID = "019fcc03-fc8b-7842-a812-a132a87b9898"
 	a := newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
 		switch method {
@@ -138,7 +136,7 @@ func TestACPAgentResumeAndListThreads(t *testing.T) {
 	}
 }
 
-func TestACPAgentTracksThreadStatusNotifications(t *testing.T) {
+func TestCodexTracksThreadStatusNotifications(t *testing.T) {
 	a := newCodexSessionTestAgent(nil)
 	a.loadedThreads["thread-1"] = true
 	a.handleThreadStatusChanged(json.RawMessage(`{
@@ -152,13 +150,5 @@ func TestACPAgentTracksThreadStatusNotifications(t *testing.T) {
 	a.handleThreadStatusChanged(json.RawMessage(`{"threadId":"thread-1","status":{"type":"notLoaded"}}`))
 	if a.loadedThreads["thread-1"] {
 		t.Fatal("notLoaded notification should clear loaded marker")
-	}
-}
-
-func TestACPAgentRejectsImplicitCodexConversation(t *testing.T) {
-	a := newCodexSessionTestAgent(nil)
-	_, err := a.Chat(context.Background(), "wechat-user", ChatRequest{Text: "检查项目"})
-	if err == nil || !strings.Contains(err.Error(), "explicit thread id") {
-		t.Fatalf("Chat() error = %v", err)
 	}
 }

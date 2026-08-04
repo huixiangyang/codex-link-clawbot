@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="fastclaw-ai/weclaw"
+REPO="huixiangyang/weclaw"
 BINARY="weclaw"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 

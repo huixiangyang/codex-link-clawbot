@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/fastclaw-ai/weclaw/ilink"
 	"github.com/google/uuid"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 // NewClientID generates a new unique client ID for message correlation.

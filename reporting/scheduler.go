@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/weclaw/config"
-	"github.com/fastclaw-ai/weclaw/ilink"
-	"github.com/fastclaw-ai/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/config"
+	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/messaging"
 )
 
 type recipient struct {

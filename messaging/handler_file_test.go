@@ -12,16 +12,17 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/fastclaw-ai/weclaw/agent"
-	"github.com/fastclaw-ai/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 type fileCaptureAgent struct {
-	request agent.ChatRequest
+	*handlerThreadClient
+	request codex.ChatRequest
 	data    []byte
 }
 
-func (a *fileCaptureAgent) Chat(_ context.Context, _ string, request agent.ChatRequest) (string, error) {
+func (a *fileCaptureAgent) ChatThread(_ context.Context, _ string, request codex.ChatRequest) (string, error) {
 	a.request = request
 	if len(request.LocalFiles) > 0 {
 		data, err := os.ReadFile(request.LocalFiles[0].Path)
@@ -32,11 +33,6 @@ func (a *fileCaptureAgent) Chat(_ context.Context, _ string, request agent.ChatR
 	}
 	return "文件检查完成", nil
 }
-
-func (a *fileCaptureAgent) Info() agent.AgentInfo {
-	return agent.AgentInfo{Name: "capture", Type: "test"}
-}
-func (a *fileCaptureAgent) SetCwd(string) {}
 
 func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	fileData := []byte("error: build failed\nline 42\n")
@@ -57,10 +53,10 @@ func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	defer server.Close()
 
 	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "user-1", BaseURL: server.URL})
-	capture := &fileCaptureAgent{}
-	handler := NewHandler(nil, nil)
+	capture := &fileCaptureAgent{handlerThreadClient: newHandlerThreadClient()}
+	handler := NewHandler(capture)
+	attachTestSessionManager(t, handler)
 	handler.SetProgressConfig(ProgressConfig{Enabled: false})
-	handler.SetDefaultAgent("capture", capture)
 
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 2, FromUserID: "user-1", MessageType: ilink.MessageTypeUser,
@@ -85,10 +81,11 @@ func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 }
 
 type artifactAgent struct {
+	*handlerThreadClient
 	artifactDir string
 }
 
-func (a *artifactAgent) Chat(_ context.Context, _ string, request agent.ChatRequest) (string, error) {
+func (a *artifactAgent) ChatThread(_ context.Context, _ string, request codex.ChatRequest) (string, error) {
 	a.artifactDir = request.ArtifactDir
 	path := filepath.Join(request.ArtifactDir, "changes.patch")
 	if err := os.WriteFile(path, []byte("diff --git a/a b/a\n"), 0o600); err != nil {
@@ -96,11 +93,6 @@ func (a *artifactAgent) Chat(_ context.Context, _ string, request agent.ChatRequ
 	}
 	return "补丁已经生成。", nil
 }
-
-func (a *artifactAgent) Info() agent.AgentInfo {
-	return agent.AgentInfo{Name: "artifact", Type: "test"}
-}
-func (a *artifactAgent) SetCwd(string) {}
 
 func TestHandleMessageAutomaticallyReturnsTurnArtifacts(t *testing.T) {
 	var mu sync.Mutex
@@ -131,10 +123,10 @@ func TestHandleMessageAutomaticallyReturnsTurnArtifacts(t *testing.T) {
 	defer server.Close()
 
 	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "user-1", BaseURL: server.URL})
-	ag := &artifactAgent{}
-	handler := NewHandler(nil, nil)
+	ag := &artifactAgent{handlerThreadClient: newHandlerThreadClient()}
+	handler := NewHandler(ag)
+	attachTestSessionManager(t, handler)
 	handler.SetProgressConfig(ProgressConfig{Enabled: false})
-	handler.SetDefaultAgent("artifact", ag)
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 3, FromUserID: "user-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish,
