@@ -27,6 +27,8 @@ const (
 
 type Variant string
 
+type Theme string
+
 const (
 	VariantHome     Variant = "home"
 	VariantSession  Variant = "session"
@@ -37,27 +39,39 @@ const (
 	VariantNeutral  Variant = "neutral"
 )
 
+const (
+	ThemeDay   Theme = "day"
+	ThemeNight Theme = "night"
+)
+
 type Fact struct {
 	Label string
 	Value string
 }
 
 type Option struct {
-	Number string
-	Label  string
+	Number       string
+	Label        string
+	DisplayLabel string
+	Meta         string
 }
 
 // Card 是微信视觉回复的结构化输入，所有文本由 html/template 自动转义。
 type Card struct {
-	Variant  Variant
-	Kicker   string
-	Title    string
-	Subtitle string
-	Facts    []Fact
-	Body     []string
-	Options  []Option
-	Footer   string
-	Height   int
+	Variant       Variant
+	Theme         Theme
+	Kicker        string
+	Title         string
+	Subtitle      string
+	Facts         []Fact
+	Body          []string
+	Options       []Option
+	Footer        string
+	Height        int
+	TimeLabel     string
+	ThemeLabel    string
+	FactColumns   int
+	OptionColumns int
 }
 
 // Artifact 是一次私有渲染结果，调用方发送完成后必须 Cleanup。
@@ -72,6 +86,7 @@ type Config struct {
 	BrowserCommand string
 	RootDir        string
 	MaxConcurrent  int
+	Now            func() time.Time
 }
 
 type Renderer struct {
@@ -79,6 +94,7 @@ type Renderer struct {
 	rootDir string
 	tmpl    *template.Template
 	sem     chan struct{}
+	now     func() time.Time
 }
 
 //go:embed assets/*.html
@@ -108,6 +124,9 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 2
 	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	tmpl, err := template.New("visual").ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse visual card template: %w", err)
@@ -117,6 +136,7 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 		rootDir: filepath.Clean(cfg.RootDir),
 		tmpl:    tmpl,
 		sem:     make(chan struct{}, cfg.MaxConcurrent),
+		now:     cfg.Now,
 	}, nil
 }
 
@@ -125,7 +145,7 @@ func (r *Renderer) BrowserCommand() string {
 }
 
 func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
-	card = normalizeCard(card)
+	card = prepareCard(card, r.currentTime())
 	htmlBytes, err := r.renderHTML(card)
 	if err != nil {
 		return nil, err
@@ -134,12 +154,19 @@ func (r *Renderer) Render(ctx context.Context, card Card) (*Artifact, error) {
 }
 
 func (r *Renderer) RenderDocument(ctx context.Context, document Document) (*Artifact, error) {
-	document = normalizeDocument(document)
+	document = prepareDocument(document, r.currentTime())
 	htmlBytes, err := r.renderDocumentHTML(document)
 	if err != nil {
 		return nil, err
 	}
 	return r.renderArtifact(ctx, "document-*", document.Height, htmlBytes)
+}
+
+func (r *Renderer) currentTime() time.Time {
+	if r.now == nil {
+		return time.Now()
+	}
+	return r.now()
 }
 
 func (r *Renderer) renderArtifact(ctx context.Context, pattern string, height int, htmlBytes []byte) (*Artifact, error) {
@@ -261,12 +288,24 @@ func normalizeCard(card Card) Card {
 	if strings.TrimSpace(card.Title) == "" {
 		card.Title = "WeClaw"
 	}
-	if card.Height <= 0 {
-		bodyLines := len(card.Body)
-		for _, line := range card.Body {
-			bodyLines += len([]rune(line)) / 28
+	if card.Theme != ThemeDay && card.Theme != ThemeNight {
+		card.Theme = ThemeNight
+	}
+	if card.TimeLabel == "" {
+		card.TimeLabel = "--:--"
+	}
+	if card.ThemeLabel == "" {
+		card.ThemeLabel = themeLabel(card.Theme)
+	}
+	card.FactColumns = factColumns(card)
+	card.OptionColumns = optionColumns(card)
+	for index := range card.Options {
+		if card.Options[index].DisplayLabel == "" {
+			card.Options[index].DisplayLabel, card.Options[index].Meta = splitOptionMeta(card.Options[index].Label)
 		}
-		card.Height = 760 + len(card.Facts)*118 + len(card.Options)*132 + bodyLines*54
+	}
+	if card.Height <= 0 {
+		card.Height = calculateCardHeight(card)
 	}
 	if card.Height < minCanvasHeight {
 		card.Height = minCanvasHeight
@@ -277,7 +316,167 @@ func normalizeCard(card Card) Card {
 	return card
 }
 
+func prepareCard(card Card, now time.Time) Card {
+	if card.Theme != ThemeDay && card.Theme != ThemeNight {
+		card.Theme = ThemeForTime(now)
+	}
+	if card.TimeLabel == "" {
+		card.TimeLabel = now.Format("15:04")
+	}
+	card.ThemeLabel = themeLabel(card.Theme)
+	return normalizeCard(card)
+}
+
+func prepareDocument(document Document, now time.Time) Document {
+	if document.Theme != ThemeDay && document.Theme != ThemeNight {
+		document.Theme = ThemeForTime(now)
+	}
+	if document.TimeLabel == "" {
+		document.TimeLabel = now.Format("15:04")
+	}
+	document.ThemeLabel = themeLabel(document.Theme)
+	return normalizeDocument(document)
+}
+
+// ThemeForTime 以服务所在时区为准，白天使用明亮主题，夜间降低环境光刺激。
+func ThemeForTime(now time.Time) Theme {
+	if hour := now.Hour(); hour >= 7 && hour < 19 {
+		return ThemeDay
+	}
+	return ThemeNight
+}
+
+func themeLabel(theme Theme) string {
+	if theme == ThemeDay {
+		return "DAYLIGHT"
+	}
+	return "NIGHT"
+}
+
+func factColumns(card Card) int {
+	if card.FactColumns >= 1 && card.FactColumns <= 3 {
+		return card.FactColumns
+	}
+	if len(card.Facts) <= 2 {
+		return 2
+	}
+	for _, fact := range card.Facts {
+		if len([]rune(fact.Value)) > 18 {
+			return 2
+		}
+	}
+	return 3
+}
+
+func optionColumns(card Card) int {
+	if card.OptionColumns == 1 || card.OptionColumns == 2 {
+		return card.OptionColumns
+	}
+	if len(card.Options) < 4 {
+		return 1
+	}
+	for _, option := range card.Options {
+		if len([]rune(option.Label)) > 12 {
+			return 1
+		}
+	}
+	return 2
+}
+
+func splitOptionMeta(label string) (string, string) {
+	index := strings.LastIndex(label, " · ")
+	if index <= 0 {
+		return label, ""
+	}
+	meta := strings.TrimSpace(label[index+len(" · "):])
+	if meta == "" || len([]rune(meta)) > 10 {
+		return label, ""
+	}
+	return strings.TrimSpace(label[:index]), meta
+}
+
+func calculateCardHeight(card Card) int {
+	titleLines := runeLines(card.Title, 15)
+	height := 390 + (titleLines-1)*72
+	if card.Subtitle != "" {
+		height += 42 + runeLines(card.Subtitle, 28)*34
+	}
+	if len(card.Facts) > 0 {
+		rows := (len(card.Facts) + card.FactColumns - 1) / card.FactColumns
+		for row := 0; row < rows; row++ {
+			lines := 1
+			for column := 0; column < card.FactColumns; column++ {
+				index := row*card.FactColumns + column
+				if index >= len(card.Facts) {
+					break
+				}
+				width := 17
+				if card.FactColumns == 2 {
+					width = 27
+				}
+				if valueLines := runeLines(card.Facts[index].Value, width); valueLines > lines {
+					lines = valueLines
+				}
+			}
+			height += 76 + lines*30
+		}
+		height += (rows-1)*12 + 24
+	}
+	if len(card.Body) > 0 {
+		for _, line := range card.Body {
+			height += runeLines(line, 31)*42 + 8
+		}
+		height += 18
+	}
+	if len(card.Options) > 0 {
+		rows := (len(card.Options) + card.OptionColumns - 1) / card.OptionColumns
+		for row := 0; row < rows; row++ {
+			lines := 1
+			for column := 0; column < card.OptionColumns; column++ {
+				index := row*card.OptionColumns + column
+				if index >= len(card.Options) {
+					break
+				}
+				width := 28
+				if card.OptionColumns == 2 {
+					width = 12
+				}
+				if optionLines := runeLines(card.Options[index].DisplayLabel, width); optionLines > lines {
+					lines = optionLines
+				}
+			}
+			height += 60 + lines*34
+		}
+		height += (rows-1)*12 + 12
+		// 单列选项的文字与状态标签更高，为页脚保留完整安全区。
+		if card.OptionColumns == 1 {
+			height += 86
+		}
+	}
+	return height
+}
+
+func runeLines(value string, width int) int {
+	if width <= 0 {
+		return 1
+	}
+	count := len([]rune(strings.TrimSpace(value)))
+	if count <= 0 {
+		return 1
+	}
+	return (count + width - 1) / width
+}
+
 func normalizeDocument(document Document) Document {
+	if document.Theme != ThemeDay && document.Theme != ThemeNight {
+		document.Theme = ThemeNight
+	}
+	if document.TimeLabel == "" {
+		document.TimeLabel = "--:--"
+	}
+	if document.ThemeLabel == "" {
+		document.ThemeLabel = themeLabel(document.Theme)
+	}
 	if strings.TrimSpace(document.Kicker) == "" {
 		document.Kicker = "WECLAW / READING MODE"
 	}

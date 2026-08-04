@@ -82,7 +82,7 @@ weclaw restart
 
 WeClaw always appends `app-server --listen stdio://` to `codex.command`. An empty `cwd` uses `~/.weclaw/workspace`; a configured path must be absolute. An empty `model` preserves the user's Codex default.
 
-Visual controls are enabled by default. WeClaw discovers Playwright-managed Chromium or a system Google Chrome. `visual.browser_command` can select an executable by absolute path. Snap Chromium is rejected because its private mount cannot reliably access the protected render directory. Startup fails with an installation hint when visual controls are enabled but no supported browser exists.
+Visual controls are enabled by default and follow the service's local timezone automatically: a bright warm theme is used from 07:00 through 18:59, and a low-glare dark theme from 19:00 through 06:59. Cards arrange short facts in two or three columns, place compact actions in two columns, and show the active theme and render time in the header. WeClaw discovers Playwright-managed Chromium or a system Google Chrome. `visual.browser_command` can select an executable by absolute path. Snap Chromium is rejected because its private mount cannot reliably access the protected render directory. Startup fails with an installation hint when visual controls are enabled but no supported browser exists.
 
 Environment overrides:
 
@@ -109,7 +109,7 @@ Successful create, switch, rename, archive, and restore results remain actionabl
 
 When `scheduled_reports` is configured, the main menu adds a read-only scheduled-inspection center. It shows today's delivery state, the next run, timezone, project directory, systemd service, and health endpoint for each plan. Direct phrases such as `定时巡检` and `报告计划` open it without navigating the menu. Scheduling configuration and forced execution deliberately remain unavailable from WeChat.
 
-Codex replies at or above `visual.long_reply_min_runes` are parsed into safe heading, paragraph, list, quote, and code blocks, then delivered as at most ten mobile reading cards. Reply with `文字版` within 30 minutes to retrieve the complete copyable text. This phrase is always consumed locally: an expired or missing copy returns an explicit notice and never starts a Codex turn or executes an older menu. Excessively large replies, unsupported renderers, and any rendering or upload failure fall back to the full text without losing content.
+Codex replies at or above `visual.long_reply_min_runes` are parsed into safe heading, paragraph, list, quote, and code blocks, then delivered as at most ten high-density mobile reading cards. Reading cards share the automatic day/night theme, hold more text per page, and size themselves to the actual content to reduce blank space and image count. Reply with `文字版` within 30 minutes to retrieve the complete copyable text. This phrase is always consumed locally: an expired or missing copy returns an explicit notice and never starts a Codex turn or executes an older menu. Excessively large replies, unsupported renderers, and any rendering or upload failure fall back to the full text without losing content.
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected by the control layer and is never forwarded to Codex.
 

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	documentPageUnits = 25
+	documentPageUnits = 32
 	documentMaxPages  = 10
 )
 
@@ -20,6 +20,9 @@ type DocumentBlock struct {
 }
 
 type Document struct {
+	Theme           Theme
+	TimeLabel       string
+	ThemeLabel      string
 	Kicker          string
 	Title           string
 	Subtitle        string
@@ -64,12 +67,13 @@ func PaginateMarkdown(markdown string) []Document {
 		if titleLines < 1 {
 			titleLines = 1
 		}
-		height := 700 + units*40 + (titleLines-1)*80
-		if height < 1180 {
-			height = 1180
+		// 页高按真实移动端字号与块间距估算，避免短文档出现大片无效留白。
+		height := 480 + units*32 + (titleLines-1)*68
+		if height < 1100 {
+			height = 1100
 		}
-		if height > 2200 {
-			height = 2200
+		if height > 2050 {
+			height = 2050
 		}
 		documents = append(documents, Document{
 			Kicker:          "WECLAW / READING MODE",

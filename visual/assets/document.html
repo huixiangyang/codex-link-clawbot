@@ -8,56 +8,116 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
     body {
-      position: relative; color: #f3f5f1;
-      background:
-        radial-gradient(circle at 89% 8%, rgba(63, 89, 255, .28), transparent 27%),
-        radial-gradient(circle at 4% 94%, rgba(19, 220, 173, .14), transparent 30%),
-        linear-gradient(148deg, #080a0f 0%, #0c1019 58%, #07090d 100%);
+      --accent: #72f5bd;
+      --accent-rgb: 114,245,189;
+      --secondary: #91a3ff;
+      --ink: #f4f6f3;
+      --muted: rgba(244,246,243,.62);
+      --faint: rgba(244,246,243,.3);
+      --line: rgba(255,255,255,.12);
+      --panel: rgba(255,255,255,.045);
+      --panel-strong: rgba(255,255,255,.075);
+      position: relative;
+      color: var(--ink);
+      background: #080b11;
       font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    .grid { position: absolute; inset: 0; opacity: .14; background-image: linear-gradient(rgba(255,255,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.07) 1px, transparent 1px); background-size: 72px 72px; mask-image: linear-gradient(to bottom, black, transparent 94%); }
-    .grain { position: absolute; inset: 0; opacity: .1; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.86' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.2'/%3E%3C/svg%3E"); }
-    .frame { position: relative; z-index: 1; min-height: 100%; padding: 64px 68px 52px; display: flex; flex-direction: column; }
-    .topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 48px; }
-    .brand { display: flex; align-items: center; gap: 18px; }
-    .mark { width: 56px; height: 56px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 18px; background: rgba(255,255,255,.05); }
-    .mark svg { width: 29px; height: 29px; fill: none; stroke: #75ffca; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    .kicker { color: rgba(243,245,241,.58); font-size: 19px; font-weight: 650; letter-spacing: .17em; }
-    .page-chip { min-width: 94px; padding: 13px 17px; border: 1px solid rgba(117,255,202,.25); border-radius: 999px; color: #75ffca; background: rgba(117,255,202,.07); font: 650 19px/1 "Noto Sans Mono CJK SC", monospace; text-align: center; }
-    .hero { margin-bottom: 38px; }
-    h1 { margin: 0; max-width: 900px; font-size: 66px; font-weight: 720; line-height: 1.12; letter-spacing: -.045em; text-wrap: balance; }
-    .subtitle { margin-top: 18px; color: #88a1ff; font-size: 19px; font-weight: 650; letter-spacing: .13em; }
-    .progress { margin-top: 31px; height: 3px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.08); }
-    .progress span { display: block; height: 100%; width: {{.ProgressPercent}}%; background: linear-gradient(90deg, #75ffca, #8298ff); box-shadow: 0 0 20px rgba(117,255,202,.55); }
-    .content { display: grid; gap: 22px; }
-    .heading { margin-top: 10px; color: #fff; font-size: 39px; font-weight: 680; line-height: 1.35; letter-spacing: -.025em; }
-    .heading.H2 { font-size: 35px; color: #dce3ff; }
-    .heading.H3 { font-size: 31px; color: #b9c6f7; }
-    .paragraph { color: rgba(243,245,241,.84); font-size: 29px; font-weight: 440; line-height: 1.65; overflow-wrap: anywhere; }
-    .list { display: grid; grid-template-columns: 45px 1fr; gap: 12px; color: rgba(243,245,241,.87); font-size: 28px; line-height: 1.56; }
-    .bullet-mark { width: 10px; height: 10px; margin: 17px 0 0 8px; border: 2px solid #75ffca; border-radius: 50%; box-shadow: 0 0 13px rgba(117,255,202,.4); }
-    .order-mark { color: #75ffca; font: 650 25px/1.7 "Noto Sans Mono CJK SC", monospace; text-align: center; }
-    .quote { padding: 22px 26px; border-left: 4px solid #8298ff; border-radius: 0 18px 18px 0; color: rgba(232,236,255,.82); background: rgba(130,152,255,.08); font-size: 27px; line-height: 1.58; overflow-wrap: anywhere; }
-    .code { position: relative; padding: 48px 28px 26px; border: 1px solid rgba(255,255,255,.11); border-radius: 22px; color: #d9e6dc; background: rgba(2,5,8,.62); font: 24px/1.55 "Noto Sans Mono CJK SC", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .code:before { content: attr(data-language); position: absolute; top: 16px; left: 28px; color: rgba(117,255,202,.58); font-size: 16px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
-    .rule { height: 1px; margin: 8px 0; background: linear-gradient(90deg, rgba(117,255,202,.7), rgba(130,152,255,.25), transparent); }
-    .footer { margin-top: auto; padding-top: 34px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
-    .footer-copy { max-width: 790px; color: rgba(243,245,241,.46); font-size: 20px; line-height: 1.5; }
-    .footer-index { color: rgba(243,245,241,.24); font: 20px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .08em; }
+    body.day {
+      --accent: #007a54;
+      --accent-rgb: 0,122,84;
+      --secondary: #4e50be;
+      --ink: #171a18;
+      --muted: rgba(23,26,24,.63);
+      --faint: rgba(23,26,24,.3);
+      --line: rgba(25,31,27,.13);
+      --panel: rgba(255,255,255,.65);
+      --panel-strong: rgba(255,255,255,.87);
+      background: #f2f0e9;
+    }
+    .atmosphere { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+    .atmosphere:before {
+      content: ""; position: absolute; width: 780px; height: 780px; top: -360px; right: -250px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(102,126,255,.24), rgba(var(--accent-rgb),.08) 46%, transparent 70%);
+    }
+    .atmosphere:after {
+      content: ""; position: absolute; width: 680px; height: 680px; bottom: -360px; left: -320px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(var(--accent-rgb),.14), transparent 68%);
+    }
+    .day .atmosphere:before { background: radial-gradient(circle, rgba(102,105,220,.13), rgba(var(--accent-rgb),.06) 47%, transparent 70%); }
+    .day .atmosphere:after { background: radial-gradient(circle, rgba(var(--accent-rgb),.09), transparent 68%); }
+    .grid {
+      position: absolute; inset: 0; opacity: .18; pointer-events: none;
+      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 64px 64px; mask-image: linear-gradient(to bottom, black, transparent 94%);
+    }
+    .grain {
+      position: absolute; inset: 0; opacity: .1; pointer-events: none; mix-blend-mode: soft-light;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.84' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.26'/%3E%3C/svg%3E");
+    }
+    .page-watermark {
+      position: absolute; right: 42px; bottom: 58px; color: rgba(var(--accent-rgb),.055);
+      font: 800 260px/.72 "Noto Sans Mono CJK SC", monospace; letter-spacing: -.12em; pointer-events: none;
+    }
+    .frame { position: relative; z-index: 1; min-height: 100%; padding: 48px 58px 40px; display: flex; flex-direction: column; }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+    .brand { min-width: 0; display: flex; align-items: center; gap: 16px; }
+    .mark {
+      flex: 0 0 auto; width: 52px; height: 52px; display: grid; place-items: center; color: var(--accent);
+      border: 1px solid var(--line); border-radius: 17px; background: var(--panel-strong); box-shadow: 0 18px 52px rgba(0,0,0,.12);
+    }
+    .mark svg, .mode-icon svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+    .mark svg { width: 27px; height: 27px; stroke-width: 1.85; }
+    .kicker { overflow: hidden; color: var(--muted); font-size: 18px; font-weight: 720; letter-spacing: .16em; white-space: nowrap; text-overflow: ellipsis; }
+    .status { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
+    .moment, .page-chip {
+      height: 42px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 999px;
+      background: var(--panel); font: 680 16px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .06em;
+    }
+    .moment { gap: 8px; padding: 0 13px 0 10px; color: var(--muted); }
+    .mode-icon { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent); }
+    .mode-icon svg { width: 20px; height: 20px; stroke-width: 1.8; }
+    .page-chip { padding: 0 15px; color: var(--accent); background: rgba(var(--accent-rgb),.075); border-color: rgba(var(--accent-rgb),.24); }
+    .hero { margin-bottom: 29px; }
+    .eyebrow { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; color: var(--secondary); font-size: 15px; font-weight: 760; letter-spacing: .14em; }
+    .eyebrow:before { content: ""; width: 31px; height: 2px; background: var(--secondary); }
+    h1 { margin: 0; max-width: 910px; font-size: 61px; font-weight: 770; line-height: 1.08; letter-spacing: -.048em; text-wrap: balance; overflow-wrap: anywhere; }
+    .subtitle { margin-top: 12px; color: var(--muted); font-size: 17px; font-weight: 700; letter-spacing: .12em; }
+    .progress { margin-top: 23px; height: 3px; border-radius: 999px; overflow: hidden; background: var(--line); }
+    .progress span { display: block; height: 100%; width: {{.ProgressPercent}}%; background: linear-gradient(90deg, var(--accent), var(--secondary)); box-shadow: 0 0 20px rgba(var(--accent-rgb),.4); }
+    .content { display: grid; gap: 17px; }
+    .heading { margin-top: 6px; color: var(--ink); font-size: 36px; font-weight: 740; line-height: 1.3; letter-spacing: -.028em; overflow-wrap: anywhere; }
+    .heading.H2 { font-size: 33px; color: var(--secondary); }
+    .heading.H3 { font-size: 29px; color: var(--muted); }
+    .paragraph { color: var(--muted); font-size: 28px; font-weight: 480; line-height: 1.58; overflow-wrap: anywhere; }
+    .list { display: grid; grid-template-columns: 38px minmax(0,1fr); gap: 10px; color: var(--muted); font-size: 27px; font-weight: 510; line-height: 1.5; overflow-wrap: anywhere; }
+    .bullet-mark { width: 9px; height: 9px; margin: 16px 0 0 7px; border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 13px rgba(var(--accent-rgb),.33); }
+    .order-mark { color: var(--accent); font: 720 23px/1.75 "Noto Sans Mono CJK SC", monospace; text-align: left; }
+    .quote { padding: 19px 23px; border-left: 4px solid var(--secondary); border-radius: 0 17px 17px 0; color: var(--muted); background: rgba(104,121,230,.085); font-size: 26px; line-height: 1.52; overflow-wrap: anywhere; }
+    .code { position: relative; padding: 43px 25px 23px; border: 1px solid var(--line); border-radius: 20px; color: var(--ink); background: rgba(3,7,10,.34); font: 23px/1.5 "Noto Sans Mono CJK SC", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .day .code { background: rgba(31,39,34,.055); box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
+    .code:before { content: attr(data-language); position: absolute; top: 14px; left: 25px; color: var(--accent); font-size: 15px; font-weight: 740; letter-spacing: .12em; text-transform: uppercase; }
+    .rule { height: 1px; margin: 5px 0; background: linear-gradient(90deg, rgba(var(--accent-rgb),.8), rgba(106,124,235,.3), transparent); }
+    .footer { margin-top: auto; padding-top: 27px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+    .footer-copy { max-width: 780px; color: var(--muted); font-size: 18px; line-height: 1.45; }
+    .footer-index { color: var(--faint); font: 670 17px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .09em; white-space: nowrap; }
   </style>
 </head>
-<body>
-  <div class="grid"></div><div class="grain"></div>
+<body class="{{.Theme}}">
+  <div class="atmosphere"></div><div class="grid"></div><div class="grain"></div><div class="page-watermark">{{.PageNumber}}</div>
   <main class="frame">
     <header class="topline">
       <div class="brand">
         <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg></div>
         <div class="kicker">{{.Kicker}}</div>
       </div>
-      <div class="page-chip">{{.PageNumber}} / {{.TotalPages}}</div>
+      <div class="status">
+        <div class="moment"><span class="mode-icon" aria-hidden="true">{{if eq .Theme "day"}}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>{{else}}<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>{{end}}</span><span>{{.ThemeLabel}}</span><span>{{.TimeLabel}}</span></div>
+        <div class="page-chip">{{.PageNumber}} / {{.TotalPages}}</div>
+      </div>
     </header>
     <section class="hero">
+      <div class="eyebrow">CODEX / MOBILE READING</div>
       <h1>{{.Title}}</h1>
       <div class="subtitle">{{.Subtitle}}</div>
       <div class="progress"><span></span></div>
@@ -73,7 +133,7 @@
         {{else}}<div class="paragraph">{{.Text}}</div>{{end}}
       {{end}}
     </section>
-    <footer class="footer"><div class="footer-copy">{{.Footer}}</div><div class="footer-index">CODEX / {{.PageNumber}}</div></footer>
+    <footer class="footer"><div class="footer-copy">{{.Footer}}</div><div class="footer-index">CODEX / {{.PageNumber}} · {{.ThemeLabel}}</div></footer>
   </main>
 </body>
 </html>{{end}}
