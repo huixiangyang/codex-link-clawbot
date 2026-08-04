@@ -138,6 +138,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if apiAddrFlag != "" {
 		apiAddr = apiAddrFlag
 	}
+	handler.SetBridgeInfo(Version, apiAddr)
 	apiServer := api.NewServer(clients, apiAddr)
 	apiErr := make(chan error, 1)
 	go func() {

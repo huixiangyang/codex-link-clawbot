@@ -70,6 +70,8 @@ func controlCardFromText(reply string) visual.Card {
 	switch {
 	case first == "WeClaw":
 		card.Title = first
+	case first == "运行中心":
+		card.Title = first
 	case first == "会话", first == "当前会话", first == "工作目录", first == "新建会话", first == "重命名会话":
 		card.Title = first
 	case strings.HasPrefix(first, "选择会话") || strings.HasPrefix(first, "恢复会话"):
@@ -141,6 +143,8 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantHome
 	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消"):
 		return visual.VariantWarning
+	case strings.HasPrefix(text, "运行中心"):
+		return visual.VariantSystem
 	case strings.HasPrefix(text, "已") || strings.Contains(text, "已切换") || strings.Contains(text, "已恢复") ||
 		strings.Contains(text, "已重命名") || strings.Contains(text, "已归档"):
 		return visual.VariantSuccess

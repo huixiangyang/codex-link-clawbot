@@ -29,6 +29,9 @@ type Handler struct {
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
 	reports             ScheduledReportProvider
+	bridgeVersion       string
+	apiAddr             string
+	startedAt           time.Time
 }
 
 // SetSessionManager 注入显式 Codex 会话管理器。
@@ -46,6 +49,16 @@ func (h *Handler) SetScheduledReportProvider(provider ScheduledReportProvider) {
 	h.reports = provider
 }
 
+// SetBridgeInfo 设置部署身份；运行期间保持不变，可安全用于微信状态快照。
+func (h *Handler) SetBridgeInfo(version, apiAddr string) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "dev"
+	}
+	h.bridgeVersion = version
+	h.apiAddr = strings.TrimSpace(apiAddr)
+}
+
 // NewHandler 创建只路由到 Codex 的微信消息处理器。
 func NewHandler(codex codex.Runtime) *Handler {
 	return &Handler{
@@ -53,6 +66,8 @@ func NewHandler(codex codex.Runtime) *Handler {
 		progress:            DefaultProgressConfig(),
 		visualReplyEnabled:  true,
 		visualReplyMinRunes: 900,
+		bridgeVersion:       "dev",
+		startedAt:           time.Now(),
 	}
 }
 
@@ -380,17 +395,58 @@ func (h *Handler) sessionContext() (codex.ThreadClient, error) {
 	return threadAgent, nil
 }
 
-// buildStatus 返回唯一 Codex 运行时摘要。
+// buildStatus 返回桥接器与唯一 Codex 运行时的完整摘要。
 func (h *Handler) buildStatus() string {
+	lines := []string{
+		"运行中心",
+		"WeClaw：运行中",
+		"版本：" + h.bridgeVersion,
+		"已运行：" + formatUptime(time.Since(h.startedAt)),
+	}
+	if h.apiAddr != "" {
+		lines = append(lines, "本地接口："+h.apiAddr)
+	}
 	if h.codex == nil {
-		return "Codex：不可用"
+		return strings.Join(append(lines, "Codex：不可用"), "\n")
 	}
 	info := h.codex.Info()
 	model := info.Model
 	if model == "" {
 		model = "使用 Codex 默认配置"
 	}
-	return fmt.Sprintf("Codex：运行中\n协议：App Server\n模型：%s\n工作目录：%s\nPID：%d", model, info.Cwd, info.PID)
+	lines = append(lines,
+		"Codex：运行中",
+		"协议：App Server",
+		"模型："+model,
+		"工作目录："+info.Cwd,
+	)
+	if info.PID > 0 {
+		lines = append(lines, fmt.Sprintf("Codex PID：%d", info.PID))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatUptime(elapsed time.Duration) string {
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	days := int(elapsed / (24 * time.Hour))
+	if days > 0 {
+		hours := int((elapsed % (24 * time.Hour)) / time.Hour)
+		if hours == 0 {
+			return fmt.Sprintf("%d 天", days)
+		}
+		return fmt.Sprintf("%d 天 %d 小时", days, hours)
+	}
+	hours := int(elapsed / time.Hour)
+	if hours > 0 {
+		minutes := int((elapsed % time.Hour) / time.Minute)
+		if minutes == 0 {
+			return fmt.Sprintf("%d 小时", hours)
+		}
+		return fmt.Sprintf("%d 小时 %d 分", hours, minutes)
+	}
+	return formatElapsed(elapsed)
 }
 
 func extractText(msg ilink.WeixinMessage) string {

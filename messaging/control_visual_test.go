@@ -46,18 +46,32 @@ func (r *fakeControlVisualRenderer) Render(_ context.Context, card visual.Card) 
 }
 
 func TestControlCardFromMainMenu(t *testing.T) {
-	card := controlCardFromText("WeClaw\n\n会话：视觉交互开发\n状态：空闲\n\n1  会话\n2  任务状态\n3  Codex 信息\n\n回复数字即可，0 退出。")
+	card := controlCardFromText("WeClaw\n\n版本：v1.4.0-runtime.1\n会话：视觉交互开发\n状态：空闲\n\n1  会话\n2  任务状态\n3  运行中心\n\n回复数字即可，0 退出。")
 	if card.Variant != visual.VariantHome || card.Title != "WeClaw" {
 		t.Fatalf("main card identity = %#v", card)
 	}
-	if len(card.Facts) != 2 || card.Facts[0].Label != "会话" || card.Facts[0].Value != "视觉交互开发" {
+	if len(card.Facts) != 3 || card.Facts[0].Label != "版本" || card.Facts[1].Label != "会话" || card.Facts[1].Value != "视觉交互开发" {
 		t.Fatalf("main card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 3 || card.Options[2].Label != "Codex 信息" {
+	if len(card.Options) != 3 || card.Options[2].Label != "运行中心" {
 		t.Fatalf("main card options = %#v", card.Options)
 	}
 	if card.Footer != "回复数字即可，0 退出。" {
 		t.Fatalf("main card footer = %q", card.Footer)
+	}
+}
+
+func TestControlCardFromRuntimeCenter(t *testing.T) {
+	reply := "运行中心\nWeClaw：运行中\n版本：v1.4.0-runtime.1\n已运行：2 小时 5 分\n本地接口：127.0.0.1:18011\nCodex：运行中\n协议：App Server\n模型：使用 Codex 默认配置\n工作目录：/workspace\nCodex PID：4242\n\n1  工作目录\n2  刷新运行中心\n\n回复数字操作，0 返回。"
+	card := controlCardFromText(reply)
+	if card.Variant != visual.VariantSystem || card.Title != "运行中心" {
+		t.Fatalf("runtime card identity = %#v", card)
+	}
+	if len(card.Facts) != 9 || card.Facts[0].Label != "WeClaw" || card.Facts[8].Label != "Codex PID" {
+		t.Fatalf("runtime card facts = %#v", card.Facts)
+	}
+	if len(card.Options) != 2 || card.Options[1].Label != "刷新运行中心" {
+		t.Fatalf("runtime card options = %#v", card.Options)
 	}
 }
 

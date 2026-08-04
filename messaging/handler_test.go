@@ -4,12 +4,46 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huixiangyang/weclaw/ilink"
 )
 
 func newTestHandler() *Handler {
 	return NewHandler(nil)
+}
+
+func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	handler.SetBridgeInfo("v1.4.0-runtime.1", "127.0.0.1:18011")
+	handler.startedAt = time.Now().Add(-2*time.Hour - 5*time.Minute)
+	status := controlReply(t, handler, "owner-1", "运行中心")
+	for _, want := range []string{
+		"运行中心", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
+		"本地接口：127.0.0.1:18011", "Codex：运行中", "协议：App Server",
+		"模型：使用 Codex 默认配置", "工作目录：/workspace", "Codex PID：4242",
+		"1  工作目录", "2  刷新运行中心",
+	} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("runtime center missing %q: %q", want, status)
+		}
+	}
+}
+
+func TestFormatUptimeUsesMobileFriendlyUnits(t *testing.T) {
+	tests := []struct {
+		elapsed time.Duration
+		want    string
+	}{
+		{elapsed: 31 * time.Second, want: "31 秒"},
+		{elapsed: 3*time.Hour + 8*time.Minute, want: "3 小时 8 分"},
+		{elapsed: 26*time.Hour + 10*time.Minute, want: "1 天 2 小时"},
+	}
+	for _, test := range tests {
+		if got := formatUptime(test.elapsed); got != test.want {
+			t.Fatalf("formatUptime(%s) = %q, want %q", test.elapsed, got, test.want)
+		}
+	}
 }
 
 func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {

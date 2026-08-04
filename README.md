@@ -99,7 +99,9 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
 
-Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `切换会话 登录`, `当前会话`, `会话列表`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. A unique match runs immediately, multiple matches become numbered candidates, and archive requires confirmation.
+Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `切换会话 登录`, `当前会话`, `会话列表`, `运行中心`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. A unique match runs immediately, multiple matches become numbered candidates, and archive requires confirmation.
+
+The main card always identifies its bridge version. The runtime center adds bridge uptime and API listen address alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
 
 When `scheduled_reports` is configured, the main menu adds a read-only scheduled-inspection center. It shows today's delivery state, the next run, timezone, project directory, systemd service, and health endpoint for each plan. Direct phrases such as `定时巡检` and `报告计划` open it without navigating the menu. Scheduling configuration and forced execution deliberately remain unavailable from WeChat.
 

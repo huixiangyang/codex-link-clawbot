@@ -118,7 +118,7 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	if isOneOf(text, "状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了") {
 		return h.openTaskStatus(userID), true
 	}
-	if isOneOf(text, "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息") {
+	if isOneOf(text, "运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息") {
 		return h.openRuntimeInfo(userID), true
 	}
 	if isOneOf(text, "帮助", "怎么用", "使用说明") {
@@ -355,24 +355,29 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 	if _, running := h.activeTasks.Load(userID); running {
 		taskState = "运行中"
 	}
+	statuses := h.scheduledReportStatuses(userID)
 	options := []controlOption{
 		{Label: "会话", Action: actionSessionMenu},
 		{Label: "任务状态", Action: actionTaskStatus},
-		{Label: "Codex 信息", Action: actionRuntimeInfo},
+		{Label: "运行中心", Action: actionRuntimeInfo},
 		{Label: "工作目录", Action: actionPromptWorkingDir},
 	}
-	if len(h.scheduledReportStatuses(userID)) > 0 {
+	if len(statuses) > 0 {
 		options = append(options, controlOption{Label: "定时巡检", Action: actionScheduledReports, Page: 1})
 	}
 	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
-	prompt := strings.Join([]string{
+	lines := []string{
 		"WeClaw",
 		"",
+		"版本：" + h.bridgeVersion,
 		"会话：" + currentName,
 		"状态：" + taskState,
-		"",
-		renderControlOptions(options),
-	}, "\n")
+	}
+	if len(statuses) > 0 {
+		lines = append(lines, fmt.Sprintf("巡检：%d 项", len(statuses)))
+	}
+	lines = append(lines, "", renderControlOptions(options))
+	prompt := strings.Join(lines, "\n")
 	h.storeChoice(userID, prompt, options, actionExit)
 	return prompt + "\n\n回复数字即可，0 退出。"
 }
@@ -382,7 +387,7 @@ func (h *Handler) openTaskStatus(userID string) string {
 	if h.hasActiveTask(userID) {
 		options = append(options, controlOption{Label: "取消当前任务", Action: actionConfirmCancelTask})
 	} else {
-		options = append(options, controlOption{Label: "Codex 运行信息", Action: actionRuntimeInfo})
+		options = append(options, controlOption{Label: "运行中心", Action: actionRuntimeInfo})
 	}
 	prompt := h.buildTaskStatus(userID) + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
@@ -402,7 +407,7 @@ func (h *Handler) confirmCancelTask(userID string) string {
 func (h *Handler) openRuntimeInfo(userID string) string {
 	options := []controlOption{
 		{Label: "工作目录", Action: actionPromptWorkingDir},
-		{Label: "刷新运行信息", Action: actionRuntimeInfo},
+		{Label: "刷新运行中心", Action: actionRuntimeInfo},
 	}
 	prompt := h.buildStatus() + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
@@ -804,7 +809,7 @@ func controlGuide() string {
 		"直接发送文字、图片或文件，内容会交给 Codex。",
 		"较长回复自动整理为阅读卡片，回复“文字版”可获取可复制原文。",
 		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
-		"也可以直接说“新建会话”“切换会话 登录”“当前会话”或“工作目录”。",
+		"也可以直接说“新建会话”“切换会话 登录”“当前会话”“运行中心”或“工作目录”。",
 		"任务运行时发送“状态”查看进度，发送“取消”停止任务。",
 	}, "\n")
 }

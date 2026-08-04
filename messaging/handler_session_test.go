@@ -30,7 +30,7 @@ func newHandlerThreadClient() *handlerThreadClient {
 }
 
 func (a *handlerThreadClient) Info() codex.RuntimeInfo {
-	return codex.RuntimeInfo{Command: "codex", Cwd: "/workspace"}
+	return codex.RuntimeInfo{Command: "codex", Cwd: "/workspace", PID: 4242}
 }
 
 func (a *handlerThreadClient) SetCwd(string) {}
@@ -185,7 +185,7 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"WeClaw", "1  会话", "5  使用说明", "回复数字"} {
+	for _, want := range []string{"WeClaw", "版本：dev", "1  会话", "3  运行中心", "5  使用说明", "回复数字"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
