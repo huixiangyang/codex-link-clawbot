@@ -57,7 +57,6 @@ func controlCardFromText(reply string) visual.Card {
 	variant := controlCardVariant(original)
 	card := visual.Card{
 		Variant: variant,
-		Kicker:  controlCardKicker(variant),
 		Title:   "WeClaw",
 		Footer:  "发送 / 可随时打开操作菜单",
 	}
@@ -170,25 +169,6 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantSystem
 	default:
 		return visual.VariantNeutral
-	}
-}
-
-func controlCardKicker(variant visual.Variant) string {
-	switch variant {
-	case visual.VariantHome:
-		return "WECLAW / CONTROL DECK"
-	case visual.VariantSession:
-		return "WECLAW / THREAD SPACE"
-	case visual.VariantProgress:
-		return "WECLAW / LIVE TASK"
-	case visual.VariantSystem:
-		return "WECLAW / RUNTIME"
-	case visual.VariantSuccess:
-		return "WECLAW / COMPLETE"
-	case visual.VariantWarning:
-		return "WECLAW / ATTENTION"
-	default:
-		return "WECLAW / CONTROL"
 	}
 }
 

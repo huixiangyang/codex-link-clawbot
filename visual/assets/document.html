@@ -13,13 +13,11 @@
       --secondary: #91a3ff;
       --ink: #f4f6f3;
       --muted: rgba(244,246,243,.62);
-      --faint: rgba(244,246,243,.3);
       --line: rgba(255,255,255,.12);
-      --panel: rgba(255,255,255,.045);
       --panel-strong: rgba(255,255,255,.075);
       position: relative;
       color: var(--ink);
-      background: #080b11;
+      background: radial-gradient(circle at 88% 0%, rgba(114,245,189,.065), transparent 30%), #080b11;
       font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
       -webkit-font-smoothing: antialiased;
     }
@@ -29,61 +27,23 @@
       --secondary: #4e50be;
       --ink: #171a18;
       --muted: rgba(23,26,24,.63);
-      --faint: rgba(23,26,24,.3);
       --line: rgba(25,31,27,.13);
-      --panel: rgba(255,255,255,.65);
       --panel-strong: rgba(255,255,255,.87);
-      background: #f2f0e9;
+      background: radial-gradient(circle at 88% 0%, rgba(0,122,84,.055), transparent 30%), #f2f0e9;
     }
-    .atmosphere { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-    .atmosphere:before {
-      content: ""; position: absolute; width: 780px; height: 780px; top: -360px; right: -250px; border-radius: 50%;
-      background: radial-gradient(circle, rgba(102,126,255,.24), rgba(var(--accent-rgb),.08) 46%, transparent 70%);
-    }
-    .atmosphere:after {
-      content: ""; position: absolute; width: 680px; height: 680px; bottom: -360px; left: -320px; border-radius: 50%;
-      background: radial-gradient(circle, rgba(var(--accent-rgb),.14), transparent 68%);
-    }
-    .day .atmosphere:before { background: radial-gradient(circle, rgba(102,105,220,.13), rgba(var(--accent-rgb),.06) 47%, transparent 70%); }
-    .day .atmosphere:after { background: radial-gradient(circle, rgba(var(--accent-rgb),.09), transparent 68%); }
-    .grid {
-      position: absolute; inset: 0; opacity: .18; pointer-events: none;
-      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
-      background-size: 64px 64px; mask-image: linear-gradient(to bottom, black, transparent 94%);
-    }
-    .grain {
-      position: absolute; inset: 0; opacity: .1; pointer-events: none; mix-blend-mode: soft-light;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.84' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.26'/%3E%3C/svg%3E");
-    }
-    .page-watermark {
-      position: absolute; right: 42px; bottom: 58px; color: rgba(var(--accent-rgb),.055);
-      font: 800 260px/.72 "Noto Sans Mono CJK SC", monospace; letter-spacing: -.12em; pointer-events: none;
-    }
-    .frame { position: relative; z-index: 1; min-height: 100%; padding: 48px 58px 40px; display: flex; flex-direction: column; }
-    .topline { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+    .frame { position: relative; min-height: 100%; padding: 44px 58px 38px; display: flex; flex-direction: column; }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
     .brand { min-width: 0; display: flex; align-items: center; gap: 16px; }
     .mark {
-      flex: 0 0 auto; width: 52px; height: 52px; display: grid; place-items: center; color: var(--accent);
-      border: 1px solid var(--line); border-radius: 17px; background: var(--panel-strong); box-shadow: 0 18px 52px rgba(0,0,0,.12);
+      flex: 0 0 auto; width: 44px; height: 44px; display: grid; place-items: center; color: var(--accent);
+      border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong);
     }
-    .mark svg, .mode-icon svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
-    .mark svg { width: 27px; height: 27px; stroke-width: 1.85; }
-    .kicker { overflow: hidden; color: var(--muted); font-size: 18px; font-weight: 720; letter-spacing: .16em; white-space: nowrap; text-overflow: ellipsis; }
-    .status { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
-    .moment, .page-chip {
-      height: 42px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 999px;
-      background: var(--panel); font: 680 16px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .06em;
-    }
-    .moment { gap: 8px; padding: 0 13px 0 10px; color: var(--muted); }
-    .mode-icon { width: 22px; height: 22px; display: grid; place-items: center; color: var(--accent); }
-    .mode-icon svg { width: 20px; height: 20px; stroke-width: 1.8; }
-    .page-chip { padding: 0 15px; color: var(--accent); background: rgba(var(--accent-rgb),.075); border-color: rgba(var(--accent-rgb),.24); }
-    .hero { margin-bottom: 29px; }
-    .eyebrow { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; color: var(--secondary); font-size: 15px; font-weight: 760; letter-spacing: .14em; }
-    .eyebrow:before { content: ""; width: 31px; height: 2px; background: var(--secondary); }
+    .mark svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; }
+    .brand-name { color: var(--muted); font-size: 18px; font-weight: 720; letter-spacing: .16em; }
+    .page-chip { height: 40px; padding: 0 15px; display: flex; align-items: center; color: var(--accent); background: rgba(var(--accent-rgb),.075); border: 1px solid rgba(var(--accent-rgb),.24); border-radius: 999px; font: 680 16px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .06em; }
+    .hero { margin-bottom: 26px; }
     h1 { margin: 0; max-width: 910px; font-size: 61px; font-weight: 770; line-height: 1.08; letter-spacing: -.048em; text-wrap: balance; overflow-wrap: anywhere; }
-    .subtitle { margin-top: 12px; color: var(--muted); font-size: 17px; font-weight: 700; letter-spacing: .12em; }
-    .progress { margin-top: 23px; height: 3px; border-radius: 999px; overflow: hidden; background: var(--line); }
+    .progress { margin-top: 19px; height: 3px; border-radius: 999px; overflow: hidden; background: var(--line); }
     .progress span { display: block; height: 100%; width: {{.ProgressPercent}}%; background: linear-gradient(90deg, var(--accent), var(--secondary)); box-shadow: 0 0 20px rgba(var(--accent-rgb),.4); }
     .content { display: grid; gap: 17px; }
     .heading { margin-top: 6px; color: var(--ink); font-size: 36px; font-weight: 740; line-height: 1.3; letter-spacing: -.028em; overflow-wrap: anywhere; }
@@ -98,28 +58,21 @@
     .day .code { background: rgba(31,39,34,.055); box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
     .code:before { content: attr(data-language); position: absolute; top: 14px; left: 25px; color: var(--accent); font-size: 15px; font-weight: 740; letter-spacing: .12em; text-transform: uppercase; }
     .rule { height: 1px; margin: 5px 0; background: linear-gradient(90deg, rgba(var(--accent-rgb),.8), rgba(106,124,235,.3), transparent); }
-    .footer { margin-top: auto; padding-top: 27px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
-    .footer-copy { max-width: 780px; color: var(--muted); font-size: 18px; line-height: 1.45; }
-    .footer-index { color: var(--faint); font: 670 17px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .09em; white-space: nowrap; }
+    .footer { margin-top: auto; padding-top: 27px; }
+    .footer-copy { color: var(--muted); font-size: 18px; line-height: 1.45; }
   </style>
 </head>
 <body class="{{.Theme}}">
-  <div class="atmosphere"></div><div class="grid"></div><div class="grain"></div><div class="page-watermark">{{.PageNumber}}</div>
   <main class="frame">
     <header class="topline">
       <div class="brand">
         <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg></div>
-        <div class="kicker">{{.Kicker}}</div>
+        <div class="brand-name">WECLAW</div>
       </div>
-      <div class="status">
-        <div class="moment"><span class="mode-icon" aria-hidden="true">{{if eq .Theme "day"}}<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>{{else}}<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>{{end}}</span><span>{{.ThemeLabel}}</span><span>{{.TimeLabel}}</span></div>
-        <div class="page-chip">{{.PageNumber}} / {{.TotalPages}}</div>
-      </div>
+      <div class="page-chip">{{.PageNumber}} / {{.TotalPages}}</div>
     </header>
     <section class="hero">
-      <div class="eyebrow">CODEX / MOBILE READING</div>
       <h1>{{.Title}}</h1>
-      <div class="subtitle">{{.Subtitle}}</div>
       <div class="progress"><span></span></div>
     </section>
     <section class="content">
@@ -133,7 +86,7 @@
         {{else}}<div class="paragraph">{{.Text}}</div>{{end}}
       {{end}}
     </section>
-    <footer class="footer"><div class="footer-copy">{{.Footer}}</div><div class="footer-index">CODEX / {{.PageNumber}} · {{.ThemeLabel}}</div></footer>
+    <footer class="footer"><div class="footer-copy">{{.Footer}}</div></footer>
   </main>
 </body>
 </html>{{end}}

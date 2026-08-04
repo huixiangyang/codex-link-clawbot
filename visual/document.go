@@ -21,11 +21,7 @@ type DocumentBlock struct {
 
 type Document struct {
 	Theme           Theme
-	TimeLabel       string
-	ThemeLabel      string
-	Kicker          string
 	Title           string
-	Subtitle        string
 	Blocks          []DocumentBlock
 	PageNumber      int
 	TotalPages      int
@@ -68,17 +64,15 @@ func PaginateMarkdown(markdown string) []Document {
 			titleLines = 1
 		}
 		// 页高按真实移动端字号与块间距估算，避免短文档出现大片无效留白。
-		height := 480 + units*32 + (titleLines-1)*68
-		if height < 1100 {
-			height = 1100
+		height := 360 + units*32 + (titleLines-1)*68
+		if height < 900 {
+			height = 900
 		}
-		if height > 2050 {
-			height = 2050
+		if height > 1900 {
+			height = 1900
 		}
 		documents = append(documents, Document{
-			Kicker:          "WECLAW / READING MODE",
 			Title:           title,
-			Subtitle:        fmt.Sprintf("CODEX RESPONSE / %02d OF %02d", index+1, len(pages)),
 			Blocks:          page,
 			PageNumber:      index + 1,
 			TotalPages:      len(pages),

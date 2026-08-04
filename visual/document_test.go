@@ -59,7 +59,7 @@ func TestPaginateMarkdownCreatesBoundedPages(t *testing.T) {
 		if document.PageNumber != index+1 || document.TotalPages != len(documents) {
 			t.Fatalf("page metadata = %#v", document)
 		}
-		if document.Height < 1100 || document.Height > 2050 {
+		if document.Height < 900 || document.Height > 1900 {
 			t.Fatalf("page height = %d", document.Height)
 		}
 		units := 0

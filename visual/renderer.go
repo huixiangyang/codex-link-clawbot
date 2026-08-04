@@ -60,7 +60,6 @@ type Option struct {
 type Card struct {
 	Variant       Variant
 	Theme         Theme
-	Kicker        string
 	Title         string
 	Subtitle      string
 	Facts         []Fact
@@ -68,8 +67,6 @@ type Card struct {
 	Options       []Option
 	Footer        string
 	Height        int
-	TimeLabel     string
-	ThemeLabel    string
 	FactColumns   int
 	OptionColumns int
 }
@@ -282,20 +279,11 @@ func normalizeCard(card Card) Card {
 	if card.Variant == "" {
 		card.Variant = VariantNeutral
 	}
-	if strings.TrimSpace(card.Kicker) == "" {
-		card.Kicker = "WECLAW / CODEX CONTROL"
-	}
 	if strings.TrimSpace(card.Title) == "" {
 		card.Title = "WeClaw"
 	}
 	if card.Theme != ThemeDay && card.Theme != ThemeNight {
 		card.Theme = ThemeNight
-	}
-	if card.TimeLabel == "" {
-		card.TimeLabel = "--:--"
-	}
-	if card.ThemeLabel == "" {
-		card.ThemeLabel = themeLabel(card.Theme)
 	}
 	card.FactColumns = factColumns(card)
 	card.OptionColumns = optionColumns(card)
@@ -320,10 +308,6 @@ func prepareCard(card Card, now time.Time) Card {
 	if card.Theme != ThemeDay && card.Theme != ThemeNight {
 		card.Theme = ThemeForTime(now)
 	}
-	if card.TimeLabel == "" {
-		card.TimeLabel = now.Format("15:04")
-	}
-	card.ThemeLabel = themeLabel(card.Theme)
 	return normalizeCard(card)
 }
 
@@ -331,10 +315,6 @@ func prepareDocument(document Document, now time.Time) Document {
 	if document.Theme != ThemeDay && document.Theme != ThemeNight {
 		document.Theme = ThemeForTime(now)
 	}
-	if document.TimeLabel == "" {
-		document.TimeLabel = now.Format("15:04")
-	}
-	document.ThemeLabel = themeLabel(document.Theme)
 	return normalizeDocument(document)
 }
 
@@ -344,13 +324,6 @@ func ThemeForTime(now time.Time) Theme {
 		return ThemeDay
 	}
 	return ThemeNight
-}
-
-func themeLabel(theme Theme) string {
-	if theme == ThemeDay {
-		return "DAYLIGHT"
-	}
-	return "NIGHT"
 }
 
 func factColumns(card Card) int {
@@ -397,7 +370,7 @@ func splitOptionMeta(label string) (string, string) {
 
 func calculateCardHeight(card Card) int {
 	titleLines := runeLines(card.Title, 15)
-	height := 390 + (titleLines-1)*72
+	height := 320 + (titleLines-1)*72
 	if card.Subtitle != "" {
 		height += 42 + runeLines(card.Subtitle, 28)*34
 	}
@@ -470,15 +443,6 @@ func runeLines(value string, width int) int {
 func normalizeDocument(document Document) Document {
 	if document.Theme != ThemeDay && document.Theme != ThemeNight {
 		document.Theme = ThemeNight
-	}
-	if document.TimeLabel == "" {
-		document.TimeLabel = "--:--"
-	}
-	if document.ThemeLabel == "" {
-		document.ThemeLabel = themeLabel(document.Theme)
-	}
-	if strings.TrimSpace(document.Kicker) == "" {
-		document.Kicker = "WECLAW / READING MODE"
 	}
 	if strings.TrimSpace(document.Title) == "" {
 		document.Title = "Codex 回复"

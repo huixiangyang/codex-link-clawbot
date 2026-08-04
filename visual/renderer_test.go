@@ -64,8 +64,8 @@ func TestPrepareCardSelectsThemeAndDenseColumns(t *testing.T) {
 			{Number: "4", Label: "运行中心"},
 		},
 	}, now)
-	if card.Theme != ThemeDay || card.ThemeLabel != "DAYLIGHT" || card.TimeLabel != "10:24" {
-		t.Fatalf("day card theme metadata = %#v", card)
+	if card.Theme != ThemeDay {
+		t.Fatalf("day card theme = %q", card.Theme)
 	}
 	if card.FactColumns != 3 || card.OptionColumns != 2 {
 		t.Fatalf("dense columns = facts:%d options:%d", card.FactColumns, card.OptionColumns)
@@ -89,8 +89,8 @@ func TestPrepareCardSelectsThemeAndDenseColumns(t *testing.T) {
 func TestPrepareDocumentSelectsNightTheme(t *testing.T) {
 	now := time.Date(2026, 8, 5, 22, 8, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 	document := prepareDocument(Document{Height: 1100}, now)
-	if document.Theme != ThemeNight || document.ThemeLabel != "NIGHT" || document.TimeLabel != "22:08" {
-		t.Fatalf("night document theme metadata = %#v", document)
+	if document.Theme != ThemeNight {
+		t.Fatalf("night document theme = %q", document.Theme)
 	}
 }
 
@@ -114,8 +114,13 @@ func TestCardTemplateEscapesUntrustedText(t *testing.T) {
 	if !strings.Contains(got, "&lt;script&gt;") || !strings.Contains(got, "&lt;img") {
 		t.Fatalf("template did not HTML-escape card text")
 	}
-	if !strings.Contains(got, `class="night neutral`) || !strings.Contains(got, "NIGHT") {
+	if !strings.Contains(got, `class="night neutral`) {
 		t.Fatalf("card template did not render the normalized night theme")
+	}
+	for _, redundant := range []string{"LOCAL CODEX", "DAYLIGHT", "NIGHT", "W /", `class="arrow"`} {
+		if strings.Contains(got, redundant) {
+			t.Fatalf("card template still contains redundant element %q", redundant)
+		}
 	}
 }
 
@@ -142,8 +147,13 @@ func TestDocumentTemplateEscapesUntrustedText(t *testing.T) {
 	if !strings.Contains(got, "&lt;script&gt;") || !strings.Contains(got, "&lt;img") {
 		t.Fatalf("document template did not escape dynamic text")
 	}
-	if !strings.Contains(got, `class="night"`) || !strings.Contains(got, "NIGHT") {
+	if !strings.Contains(got, `class="night"`) {
 		t.Fatalf("document template did not render the normalized night theme")
+	}
+	for _, redundant := range []string{"MOBILE READING", "CODEX RESPONSE", "DAYLIGHT", "NIGHT", "page-watermark"} {
+		if strings.Contains(got, redundant) {
+			t.Fatalf("document template still contains redundant element %q", redundant)
+		}
 	}
 }
 
@@ -190,7 +200,6 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	}
 	artifact, err := renderer.Render(context.Background(), Card{
 		Variant:  VariantHome,
-		Kicker:   "WECLAW / CONTROL DECK",
 		Title:    "掌上控制台",
 		Subtitle: "微信里的本地 Codex",
 		Facts:    []Fact{{Label: "会话", Value: "视觉交互开发"}, {Label: "状态", Value: "运行中"}},
