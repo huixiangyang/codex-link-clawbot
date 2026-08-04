@@ -101,12 +101,12 @@ func TestControlCardFromScheduledReportDetail(t *testing.T) {
 }
 
 func TestControlCardFromBrowsableSessionDetail(t *testing.T) {
-	reply := "会话详情\n名称：登录排障\n短编号：00000001\n状态：空闲\n目录：/workspace\n摘要：检查微信登录失败原因\n\n1  切换到这个会话\n2  归档这个会话\n3  返回会话列表\n\n回复数字管理，0 返回原列表。"
+	reply := "会话详情\n名称：登录排障\n短编号：00000001\n状态：空闲\n位置：可用\n目录：/workspace\n摘要：检查微信登录失败原因\n\n1  切换到这个会话\n2  归档这个会话\n3  返回会话列表\n\n回复数字管理，0 返回原列表。"
 	card := controlCardFromText(reply)
 	if card.Variant != visual.VariantSession || card.Title != "会话详情" {
 		t.Fatalf("session detail card identity = %#v", card)
 	}
-	if len(card.Facts) != 5 || card.Facts[4].Label != "摘要" {
+	if len(card.Facts) != 6 || card.Facts[3].Label != "位置" || card.Facts[5].Label != "摘要" {
 		t.Fatalf("session detail card facts = %#v", card.Facts)
 	}
 	if len(card.Options) != 3 || card.Options[0].Label != "切换到这个会话" {

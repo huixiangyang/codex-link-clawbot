@@ -161,7 +161,7 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 		t.Fatalf("rename reply = %q", renamed)
 	}
 	detail := controlReply(t, handler, "owner-1", "当前会话")
-	if !strings.Contains(detail, "完整编号") || !strings.Contains(detail, "微信登录修复") {
+	if !strings.Contains(detail, "位置：当前") || strings.Contains(detail, "完整编号") || !strings.Contains(detail, "微信登录修复") {
 		t.Fatalf("detail reply = %q", detail)
 	}
 	confirm := controlReply(t, handler, "owner-1", "归档当前会话")
@@ -169,7 +169,7 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 		t.Fatalf("archive confirmation = %q", confirm)
 	}
 	archived := controlReply(t, handler, "owner-1", "1")
-	if !strings.Contains(archived, "会话已归档") || !strings.Contains(archived, "00000002") {
+	if !strings.Contains(archived, "会话已归档") || !strings.Contains(archived, "当前：发布检查") || !strings.Contains(archived, "查看当前会话") {
 		t.Fatalf("archive reply = %q", archived)
 	}
 	archivedList := controlReply(t, handler, "owner-1", "已归档会话")
@@ -329,6 +329,23 @@ func TestCurrentSessionDetailOffersQuickManagement(t *testing.T) {
 	renamed := controlReply(t, handler, "owner-1", "移动端管理")
 	if !strings.Contains(renamed, "会话已重命名") || !strings.Contains(renamed, "移动端管理") {
 		t.Fatalf("detail rename result = %q", renamed)
+	}
+}
+
+func TestSessionMutationSuccessCardsKeepManagementFlowOpen(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	created := controlReply(t, handler, "owner-1", "新建会话 成功闭环")
+	for _, want := range []string{
+		"已创建并切换到新会话", "1  查看当前会话", "2  会话列表", "3  会话中心",
+		"或直接发送内容开始对话",
+	} {
+		if !strings.Contains(created, want) {
+			t.Fatalf("create success missing %q: %q", want, created)
+		}
+	}
+	detail := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(detail, "当前会话") || !strings.Contains(detail, "位置：当前") {
+		t.Fatalf("success follow-up detail = %q", detail)
 	}
 }
 

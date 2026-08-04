@@ -782,7 +782,7 @@ func (h *Handler) createSession(ctx context.Context, userID, name string) string
 	if err != nil {
 		return formatSessionError(err)
 	}
-	return "已创建并切换到新会话。\n" + formatThreadIdentity(thread)
+	return h.sessionSuccess(userID, "已创建并切换到新会话。", thread)
 }
 
 func (h *Handler) useSession(ctx context.Context, userID, threadID string) string {
@@ -794,7 +794,7 @@ func (h *Handler) useSession(ctx context.Context, userID, threadID string) strin
 	if err != nil {
 		return formatSessionError(err)
 	}
-	return "已切换会话。\n" + formatThreadIdentity(thread)
+	return h.sessionSuccess(userID, "已切换会话。", thread)
 }
 
 func (h *Handler) renameSession(ctx context.Context, userID, name string) string {
@@ -806,7 +806,7 @@ func (h *Handler) renameSession(ctx context.Context, userID, name string) string
 	if err != nil {
 		return formatSessionError(err)
 	}
-	return "会话已重命名。\n" + formatThreadIdentity(thread)
+	return h.sessionSuccess(userID, "会话已重命名。", thread)
 }
 
 func (h *Handler) confirmArchiveCurrent(ctx context.Context, userID string) string {
@@ -834,9 +834,26 @@ func (h *Handler) archiveCurrentSession(ctx context.Context, userID string) stri
 		return formatSessionError(err)
 	}
 	if nextActive == "" {
-		return "会话已归档。当前没有可用会话；下一条普通消息会自动创建新会话。"
+		options := []controlOption{
+			{Label: "新建会话", Action: actionPromptNewSession},
+			{Label: "恢复已归档会话", Action: actionPickArchivedSession},
+		}
+		prompt := "会话已归档。\n当前：未创建\n\n下一条普通消息会自动创建新会话。\n\n" + renderControlOptions(options)
+		h.storeChoice(userID, prompt, options, actionSessionMenu)
+		return prompt + "\n\n回复数字继续，0 返回会话中心。"
 	}
-	return fmt.Sprintf("会话已归档。\n已切换到：%s", session.ShortCode(nextActive))
+	currentName := session.ShortCode(nextActive)
+	if current, currentErr := h.sessions.Current(ctx, userID, threadAgent); currentErr == nil {
+		currentName = threadTitle(current.Info)
+	}
+	options := []controlOption{
+		{Label: "查看当前会话", Action: actionCurrentSession},
+		{Label: "恢复已归档会话", Action: actionPickArchivedSession},
+		{Label: "会话中心", Action: actionSessionMenu},
+	}
+	prompt := "会话已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
+	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	return prompt + "\n\n回复数字继续，0 返回会话中心。"
 }
 
 func (h *Handler) restoreSession(ctx context.Context, userID, threadID string) string {
@@ -848,7 +865,31 @@ func (h *Handler) restoreSession(ctx context.Context, userID, threadID string) s
 	if err != nil {
 		return formatSessionError(err)
 	}
-	return "会话已恢复。\n" + formatThreadIdentity(thread)
+	options := make([]controlOption, 0, 3)
+	stats := h.sessions.Stats(userID)
+	if stats.CurrentID == thread.ID {
+		options = append(options, controlOption{Label: "查看当前会话", Action: actionCurrentSession})
+	} else {
+		options = append(options,
+			controlOption{Label: "切换到已恢复会话", Action: actionUseSession, Value: thread.ID},
+			controlOption{Label: "查看当前会话", Action: actionCurrentSession},
+		)
+	}
+	options = append(options, controlOption{Label: "会话中心", Action: actionSessionMenu})
+	prompt := "会话已恢复。\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
+	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	return prompt + "\n\n回复数字继续，0 返回会话中心。"
+}
+
+func (h *Handler) sessionSuccess(userID, headline string, thread codex.ThreadInfo) string {
+	options := []controlOption{
+		{Label: "查看当前会话", Action: actionCurrentSession},
+		{Label: "会话列表", Action: actionBrowseSessions},
+		{Label: "会话中心", Action: actionSessionMenu},
+	}
+	prompt := headline + "\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
+	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	return prompt + "\n\n回复数字继续，或直接发送内容开始对话；0 返回会话中心。"
 }
 
 func (h *Handler) openWorkingDirectoryInput(userID string) string {
@@ -1097,9 +1138,15 @@ func formatSessionDetail(title string, thread session.ManagedThread) string {
 		title,
 		"名称：" + threadTitle(thread.Info),
 		"短编号：" + session.ShortCode(thread.Info.ID),
-		"完整编号：" + thread.Info.ID,
 		"状态：" + formatThreadStatus(thread.Info.Status),
 	}
+	position := "可用"
+	if thread.Archived {
+		position = "已归档"
+	} else if thread.Current {
+		position = "当前"
+	}
+	lines = append(lines, "位置："+position)
 	if thread.Info.IsPinned {
 		lines = append(lines, "置顶：是")
 	}
