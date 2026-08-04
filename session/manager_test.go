@@ -161,6 +161,32 @@ func TestManagerPersistsSelectionAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestManagerDetailEnforcesOwnershipAndArchiveState(t *testing.T) {
+	manager, err := NewManager(t.TempDir() + "/session-index.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeThreadClient()
+	thread, err := manager.New(context.Background(), "owner-1", client, "详情测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := manager.Detail(context.Background(), "owner-1", client, thread.ID, false)
+	if err != nil || detail.Info.ID != thread.ID || !detail.Current || detail.Archived {
+		t.Fatalf("Detail() = %#v, %v", detail, err)
+	}
+	if _, err := manager.Detail(context.Background(), "owner-2", client, thread.ID, false); !errors.Is(err, ErrNotOwned) {
+		t.Fatalf("foreign Detail() error = %v, want ErrNotOwned", err)
+	}
+	if _, err := manager.Archive(context.Background(), "owner-1", client, thread.ID); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := manager.Detail(context.Background(), "owner-1", client, thread.ID, true)
+	if err != nil || !archived.Archived || archived.Current {
+		t.Fatalf("archived Detail() = %#v, %v", archived, err)
+	}
+}
+
 func TestEnsureActiveNamesAnExistingUnnamedSession(t *testing.T) {
 	manager, err := NewManager(t.TempDir() + "/session-index.json")
 	if err != nil {

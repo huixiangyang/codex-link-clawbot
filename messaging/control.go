@@ -29,6 +29,7 @@ const (
 	controlNewSessionName
 	controlRenameSession
 	controlWorkingDirectory
+	controlSessionSearch
 )
 
 type controlAction string
@@ -39,12 +40,17 @@ const (
 	actionSessionMenu         controlAction = "session_menu"
 	actionCurrentSession      controlAction = "current_session"
 	actionPickSession         controlAction = "pick_session"
+	actionBrowseSessions      controlAction = "browse_sessions"
+	actionPromptSessionSearch controlAction = "prompt_session_search"
 	actionSessionPage         controlAction = "session_page"
+	actionSessionDetail       controlAction = "session_detail"
 	actionUseSession          controlAction = "use_session"
 	actionPromptNewSession    controlAction = "prompt_new_session"
 	actionPromptRenameSession controlAction = "prompt_rename_session"
 	actionConfirmArchive      controlAction = "confirm_archive"
 	actionArchiveCurrent      controlAction = "archive_current"
+	actionConfirmArchiveItem  controlAction = "confirm_archive_item"
+	actionArchiveItem         controlAction = "archive_item"
 	actionPickArchivedSession controlAction = "pick_archived_session"
 	actionRestoreSession      controlAction = "restore_session"
 	actionTaskStatus          controlAction = "task_status"
@@ -64,6 +70,7 @@ type controlOption struct {
 	Page     int
 	Archived bool
 	Query    string
+	AutoUse  bool
 }
 
 // controlState 只保存短期微信交互上下文，不承担任务或会话持久化。
@@ -131,7 +138,13 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		return h.openSessionMenu(ctx, userID), true
 	}
 	if isOneOf(text, "会话列表", "列出会话", "切换会话", "选择会话") {
-		return h.openSessionPicker(ctx, userID, false, ""), true
+		return h.openSessionBrowser(ctx, userID, false, ""), true
+	}
+	if isOneOf(text, "搜索会话", "查找会话", "找会话") {
+		return h.promptSessionSearch(userID), true
+	}
+	if argument, matched := intentArgument(text, []string{"搜索会话", "查找会话", "找会话"}); matched && strings.TrimSpace(argument) != "" {
+		return h.openSessionBrowser(ctx, userID, false, cleanIntentArgument(argument)), true
 	}
 	if isOneOf(text, "当前会话", "这个会话", "会话详情") {
 		return h.currentSessionDetail(ctx, userID), true
@@ -269,6 +282,17 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return mutationBusyText(), true
 		}
 		return h.changeWorkingDirectory(text), true
+	case controlSessionSearch:
+		if text == "0" {
+			if !h.controlStates.CompareAndDelete(userID, state) {
+				return "这个操作已经处理。发送 / 重新打开菜单。", true
+			}
+			return h.openSessionMenu(ctx, userID), true
+		}
+		if !h.controlStates.CompareAndDelete(userID, state) {
+			return "这个操作已经处理。发送 / 重新打开菜单。", true
+		}
+		return h.openSessionBrowser(ctx, userID, false, text), true
 	default:
 		h.controlStates.Delete(userID)
 		return "", false
@@ -287,8 +311,14 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.currentSessionDetail(ctx, userID)
 	case actionPickSession:
 		return h.openSessionPicker(ctx, userID, false, "")
+	case actionBrowseSessions:
+		return h.openSessionBrowser(ctx, userID, false, "")
+	case actionPromptSessionSearch:
+		return h.promptSessionSearch(userID)
 	case actionSessionPage:
-		return h.openSessionPickerPage(ctx, userID, option.Archived, option.Query, option.Page)
+		return h.openSessionPickerPage(ctx, userID, option.Archived, option.Query, option.Page, option.AutoUse)
+	case actionSessionDetail:
+		return h.sessionDetail(ctx, userID, option)
 	case actionUseSession:
 		if h.hasActiveTask(userID) {
 			return mutationBusyText()
@@ -314,6 +344,16 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 			return mutationBusyText()
 		}
 		return h.archiveCurrentSession(ctx, userID)
+	case actionConfirmArchiveItem:
+		if h.hasActiveTask(userID) {
+			return mutationBusyText()
+		}
+		return h.confirmArchiveSession(ctx, userID, option)
+	case actionArchiveItem:
+		if h.hasActiveTask(userID) {
+			return mutationBusyText()
+		}
+		return h.archiveSession(ctx, userID, option.Value)
 	case actionPickArchivedSession:
 		return h.openSessionPicker(ctx, userID, true, "")
 	case actionRestoreSession:
@@ -437,7 +477,8 @@ func (h *Handler) openSessionMenu(ctx context.Context, userID string) string {
 	}
 	options := []controlOption{
 		{Label: "当前会话", Action: actionCurrentSession},
-		{Label: "切换会话", Action: actionPickSession},
+		{Label: "会话列表", Action: actionBrowseSessions},
+		{Label: "搜索会话", Action: actionPromptSessionSearch},
 		{Label: "新建会话", Action: actionPromptNewSession},
 		{Label: "重命名当前会话", Action: actionPromptRenameSession},
 		{Label: "归档当前会话", Action: actionConfirmArchive},
@@ -479,16 +520,20 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 		{Label: "切换其他会话", Action: actionPickSession},
 		{Label: "归档当前会话", Action: actionConfirmArchive},
 	}
-	prompt := formatSessionDetail(current) + "\n\n" + renderControlOptions(options)
+	prompt := formatSessionDetail("当前会话", current) + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionSessionMenu)
 	return prompt + "\n\n回复数字管理，0 返回。"
 }
 
 func (h *Handler) openSessionPicker(ctx context.Context, userID string, archived bool, query string) string {
-	return h.openSessionPickerPage(ctx, userID, archived, query, 1)
+	return h.openSessionPickerPage(ctx, userID, archived, query, 1, true)
 }
 
-func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, archived bool, query string, pageNumber int) string {
+func (h *Handler) openSessionBrowser(ctx context.Context, userID string, archived bool, query string) string {
+	return h.openSessionPickerPage(ctx, userID, archived, strings.TrimSpace(query), 1, false)
+}
+
+func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, archived bool, query string, pageNumber int, autoUse bool) string {
 	threadAgent, err := h.sessionContext()
 	if err != nil {
 		return err.Error()
@@ -501,7 +546,7 @@ func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, arch
 		}
 		matches := matchSessions(all.Items, query)
 		exactWinner := len(matches) > 0 && matches[0].Score == 0 && (len(matches) == 1 || matches[1].Score > 0)
-		if len(matches) == 1 || exactWinner {
+		if autoUse && (len(matches) == 1 || exactWinner) {
 			if archived {
 				return h.restoreSession(ctx, userID, matches[0].Item.Info.ID)
 			}
@@ -528,9 +573,12 @@ func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, arch
 		return "还没有可切换的会话。发送“新建会话”即可创建。"
 	}
 
-	action := actionUseSession
-	if archived {
-		action = actionRestoreSession
+	action := actionSessionDetail
+	if autoUse {
+		action = actionUseSession
+		if archived {
+			action = actionRestoreSession
+		}
 	}
 	options := make([]controlOption, 0, controlSessionPageSize+2)
 	for _, item := range page.Items {
@@ -544,21 +592,27 @@ func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, arch
 		if item.Unavailable {
 			label += " · 无法读取"
 		}
-		options = append(options, controlOption{Label: label, Action: action, Value: item.Info.ID})
+		options = append(options, controlOption{
+			Label: label, Action: action, Value: item.Info.ID,
+			Page: page.Number, Archived: archived, Query: query, AutoUse: autoUse,
+		})
 	}
 	if page.Number > 1 {
 		options = append(options, controlOption{
 			Label: fmt.Sprintf("上一页 · %d/%d", page.Number-1, page.TotalPages), Action: actionSessionPage,
-			Page: page.Number - 1, Archived: archived, Query: query,
+			Page: page.Number - 1, Archived: archived, Query: query, AutoUse: autoUse,
 		})
 	}
 	if page.Number < page.TotalPages {
 		options = append(options, controlOption{
 			Label: fmt.Sprintf("下一页 · %d/%d", page.Number+1, page.TotalPages), Action: actionSessionPage,
-			Page: page.Number + 1, Archived: archived, Query: query,
+			Page: page.Number + 1, Archived: archived, Query: query, AutoUse: autoUse,
 		})
 	}
 	title := "选择会话"
+	if !autoUse {
+		title = "会话列表"
+	}
 	if archived {
 		title = "恢复会话"
 	}
@@ -578,6 +632,108 @@ func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, arch
 	prompt := strings.Join(lines, "\n")
 	h.storeChoice(userID, prompt, options, actionSessionMenu)
 	return prompt + "\n\n回复数字，或直接说“下一页”“上一页”；0 返回。"
+}
+
+func (h *Handler) promptSessionSearch(userID string) string {
+	prompt := "搜索会话\n\n发送名称、短编号或记得的连续字符，回复 0 返回。"
+	h.storeInput(userID, controlSessionSearch, prompt, actionSessionMenu)
+	return prompt
+}
+
+func (h *Handler) sessionDetail(ctx context.Context, userID string, source controlOption) string {
+	threadAgent, err := h.sessionContext()
+	if err != nil {
+		return err.Error()
+	}
+	detail, err := h.sessions.Detail(ctx, userID, threadAgent, source.Value, source.Archived)
+	if err != nil {
+		return formatSessionError(err)
+	}
+	if source.Page <= 0 {
+		source.Page = 1
+	}
+	source.Action = actionSessionDetail
+	source.AutoUse = false
+	back := controlOption{
+		Action: actionSessionPage, Page: source.Page, Archived: source.Archived,
+		Query: source.Query, AutoUse: false,
+	}
+	options := make([]controlOption, 0, 3)
+	if source.Archived {
+		options = append(options, controlOption{Label: "恢复这个会话", Action: actionRestoreSession, Value: detail.Info.ID})
+	} else if detail.Current {
+		options = append(options,
+			controlOption{Label: "重命名当前会话", Action: actionPromptRenameSession},
+			controlOption{
+				Label: "归档这个会话", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
+				Page: source.Page, Query: source.Query,
+			},
+		)
+	} else {
+		options = append(options,
+			controlOption{Label: "切换到这个会话", Action: actionUseSession, Value: detail.Info.ID},
+			controlOption{
+				Label: "归档这个会话", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
+				Page: source.Page, Query: source.Query,
+			},
+		)
+	}
+	options = append(options, controlOption{
+		Label: "返回会话列表", Action: actionSessionPage, Page: source.Page,
+		Archived: source.Archived, Query: source.Query, AutoUse: false,
+	})
+	title := "会话详情"
+	if source.Archived {
+		title = "归档会话详情"
+	}
+	prompt := formatSessionDetail(title, detail) + "\n\n" + renderControlOptions(options)
+	h.storeChoiceWithBack(userID, prompt, options, back)
+	return prompt + "\n\n回复数字管理，0 返回原列表。"
+}
+
+func (h *Handler) confirmArchiveSession(ctx context.Context, userID string, source controlOption) string {
+	threadAgent, err := h.sessionContext()
+	if err != nil {
+		return err.Error()
+	}
+	detail, err := h.sessions.Detail(ctx, userID, threadAgent, source.Value, false)
+	if err != nil {
+		return formatSessionError(err)
+	}
+	if source.Page <= 0 {
+		source.Page = 1
+	}
+	back := controlOption{
+		Action: actionSessionDetail, Value: detail.Info.ID, Page: source.Page,
+		Query: source.Query, AutoUse: false,
+	}
+	options := []controlOption{{Label: "确认归档这个会话", Action: actionArchiveItem, Value: detail.Info.ID}}
+	prompt := "准备归档会话：" + threadTitle(detail.Info) + "\n\n归档后可从“恢复已归档会话”找回。\n\n" + renderControlOptions(options)
+	h.storeChoiceWithBack(userID, prompt, options, back)
+	return prompt + "\n\n回复 1 确认，0 返回会话详情。"
+}
+
+func (h *Handler) archiveSession(ctx context.Context, userID, threadID string) string {
+	threadAgent, err := h.sessionContext()
+	if err != nil {
+		return err.Error()
+	}
+	if _, err := h.sessions.Archive(ctx, userID, threadAgent, threadID); err != nil {
+		return formatSessionError(err)
+	}
+	currentName := "未创建"
+	if current, currentErr := h.sessions.Current(ctx, userID, threadAgent); currentErr == nil {
+		currentName = threadTitle(current.Info)
+	} else if !errors.Is(currentErr, session.ErrNoActive) {
+		currentName = "暂不可读"
+	}
+	options := []controlOption{
+		{Label: "会话列表", Action: actionBrowseSessions},
+		{Label: "恢复已归档会话", Action: actionPickArchivedSession},
+	}
+	prompt := "会话已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
+	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	return prompt + "\n\n回复数字继续，0 返回会话中心。"
 }
 
 func paginateManagedThreads(items []session.ManagedThread, pageNumber, pageSize int) (session.Page, error) {
@@ -809,7 +965,7 @@ func controlGuide() string {
 		"直接发送文字、图片或文件，内容会交给 Codex。",
 		"较长回复自动整理为阅读卡片，回复“文字版”可获取可复制原文。",
 		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
-		"也可以直接说“新建会话”“切换会话 登录”“当前会话”“运行中心”或“工作目录”。",
+		"也可以直接说“新建会话”“搜索会话”“切换会话 登录”“运行中心”或“工作目录”。",
 		"任务运行时发送“状态”查看进度，发送“取消”停止任务。",
 	}, "\n")
 }
@@ -936,9 +1092,9 @@ func isSubsequence(query, candidate string) bool {
 	return false
 }
 
-func formatSessionDetail(thread session.ManagedThread) string {
+func formatSessionDetail(title string, thread session.ManagedThread) string {
 	lines := []string{
-		"当前会话",
+		title,
 		"名称：" + threadTitle(thread.Info),
 		"短编号：" + session.ShortCode(thread.Info.ID),
 		"完整编号：" + thread.Info.ID,
@@ -949,6 +1105,9 @@ func formatSessionDetail(thread session.ManagedThread) string {
 	}
 	if thread.Info.Cwd != "" {
 		lines = append(lines, "目录："+thread.Info.Cwd)
+	}
+	if preview := sanitizeThreadPreview(thread.Info.Preview); preview != "未命名会话" && preview != threadTitle(thread.Info) {
+		lines = append(lines, "摘要："+normalizeSessionLine(preview, 96))
 	}
 	if thread.Info.CreatedAt > 0 {
 		lines = append(lines, "创建："+formatSessionTime(thread.Info.CreatedAt))

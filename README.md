@@ -97,9 +97,9 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 ## WeChat interaction
 
-The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
+The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation. Menu state expires after two minutes, and an expired number remains ordinary Codex input.
 
-Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `切换会话 登录`, `当前会话`, `会话列表`, `运行中心`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. A unique match runs immediately, multiple matches become numbered candidates, and archive requires confirmation.
+Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `搜索会话 登录`, `切换会话 登录`, `当前会话`, `会话列表`, `运行中心`, `工作目录`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. Explicit switching with a unique match runs immediately; browsing and search results always open a detail card first. Multiple switch candidates become numbered choices, and every archive requires confirmation.
 
 The main card always identifies its bridge version. The runtime center adds bridge uptime and API listen address alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
 

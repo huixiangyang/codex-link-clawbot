@@ -147,7 +147,7 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 		t.Fatalf("second new reply = %q", secondReply)
 	}
 	list := controlReply(t, handler, "owner-1", "会话列表")
-	for _, want := range []string{"选择会话", "当前", "发布检查", "登录排障", "回复数字"} {
+	for _, want := range []string{"会话列表", "当前", "发布检查", "登录排障", "回复数字"} {
 		if !strings.Contains(list, want) {
 			t.Fatalf("session picker missing %q: %q", want, list)
 		}
@@ -191,12 +191,12 @@ func TestControlMenuAndNumericNavigation(t *testing.T) {
 		}
 	}
 	sessions := controlReply(t, handler, "owner-1", "1")
-	for _, want := range []string{"会话", "切换会话", "新建会话", "归档当前会话"} {
+	for _, want := range []string{"会话", "会话列表", "搜索会话", "新建会话", "归档当前会话"} {
 		if !strings.Contains(sessions, want) {
 			t.Fatalf("session menu missing %q: %q", want, sessions)
 		}
 	}
-	prompt := controlReply(t, handler, "owner-1", "3")
+	prompt := controlReply(t, handler, "owner-1", "4")
 	if !strings.Contains(prompt, "发送会话名称") {
 		t.Fatalf("new session prompt = %q", prompt)
 	}
@@ -236,6 +236,80 @@ func TestSessionPickerPaginatesAndAcceptsNaturalNavigation(t *testing.T) {
 	previous := controlReply(t, handler, "owner-1", "上一页")
 	if !strings.Contains(previous, "页码：2 / 3") {
 		t.Fatalf("previous page navigation = %q", previous)
+	}
+}
+
+func TestSessionBrowserShowsDetailBeforeSwitchAndPreservesPage(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	for index := 1; index <= 8; index++ {
+		_ = controlReply(t, handler, "owner-1", fmt.Sprintf("新建会话 会话 %02d", index))
+	}
+
+	_ = controlReply(t, handler, "owner-1", "会话列表")
+	second := controlReply(t, handler, "owner-1", "下一页")
+	if !strings.Contains(second, "页码：2 / 2") || !strings.Contains(second, "会话 02") {
+		t.Fatalf("second browser page = %q", second)
+	}
+	detail := controlReply(t, handler, "owner-1", "1")
+	for _, want := range []string{
+		"会话详情", "名称：会话 02", "摘要：测试会话 2", "1  切换到这个会话",
+		"2  归档这个会话", "3  返回会话列表",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("browser detail missing %q: %q", want, detail)
+		}
+	}
+	if strings.Contains(detail, "已切换会话") {
+		t.Fatalf("browsing a session switched it immediately: %q", detail)
+	}
+	back := controlReply(t, handler, "owner-1", "0")
+	if !strings.Contains(back, "页码：2 / 2") {
+		t.Fatalf("browser detail lost its source page: %q", back)
+	}
+}
+
+func TestSessionSearchOpensSafeDetailAndCanSwitch(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	_ = controlReply(t, handler, "owner-1", "新建会话 登录排障")
+	_ = controlReply(t, handler, "owner-1", "新建会话 发布检查")
+
+	prompt := controlReply(t, handler, "owner-1", "搜索会话")
+	if !strings.Contains(prompt, "发送名称、短编号") {
+		t.Fatalf("search prompt = %q", prompt)
+	}
+	results := controlReply(t, handler, "owner-1", "登排")
+	for _, want := range []string{"会话列表：登排", "筛选：登排", "登录排障"} {
+		if !strings.Contains(results, want) {
+			t.Fatalf("search results missing %q: %q", want, results)
+		}
+	}
+	detail := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(detail, "会话详情") || !strings.Contains(detail, "1  切换到这个会话") {
+		t.Fatalf("search detail = %q", detail)
+	}
+	switched := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(switched, "已切换会话") || !strings.Contains(switched, "登录排障") {
+		t.Fatalf("search switch result = %q", switched)
+	}
+}
+
+func TestSessionDetailArchivesNonCurrentSessionWithConfirmation(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	_ = controlReply(t, handler, "owner-1", "新建会话 保留当前")
+	_ = controlReply(t, handler, "owner-1", "新建会话 待归档")
+	_ = controlReply(t, handler, "owner-1", "切换会话 保留当前")
+	_ = controlReply(t, handler, "owner-1", "会话列表")
+	detail := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(detail, "名称：待归档") || !strings.Contains(detail, "2  归档这个会话") {
+		t.Fatalf("non-current detail = %q", detail)
+	}
+	confirm := controlReply(t, handler, "owner-1", "2")
+	if !strings.Contains(confirm, "准备归档会话：待归档") || !strings.Contains(confirm, "回复 1 确认") {
+		t.Fatalf("non-current archive confirmation = %q", confirm)
+	}
+	archived := controlReply(t, handler, "owner-1", "1")
+	if !strings.Contains(archived, "会话已归档") || !strings.Contains(archived, "当前：保留当前") {
+		t.Fatalf("non-current archive result = %q", archived)
 	}
 }
 

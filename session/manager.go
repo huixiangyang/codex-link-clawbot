@@ -84,6 +84,22 @@ func (m *Manager) Current(ctx context.Context, ownerID string, client codex.Thre
 	return ManagedThread{Info: thread, Current: true}, nil
 }
 
+// Detail 只允许读取本地索引中归属于该微信用户的会话摘要。
+func (m *Manager) Detail(ctx context.Context, ownerID string, client codex.ThreadClient, reference string, archived bool) (ManagedThread, error) {
+	record, err := m.store.Resolve(ownerID, reference, archived)
+	if err != nil {
+		return ManagedThread{}, err
+	}
+	thread, err := client.ReadThread(ctx, record.ID)
+	if err != nil {
+		return ManagedThread{}, fmt.Errorf("read session detail: %w", err)
+	}
+	activeID, _ := m.store.Active(ownerID)
+	return ManagedThread{
+		Info: thread, Current: activeID == record.ID, Archived: archived,
+	}, nil
+}
+
 func (m *Manager) Stats(ownerID string) Stats {
 	active, archived, currentID, hasCurrent := m.store.Counts(ownerID)
 	return Stats{
