@@ -19,6 +19,7 @@ func TestActionResultValidationRejectsAmbiguousOutput(t *testing.T) {
 	}{
 		{name: "text", result: newActionResult("system.menu", DomainSystem, "菜单"), valid: true},
 		{name: "prompt effect", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "检查改动"), valid: true},
+		{name: "project prompt effect", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "检查改动").withProjectID("alpha"), valid: true},
 		{name: "media effect", result: effectActionResult("library.resend", DomainLibrary, "已发送", EffectSendMedia, "/tmp/result.png"), valid: true},
 		{name: "missing identity", result: newActionResult("", DomainSystem, "菜单")},
 		{name: "unknown domain", result: newActionResult("system.menu", "unknown", "菜单")},
@@ -26,6 +27,8 @@ func TestActionResultValidationRejectsAmbiguousOutput(t *testing.T) {
 		{name: "empty effect value", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "")},
 		{name: "media without receipt", result: effectActionResult("library.resend", DomainLibrary, "", EffectSendMedia, "/tmp/result.png")},
 		{name: "voice with hidden value", result: effectActionResult("automation.voice", DomainAutomation, "生成中", EffectVoiceBriefing, "unexpected")},
+		{name: "project on text", result: newActionResult("system.menu", DomainSystem, "菜单").withProjectID("alpha")},
+		{name: "invalid project", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "检查改动").withProjectID("Alpha")},
 		{name: "rollback on text", result: ActionResult{ActionID: "system.menu", Domain: DomainSystem, Text: "菜单", rollback: &controlReceiptRollback{}}},
 	}
 	for _, item := range tests {

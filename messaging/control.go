@@ -17,6 +17,7 @@ import (
 	"github.com/huixiangyang/weclaw/session"
 	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/huixiangyang/weclaw/visual"
+	"github.com/huixiangyang/weclaw/workflow"
 )
 
 const (
@@ -31,63 +32,75 @@ const (
 	controlNewSessionName
 	controlRenameSession
 	controlSessionSearch
+	controlWorkflowCreate
+	controlWorkflowRename
+	controlWorkflowEdit
 )
 
 type controlAction string
 
 const (
-	actionExit                controlAction = "exit"
-	actionMain                controlAction = "main"
-	actionSessionMenu         controlAction = "session_menu"
-	actionCurrentSession      controlAction = "current_session"
-	actionPickSession         controlAction = "pick_session"
-	actionBrowseSessions      controlAction = "browse_sessions"
-	actionPromptSessionSearch controlAction = "prompt_session_search"
-	actionSessionPage         controlAction = "session_page"
-	actionSessionDetail       controlAction = "session_detail"
-	actionUseSession          controlAction = "use_session"
-	actionPromptNewSession    controlAction = "prompt_new_session"
-	actionPromptRenameSession controlAction = "prompt_rename_session"
-	actionConfirmArchive      controlAction = "confirm_archive"
-	actionArchiveCurrent      controlAction = "archive_current"
-	actionConfirmArchiveItem  controlAction = "confirm_archive_item"
-	actionArchiveItem         controlAction = "archive_item"
-	actionPickArchivedSession controlAction = "pick_archived_session"
-	actionRestoreSession      controlAction = "restore_session"
-	actionTaskStatus          controlAction = "task_status"
-	actionConfirmCancelTask   controlAction = "confirm_cancel_task"
-	actionCancelTask          controlAction = "cancel_task"
-	actionActivityPage        controlAction = "activity_page"
-	actionActivityDetail      controlAction = "activity_detail"
-	actionTaskMoveFront       controlAction = "task_move_front"
-	actionTaskDelete          controlAction = "task_delete"
-	actionTaskRetry           controlAction = "task_retry"
-	actionTaskFrozenText      controlAction = "task_frozen_text"
-	actionQueuePause          controlAction = "queue_pause"
-	actionQueueResume         controlAction = "queue_resume"
-	actionConfirmQueueClear   controlAction = "confirm_queue_clear"
-	actionQueueClear          controlAction = "queue_clear"
-	actionRuntimeInfo         controlAction = "runtime_info"
-	actionNoReplyDiagnostic   controlAction = "no_reply_diagnostic"
-	actionMore                controlAction = "more"
-	actionProjectCenter       controlAction = "project_center"
-	actionSelectProject       controlAction = "select_project"
-	actionProjectQuickTasks   controlAction = "project_quick_tasks"
-	actionRunQuickTask        controlAction = "run_quick_task"
-	actionLibraryCenter       controlAction = "library_center"
-	actionLibraryPage         controlAction = "library_page"
-	actionLibraryDetail       controlAction = "library_detail"
-	actionResendDelivery      controlAction = "resend_delivery"
-	actionRemoteLock          controlAction = "remote_lock"
-	actionVoiceBriefing       controlAction = "voice_briefing"
-	actionAutomations         controlAction = "automations"
-	actionAutomation          controlAction = "automation"
-	actionRunAutomation       controlAction = "run_automation"
-	actionVisualStyles        controlAction = "visual_styles"
-	actionSetVisualStyle      controlAction = "set_visual_style"
-	actionResponseModes       controlAction = "response_modes"
-	actionSetResponseMode     controlAction = "set_response_mode"
-	actionGuide               controlAction = "guide"
+	actionExit                  controlAction = "exit"
+	actionMain                  controlAction = "main"
+	actionSessionMenu           controlAction = "session_menu"
+	actionCurrentSession        controlAction = "current_session"
+	actionPickSession           controlAction = "pick_session"
+	actionBrowseSessions        controlAction = "browse_sessions"
+	actionPromptSessionSearch   controlAction = "prompt_session_search"
+	actionSessionPage           controlAction = "session_page"
+	actionSessionDetail         controlAction = "session_detail"
+	actionUseSession            controlAction = "use_session"
+	actionPromptNewSession      controlAction = "prompt_new_session"
+	actionPromptRenameSession   controlAction = "prompt_rename_session"
+	actionConfirmArchive        controlAction = "confirm_archive"
+	actionArchiveCurrent        controlAction = "archive_current"
+	actionConfirmArchiveItem    controlAction = "confirm_archive_item"
+	actionArchiveItem           controlAction = "archive_item"
+	actionPickArchivedSession   controlAction = "pick_archived_session"
+	actionRestoreSession        controlAction = "restore_session"
+	actionTaskStatus            controlAction = "task_status"
+	actionConfirmCancelTask     controlAction = "confirm_cancel_task"
+	actionCancelTask            controlAction = "cancel_task"
+	actionActivityPage          controlAction = "activity_page"
+	actionActivityDetail        controlAction = "activity_detail"
+	actionTaskMoveFront         controlAction = "task_move_front"
+	actionTaskDelete            controlAction = "task_delete"
+	actionTaskRetry             controlAction = "task_retry"
+	actionTaskFrozenText        controlAction = "task_frozen_text"
+	actionQueuePause            controlAction = "queue_pause"
+	actionQueueResume           controlAction = "queue_resume"
+	actionConfirmQueueClear     controlAction = "confirm_queue_clear"
+	actionQueueClear            controlAction = "queue_clear"
+	actionRuntimeInfo           controlAction = "runtime_info"
+	actionNoReplyDiagnostic     controlAction = "no_reply_diagnostic"
+	actionMore                  controlAction = "more"
+	actionProjectCenter         controlAction = "project_center"
+	actionSelectProject         controlAction = "select_project"
+	actionProjectQuickTasks     controlAction = "project_quick_tasks"
+	actionRunQuickTask          controlAction = "run_quick_task"
+	actionWorkflowDetail        controlAction = "workflow_detail"
+	actionPromptWorkflowCreate  controlAction = "prompt_workflow_create"
+	actionWorkflowCreate        controlAction = "workflow_create"
+	actionPromptWorkflowRename  controlAction = "prompt_workflow_rename"
+	actionWorkflowRename        controlAction = "workflow_rename"
+	actionPromptWorkflowEdit    controlAction = "prompt_workflow_edit"
+	actionWorkflowEdit          controlAction = "workflow_edit"
+	actionConfirmWorkflowDelete controlAction = "confirm_workflow_delete"
+	actionWorkflowDelete        controlAction = "workflow_delete"
+	actionLibraryCenter         controlAction = "library_center"
+	actionLibraryPage           controlAction = "library_page"
+	actionLibraryDetail         controlAction = "library_detail"
+	actionResendDelivery        controlAction = "resend_delivery"
+	actionRemoteLock            controlAction = "remote_lock"
+	actionVoiceBriefing         controlAction = "voice_briefing"
+	actionAutomations           controlAction = "automations"
+	actionAutomation            controlAction = "automation"
+	actionRunAutomation         controlAction = "run_automation"
+	actionVisualStyles          controlAction = "visual_styles"
+	actionSetVisualStyle        controlAction = "set_visual_style"
+	actionResponseModes         controlAction = "response_modes"
+	actionSetResponseMode       controlAction = "set_response_mode"
+	actionGuide                 controlAction = "guide"
 )
 
 type controlOption struct {
@@ -124,9 +137,29 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	if registry == nil {
 		registry = mustDefaultIntentRegistry()
 	}
+	if h.workflows != nil && strings.TrimSpace(sourceKey) != "" && h.workflows.HasRunReceipt(userID, sourceKey) {
+		return duplicateControlResult(string(actionRunQuickTask), DomainProject), true
+	}
 	if h.controlStates != nil && strings.TrimSpace(sourceKey) != "" {
 		if receipt, exists := h.controlStates.FindReceipt(userID, sourceKey); exists {
 			return duplicateControlResult(receipt.ActionID, receipt.Domain), true
+		}
+	}
+	if h.workflows != nil {
+		pending, exists, err := h.workflows.PendingRun(userID)
+		if err != nil {
+			return newActionResult(string(actionRunQuickTask), DomainProject, workflowUnavailableText()), true
+		}
+		if exists {
+			// 参数收集中仍允许临时打开并操作数字菜单；没有活动菜单时，纯数字就是参数值。
+			if state, stateStatus, stateErr := h.loadControlState(userID); stateErr != nil {
+				return controlStateFailureResult(), true
+			} else if stateStatus == controlStateActive && isControlContinuation(text) {
+				if result, handled := h.handlePendingControl(ctx, userID, text, state, sourceKey); handled {
+					return result, true
+				}
+			}
+			return h.handlePendingWorkflowInput(ctx, userID, text, hasAttachments, sourceKey, registry, pending), true
 		}
 	}
 	if hasAttachments {
@@ -170,6 +203,76 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		return h.dispatchIntent(ctx, userID, resolved, sourceKey), true
 	}
 	return ActionResult{}, false
+}
+
+// handlePendingWorkflowInput 在参数收集期间接管普通文本，避免参数被误送到 Codex。
+// 菜单可以临时打开，但运行状态仍留在 workflow 状态域中，重启后也能继续。
+func (h *Handler) handlePendingWorkflowInput(
+	ctx context.Context,
+	userID, text string,
+	hasAttachments bool,
+	sourceKey string,
+	registry *IntentRegistry,
+	status workflow.RunStatus,
+) ActionResult {
+	if hasAttachments {
+		return newActionResult(
+			string(actionRunQuickTask), DomainProject,
+			"快捷任务参数只接受文字。请发送当前参数值，或回复“取消”停止本次运行。",
+		)
+	}
+	cancelRequested := text == "0" || isOneOf(text, "取消", "返回", "回到菜单", "停止填写")
+	if resolved, ok := registry.Resolve(text); ok && resolved.Definition.ID == IntentCancel {
+		cancelRequested = true
+	}
+	if cancelRequested {
+		if strings.TrimSpace(sourceKey) == "" {
+			return newActionResult(string(actionRunQuickTask), DomainProject, "这条微信消息没有稳定来源编号，无法安全取消快捷任务。")
+		}
+		reserved, result := h.reserveControlReceipt(userID, sourceKey, string(actionRunQuickTask), DomainProject)
+		if !reserved {
+			return result
+		}
+		if err := h.workflows.CancelRun(userID); err != nil {
+			return newActionResult(string(actionRunQuickTask), DomainProject, workflowUnavailableText())
+		}
+		h.deleteControlState(userID)
+		return newActionResult(string(actionRunQuickTask), DomainProject, "已取消本次快捷任务。发送“快捷任务”可以重新开始。")
+	}
+	if resolved, ok := registry.Resolve(text); ok {
+		switch resolved.Definition.ID {
+		case IntentMenu:
+			return h.dispatchIntent(ctx, userID, resolved, sourceKey)
+		case IntentProjectQuickTasks:
+			if !h.deleteControlState(userID) {
+				return controlStateFailureResult()
+			}
+			return newActionResult(string(IntentProjectQuickTasks), DomainProject, workflowParameterPrompt(status))
+		}
+	}
+	if strings.TrimSpace(sourceKey) == "" {
+		return newActionResult(string(actionRunQuickTask), DomainProject, "这条微信消息没有稳定来源编号，无法安全保存参数。")
+	}
+	if !h.deleteControlState(userID) {
+		return controlStateFailureResult()
+	}
+	submission, err := h.workflows.SubmitRunValue(userID, sourceKey, text)
+	if err != nil {
+		return newActionResult(
+			string(actionRunQuickTask), DomainProject,
+			"参数没有保存。请输入 1,000 字以内的非空文字，或回复“取消”停止本次运行。",
+		)
+	}
+	if submission.Duplicate {
+		return duplicateControlResult(string(actionRunQuickTask), DomainProject)
+	}
+	if !submission.Completed {
+		return newActionResult(string(actionRunQuickTask), DomainProject, workflowParameterPrompt(submission.Next))
+	}
+	h.deleteControlState(userID)
+	return effectActionResult(
+		string(actionRunQuickTask), DomainProject, "", EffectEnqueuePrompt, submission.Prompt,
+	).withProjectID(status.ProjectID).withWorkflowRollback(submission.Rollback())
 }
 
 func (h *Handler) handlePendingControl(ctx context.Context, userID, text string, state *controlState, sourceKey string) (ActionResult, bool) {
@@ -283,6 +386,56 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return failure, true
 		}
 		return sessionResult(string(IntentSessionSearch), h.openSessionBrowser(ctx, userID, false, text)), true
+	case controlWorkflowCreate:
+		if text == "0" {
+			if consumed, failure := consume(string(state.Back.Action), DomainProject, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
+			}
+			return h.executeControlAction(ctx, userID, state.Back), true
+		}
+		form, err := parseWorkflowCreateForm(text)
+		if err != nil {
+			return newActionResult(string(actionWorkflowCreate), DomainProject, "格式未通过："+err.Error()+"。请修改后重新发送，或回复 0 返回。"), true
+		}
+		if consumed, failure := consume(string(actionWorkflowCreate), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
+		}
+		return newActionResult(string(actionWorkflowCreate), DomainProject, h.createWorkflow(userID, state.Back.Query, form)), true
+	case controlWorkflowRename:
+		if text == "0" {
+			if consumed, failure := consume(string(state.Back.Action), DomainProject, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
+			}
+			return h.executeControlAction(ctx, userID, state.Back), true
+		}
+		if !validWorkflowDisplayName(text) {
+			return newActionResult(string(actionWorkflowRename), DomainProject, "名称不能为空，且最多 32 个字。请重新发送，或回复 0 返回。"), true
+		}
+		if consumed, failure := consume(string(actionWorkflowRename), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
+		}
+		return newActionResult(
+			string(actionWorkflowRename), DomainProject,
+			h.renameWorkflow(userID, state.Back.Query, state.Back.Value, text, state.Back.Page),
+		), true
+	case controlWorkflowEdit:
+		if text == "0" {
+			if consumed, failure := consume(string(state.Back.Action), DomainProject, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
+			}
+			return h.executeControlAction(ctx, userID, state.Back), true
+		}
+		content, err := compileReadableWorkflowContent(text)
+		if err != nil {
+			return newActionResult(string(actionWorkflowEdit), DomainProject, "内容未通过："+err.Error()+"。请修改后重新发送，或回复 0 返回。"), true
+		}
+		if consumed, failure := consume(string(actionWorkflowEdit), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
+		}
+		return newActionResult(
+			string(actionWorkflowEdit), DomainProject,
+			h.editWorkflow(userID, state.Back.Query, state.Back.Value, content, state.Back.Page),
+		), true
 	default:
 		if !h.deleteControlState(userID) {
 			return controlStateFailureResult(), true
@@ -1072,13 +1225,17 @@ func (h *Handler) storeChoiceWithBack(userID string, view controlView, options [
 }
 
 func (h *Handler) storeInput(userID string, view controlView, mode controlMode, back controlAction) bool {
+	return h.storeInputWithBack(userID, view, mode, controlOption{Action: back})
+}
+
+// storeInputWithBack 为待输入表单冻结项目和工作流身份，避免输入期间切换项目后误改其他定义。
+func (h *Handler) storeInputWithBack(userID string, view controlView, mode controlMode, back controlOption) bool {
 	if h.controlStates == nil {
 		log.Printf("[control] persistent state store is unavailable for %s", ilink.LogLabel(userID))
 		return false
 	}
 	state := controlState{
-		View: view,
-		Mode: mode, Back: controlOption{Action: back}, ExpiresAt: time.Now().Add(controlStateTTL),
+		View: view, Mode: mode, Back: back, ExpiresAt: time.Now().Add(controlStateTTL),
 	}
 	if _, err := h.controlStates.Put(userID, state); err != nil {
 		logControlStateError(userID, err)

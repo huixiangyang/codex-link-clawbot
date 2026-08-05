@@ -21,6 +21,7 @@ const (
 	IntentQueueClear        IntentID = "task.queue_clear"
 	IntentProjectCenter     IntentID = "project.center"
 	IntentProjectQuickTasks IntentID = "project.quick_tasks"
+	IntentWorkflowNew       IntentID = "project.workflow_new"
 	IntentProjectSelect     IntentID = "project.select"
 	IntentSessionCenter     IntentID = "session.center"
 	IntentSessionSelect     IntentID = "session.select"
@@ -212,6 +213,7 @@ func defaultIntentDefinitions() []IntentDefinition {
 		{ID: IntentQueueClear, Domain: DomainTask, ExactPhrases: []string{"清空队列", "删除排队任务"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "request_clear_queue"},
 		{ID: IntentProjectCenter, Domain: DomainProject, ExactPhrases: []string{"项目", "项目中心", "项目列表", "查看项目", "当前项目"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_project_center"},
 		{ID: IntentProjectQuickTasks, Domain: DomainProject, ExactPhrases: []string{"快捷任务", "项目快捷任务", "快速任务"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_quick_tasks"},
+		{ID: IntentWorkflowNew, Domain: DomainProject, ExactPhrases: []string{"新建快捷任务", "创建快捷任务", "添加快捷任务"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_workflow_create"},
 		{ID: IntentProjectSelect, Domain: DomainProject, ArgumentPrefixes: []string{"切换项目", "切到项目", "进入项目"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "select_project"},
 		{ID: IntentSessionCenter, Domain: DomainSession, ExactPhrases: []string{"会话", "查看会话", "看看会话", "会话菜单"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_session_center"},
 		{ID: IntentSessionSelect, Domain: DomainSession, ExactPhrases: []string{"会话列表", "列出会话", "选择会话"}, ArgumentPrefixes: []string{"切换会话", "切换到会话", "切到会话", "进入会话"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "select_session"},

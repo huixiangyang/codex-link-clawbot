@@ -37,6 +37,12 @@ const (
 	viewTaskClearConfirm   controlView = "task.clear_confirm"
 	viewProjectCenter      controlView = "project.center"
 	viewProjectQuickTasks  controlView = "project.quick_tasks"
+	viewWorkflowDetail     controlView = "project.workflow_detail"
+	viewWorkflowCreate     controlView = "project.workflow_create"
+	viewWorkflowRename     controlView = "project.workflow_rename"
+	viewWorkflowEdit       controlView = "project.workflow_edit"
+	viewWorkflowDelete     controlView = "project.workflow_delete"
+	viewWorkflowResult     controlView = "project.workflow_result"
 	viewProjectResult      controlView = "project.result"
 	viewSessionCenter      controlView = "session.center"
 	viewSessionCurrent     controlView = "session.current"
@@ -375,7 +381,7 @@ func (store *ControlStateStore) validate() error {
 		if strings.TrimSpace(ownerID) == "" || len(ownerID) > 512 || !validControlRevision(state.Revision) || !validControlView(state.View) {
 			return fmt.Errorf("invalid control state owner")
 		}
-		if state.Mode < controlChoice || state.Mode > controlSessionSearch || state.ExpiresAt <= 0 || len(state.Options) > controlStateMaxItems {
+		if state.Mode < controlChoice || state.Mode > controlWorkflowEdit || state.ExpiresAt <= 0 || len(state.Options) > controlStateMaxItems {
 			return fmt.Errorf("invalid control state value")
 		}
 		if state.Mode == controlChoice && len(state.Options) == 0 || state.Mode != controlChoice && len(state.Options) != 0 {
@@ -544,6 +550,9 @@ func (action controlAction) valid() bool {
 		actionTaskRetry, actionTaskFrozenText, actionQueuePause, actionQueueResume,
 		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic, actionMore,
 		actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
+		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
+		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit, actionWorkflowEdit,
+		actionConfirmWorkflowDelete, actionWorkflowDelete,
 		actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery,
 		actionRemoteLock, actionVoiceBriefing, actionAutomations, actionAutomation,
 		actionRunAutomation, actionVisualStyles, actionSetVisualStyle, actionResponseModes,

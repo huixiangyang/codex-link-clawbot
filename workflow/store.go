@@ -26,6 +26,9 @@ const (
 	maxPromptRunes   = 8000
 	maxValueRunes    = 1000
 	maxRenderedRunes = 12000
+	maxRunReceipts   = 512
+	runTTL           = 10 * time.Minute
+	runReceiptTTL    = 24 * time.Hour
 )
 
 var (
@@ -75,7 +78,10 @@ func newStore(path string, projectIDs []string, now func() time.Time) (*Store, e
 	}
 	store := &Store{
 		path: path, projects: projects, now: now,
-		state: stateFile{Version: stateVersion, Owners: make(map[string]ownerState)},
+		state: stateFile{
+			Version: stateVersion, Owners: make(map[string]ownerState),
+			Runs: make(map[string]pendingRun), Receipts: make(map[string]runReceipt),
+		},
 	}
 	found, err := statefile.ReadJSON(store.path, &store.state, statefile.Options{
 		MaxBytes: stateMaxBytes,
@@ -342,7 +348,8 @@ func (store *Store) saveLocked(state stateFile) error {
 }
 
 func (store *Store) validateState(state stateFile) error {
-	if state.Version != stateVersion || state.Owners == nil || len(state.Owners) > maxOwners {
+	if state.Version != stateVersion || state.Owners == nil || state.Runs == nil || state.Receipts == nil ||
+		len(state.Owners) > maxOwners || len(state.Runs) > maxOwners || len(state.Receipts) > maxRunReceipts {
 		return fmt.Errorf("invalid workflow state schema")
 	}
 	total := 0
@@ -370,6 +377,33 @@ func (store *Store) validateState(state stateFile) error {
 	}
 	if total > maxTotalWorkflow {
 		return fmt.Errorf("workflow state capacity is exhausted")
+	}
+	for ownerID, run := range state.Runs {
+		if ownerID == "" || len(ownerID) > 512 || strings.ContainsAny(ownerID, "\r\n\x00") || !store.projects[run.ProjectID] ||
+			!workflowIDPattern.MatchString(run.WorkflowID) || run.Values == nil || len(run.Values) > MaxSlots ||
+			run.StartedAt <= 0 || run.ExpiresAt <= run.StartedAt || run.ExpiresAt-run.StartedAt > int64(runTTL/time.Second)+1 {
+			return fmt.Errorf("invalid pending workflow run")
+		}
+		definition, exists := findDefinitionState(state, ownerID, run.ProjectID, run.WorkflowID)
+		if !exists || len(run.Values) >= len(definition.Slots) {
+			return fmt.Errorf("pending workflow definition is unavailable")
+		}
+		for index, slot := range definition.Slots {
+			value, exists := run.Values[slot.Key]
+			if index < len(run.Values) {
+				if !exists || !validRunValue(value) {
+					return fmt.Errorf("invalid pending workflow value")
+				}
+			} else if exists {
+				return fmt.Errorf("pending workflow values are out of order")
+			}
+		}
+	}
+	for key, receipt := range state.Receipts {
+		if len(key) != 64 || !isLowerHex(key) || receipt.CreatedAt <= 0 || receipt.ExpiresAt <= receipt.CreatedAt ||
+			receipt.ExpiresAt-receipt.CreatedAt > int64(runReceiptTTL/time.Second)+1 {
+			return fmt.Errorf("invalid workflow run receipt")
+		}
 	}
 	return nil
 }
@@ -440,4 +474,23 @@ func newWorkflowID() (string, error) {
 		return "", err
 	}
 	return "workflow-" + hex.EncodeToString(data), nil
+}
+
+func findDefinitionState(state stateFile, ownerID, projectID, workflowID string) (Definition, bool) {
+	for _, definition := range state.Owners[ownerID].Projects[projectID] {
+		if definition.ID == workflowID {
+			return definition, true
+		}
+	}
+	return Definition{}, false
+}
+
+func validRunValue(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00') && len([]rune(value)) <= maxValueRunes
+}
+
+func isLowerHex(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && hex.EncodeToString(decoded) == value
 }

@@ -43,8 +43,23 @@ type ownerState struct {
 }
 
 type stateFile struct {
-	Version int                   `json:"version"`
-	Owners  map[string]ownerState `json:"owners"`
+	Version  int                   `json:"version"`
+	Owners   map[string]ownerState `json:"owners"`
+	Runs     map[string]pendingRun `json:"runs"`
+	Receipts map[string]runReceipt `json:"receipts"`
+}
+
+type pendingRun struct {
+	ProjectID  string            `json:"project_id"`
+	WorkflowID string            `json:"workflow_id"`
+	Values     map[string]string `json:"values"`
+	StartedAt  int64             `json:"started_at"`
+	ExpiresAt  int64             `json:"expires_at"`
+}
+
+type runReceipt struct {
+	CreatedAt int64 `json:"created_at"`
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 func cloneDefinition(source Definition) Definition {
@@ -63,7 +78,10 @@ func cloneSlots(source []Slot) []Slot {
 }
 
 func cloneState(source stateFile) stateFile {
-	result := stateFile{Version: source.Version, Owners: make(map[string]ownerState, len(source.Owners))}
+	result := stateFile{
+		Version: source.Version, Owners: make(map[string]ownerState, len(source.Owners)),
+		Runs: make(map[string]pendingRun, len(source.Runs)), Receipts: make(map[string]runReceipt, len(source.Receipts)),
+	}
 	for ownerID, owner := range source.Owners {
 		projects := make(map[string][]Definition, len(owner.Projects))
 		for projectID, definitions := range owner.Projects {
@@ -74,6 +92,17 @@ func cloneState(source stateFile) stateFile {
 			projects[projectID] = copy
 		}
 		result.Owners[ownerID] = ownerState{Projects: projects}
+	}
+	for ownerID, run := range source.Runs {
+		values := make(map[string]string, len(run.Values))
+		for key, value := range run.Values {
+			values[key] = value
+		}
+		run.Values = values
+		result.Runs[ownerID] = run
+	}
+	for key, receipt := range source.Receipts {
+		result.Receipts[key] = receipt
 	}
 	return result
 }

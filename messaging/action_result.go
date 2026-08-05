@@ -3,6 +3,8 @@ package messaging
 import (
 	"fmt"
 	"strings"
+
+	"github.com/huixiangyang/weclaw/workflow"
 )
 
 type ActionDomain string
@@ -39,18 +41,20 @@ const (
 )
 
 type ActionEffect struct {
-	Kind  ActionEffectKind
-	Value string
+	Kind      ActionEffectKind
+	Value     string
+	ProjectID string
 }
 
 // ActionResult 是控制器与微信投递层之间的唯一结果类型。
 // Value 只在进程内传递，不能直接进入卡片、日志或持久菜单。
 type ActionResult struct {
-	ActionID string
-	Domain   ActionDomain
-	Text     string
-	Effect   ActionEffect
-	rollback *controlReceiptRollback
+	ActionID         string
+	Domain           ActionDomain
+	Text             string
+	Effect           ActionEffect
+	rollback         *controlReceiptRollback
+	workflowRollback *workflow.SubmissionRollback
 }
 
 type controlReceiptRollback struct {
@@ -78,6 +82,12 @@ func (result ActionResult) validate() error {
 	}
 	if result.rollback != nil && result.Effect.Kind != EffectEnqueuePrompt && result.Effect.Kind != EffectRetryTask {
 		return fmt.Errorf("control receipt rollback is not allowed for this effect")
+	}
+	if result.workflowRollback != nil && result.Effect.Kind != EffectEnqueuePrompt {
+		return fmt.Errorf("workflow rollback is not allowed for this effect")
+	}
+	if result.Effect.ProjectID != "" && (result.Effect.Kind != EffectEnqueuePrompt || !validEffectProjectID(result.Effect.ProjectID)) {
+		return fmt.Errorf("action effect project is invalid")
 	}
 	switch result.Effect.Kind {
 	case EffectNone:
@@ -115,4 +125,28 @@ func (result ActionResult) withControlRollback(ownerID, sourceKey string, state 
 	state.Options = append([]controlOption(nil), state.Options...)
 	result.rollback = &controlReceiptRollback{OwnerID: ownerID, SourceKey: sourceKey, State: state}
 	return result
+}
+
+func (result ActionResult) withWorkflowRollback(rollback *workflow.SubmissionRollback) ActionResult {
+	result.workflowRollback = rollback
+	return result
+}
+
+func (result ActionResult) withProjectID(projectID string) ActionResult {
+	result.Effect.ProjectID = strings.TrimSpace(projectID)
+	return result
+}
+
+func validEffectProjectID(value string) bool {
+	if len(value) == 0 || len(value) > 32 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for index := 1; index < len(value); index++ {
+		character := value[index]
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }

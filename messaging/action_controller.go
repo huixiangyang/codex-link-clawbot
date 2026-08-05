@@ -37,7 +37,10 @@ func controlActionDomain(action controlAction) ActionDomain {
 		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionConfirmQueueClear,
 		actionQueueClear:
 		return DomainTask
-	case actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask:
+	case actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
+		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
+		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit,
+		actionWorkflowEdit, actionConfirmWorkflowDelete, actionWorkflowDelete:
 		return DomainProject
 	case actionSessionMenu, actionCurrentSession, actionPickSession, actionBrowseSessions,
 		actionPromptSessionSearch, actionSessionPage, actionSessionDetail, actionUseSession,
@@ -63,7 +66,8 @@ func controlActionRequiresReceipt(action controlAction) bool {
 	case actionUseSession, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
 		actionCancelTask, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
 		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionQueueClear,
-		actionSelectProject, actionRunQuickTask, actionResendDelivery, actionRemoteLock,
+		actionSelectProject, actionRunQuickTask, actionWorkflowCreate, actionWorkflowRename,
+		actionWorkflowEdit, actionWorkflowDelete, actionResendDelivery, actionRemoteLock,
 		actionVoiceBriefing, actionRunAutomation, actionSetVisualStyle, actionSetResponseMode:
 		return true
 	default:

@@ -57,6 +57,10 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	if !handled || !strings.Contains(menu.Text, "审查改动") {
 		t.Fatalf("quick task menu = %q, %v", menu.Text, handled)
 	}
+	detail, handled := handler.handleControlInput(context.Background(), "owner-1", "2", false, nextTestControlSource())
+	if !handled || !strings.Contains(detail.Text, "快捷任务详情") {
+		t.Fatalf("quick task detail = %#v, %v", detail, handled)
+	}
 	quickTaskSource := nextTestControlSource()
 	reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, quickTaskSource)
 	if !handled || reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查当前项目改动" {
@@ -106,7 +110,7 @@ func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *test
 	if !strings.Contains(menu, "审查改动") {
 		t.Fatalf("quick tasks while running = %q", menu)
 	}
-	if reply := handler.runProjectQuickTask("owner-1", definition.ID); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" {
+	if reply := handler.runProjectQuickTask("owner-1", "beta", definition.ID); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" || reply.Effect.ProjectID != "beta" {
 		t.Fatalf("quick task while running = %#v", reply)
 	}
 }
@@ -122,6 +126,7 @@ func TestQuickTaskQueueFailureRestoresMenuRevision(t *testing.T) {
 	handler.SetProjectManager(projects)
 	attachProjectWorkflow(t, handler, "owner-1", "alpha", "审查改动", "审查当前项目改动")
 	_ = controlReply(t, handler, "owner-1", "快捷任务")
+	_ = controlReply(t, handler, "owner-1", "2")
 	before, status, err := handler.controlStates.Load("owner-1")
 	if err != nil || status != controlStateActive {
 		t.Fatalf("quick task menu = %#v, status=%v err=%v", before, status, err)

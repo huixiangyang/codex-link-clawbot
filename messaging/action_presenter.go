@@ -14,7 +14,7 @@ func (h *Handler) presentActionResult(ctx context.Context, client *ilink.Client,
 	}
 	switch result.Effect.Kind {
 	case EffectEnqueuePrompt:
-		return h.enqueueCodexTask(ctx, client, msg, result.Effect.Value, nil, nil, clientID)
+		return h.enqueueCodexTaskInProject(ctx, client, msg, result.Effect.Value, nil, nil, clientID, result.Effect.ProjectID)
 	case EffectRetryTask:
 		return h.retryCodexTask(ctx, client, msg, result.Effect.Value, clientID)
 	case EffectFrozenText:

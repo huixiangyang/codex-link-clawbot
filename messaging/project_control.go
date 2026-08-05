@@ -22,9 +22,7 @@ func (h *Handler) openProjectCenter(userID string) string {
 	}
 	stats := sessionStats(h, userID)
 	options := make([]controlOption, 0, len(h.projects.List())+1)
-	if workflowCount > 0 {
-		options = append(options, controlOption{Label: "快捷任务", Action: actionProjectQuickTasks})
-	}
+	options = append(options, controlOption{Label: "快捷任务", Action: actionProjectQuickTasks, Query: current.ID, Page: 1})
 	for _, definition := range h.projects.List() {
 		label := definition.Name
 		if definition.ID == current.ID {
@@ -46,9 +44,7 @@ func (h *Handler) openProjectCenter(userID string) string {
 	if current.HealthURL != "" {
 		lines = append(lines, "健康检查：已配置")
 	}
-	if workflowCount > 0 {
-		lines = append(lines, fmt.Sprintf("快捷任务：%d 项", workflowCount))
-	}
+	lines = append(lines, fmt.Sprintf("快捷任务：%d 项", workflowCount))
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
 	if !h.storeChoice(userID, viewProjectCenter, options, actionMain) {
@@ -58,40 +54,34 @@ func (h *Handler) openProjectCenter(userID string) string {
 }
 
 func (h *Handler) openProjectQuickTasks(userID string) string {
-	if h.projects == nil || h.workflows == nil {
+	if h.projects == nil {
 		return "快捷任务当前不可用。"
 	}
-	current := h.projects.Current(userID)
-	definitions := h.workflows.List(userID, current.ID)
-	if len(definitions) == 0 {
-		return "当前项目还没有快捷任务。"
-	}
-	options := make([]controlOption, 0, len(definitions))
-	for _, definition := range definitions {
-		options = append(options, controlOption{Label: definition.Name, Action: actionRunQuickTask, Value: definition.ID})
-	}
-	prompt := "快捷任务\n\n项目：" + current.Name + "\n选择后立即交给 Codex 执行。\n\n" + renderControlOptions(options)
-	if !h.storeChoice(userID, viewProjectQuickTasks, options, actionProjectCenter) {
-		return controlStateFailureResult().Text
-	}
-	return prompt + "\n\n回复数字执行，0 返回项目中心。"
+	return h.openWorkflowCenter(userID, h.projects.Current(userID).ID, 1)
 }
 
-func (h *Handler) runProjectQuickTask(userID, taskID string) ActionResult {
+func (h *Handler) runProjectQuickTask(userID, projectID, taskID string) ActionResult {
 	if h.projects == nil || h.workflows == nil {
 		return newActionResult(string(actionRunQuickTask), DomainProject, "快捷任务当前不可用。")
 	}
-	current := h.projects.Current(userID)
-	definition, exists := h.workflows.Find(userID, current.ID, taskID)
+	if _, exists := h.projects.Get(projectID); !exists {
+		return newActionResult(string(actionRunQuickTask), DomainProject, "这个项目已经不可用。发送“项目”刷新列表。")
+	}
+	definition, exists := h.workflows.Find(userID, projectID, taskID)
 	if !exists {
 		return newActionResult(string(actionRunQuickTask), DomainProject, "快捷任务已经变化。发送“快捷任务”刷新列表。")
 	}
 	if len(definition.Slots) > 0 {
-		return newActionResult(string(actionRunQuickTask), DomainProject, "这个快捷任务需要填写参数。请重新打开快捷任务后继续。")
+		status, err := h.workflows.StartRun(userID, projectID, taskID)
+		if err != nil {
+			return newActionResult(string(actionRunQuickTask), DomainProject, workflowUnavailableText())
+		}
+		h.deleteControlState(userID)
+		return newActionResult(string(actionRunQuickTask), DomainProject, workflowParameterPrompt(status))
 	}
 	// 菜单请求由当前微信消息继续执行，避免要求用户再复制或确认提示词。
 	h.deleteControlState(userID)
-	return effectActionResult(string(actionRunQuickTask), DomainProject, "", EffectEnqueuePrompt, definition.PromptTemplate)
+	return effectActionResult(string(actionRunQuickTask), DomainProject, "", EffectEnqueuePrompt, definition.PromptTemplate).withProjectID(projectID)
 }
 
 func (h *Handler) selectProject(userID, reference string) string {

@@ -227,6 +227,12 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			// 入队和重试使用持久来源键，失败可以安全交给微信长轮询重投。
 			// 其他控制动作可能已经修改本地状态，投递失败不能再次执行。
 			if result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask {
+				if result.workflowRollback != nil && h.workflows != nil {
+					if rollbackErr := h.workflows.RollbackSubmission(result.workflowRollback); rollbackErr != nil {
+						logControlStateError(msg.FromUserID, rollbackErr)
+						return fmt.Errorf("present action result: %w; restore workflow run: %v", err, rollbackErr)
+					}
+				}
 				if result.rollback != nil && h.controlStates != nil {
 					if rollbackErr := h.controlStates.RollbackConsumedReceipt(
 						result.rollback.OwnerID, result.rollback.SourceKey, result.rollback.State,
@@ -314,6 +320,11 @@ func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg 
 
 // enqueueCodexTask 只负责可靠入队。Codex 执行权始终由全局 Coordinator 持有。
 func (h *Handler) enqueueCodexTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) error {
+	return h.enqueueCodexTaskInProject(ctx, client, msg, text, images, files, clientID, "")
+}
+
+// enqueueCodexTaskInProject 允许工作流冻结项目身份；普通消息传空值并继续使用用户当前项目。
+func (h *Handler) enqueueCodexTaskInProject(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID, projectID string) error {
 	if h.tasks == nil || h.coordinator == nil || h.projects == nil || h.sessions == nil || h.preferences == nil {
 		return fmt.Errorf("task queue is not initialized")
 	}
@@ -349,6 +360,13 @@ func (h *Handler) enqueueCodexTask(ctx context.Context, client *ilink.Client, ms
 		return nil
 	}
 	currentProject := h.projects.Current(msg.FromUserID)
+	if strings.TrimSpace(projectID) != "" {
+		var exists bool
+		currentProject, exists = h.projects.Get(strings.TrimSpace(projectID))
+		if !exists {
+			return fmt.Errorf("workflow project is unavailable")
+		}
+	}
 	preferences := h.preferences.Get(msg.FromUserID)
 	task, existed, err := h.tasks.Enqueue(taskqueue.EnqueueInput{
 		SourceMessageKey: sourceKey,
