@@ -111,18 +111,18 @@ func (m *Monitor) Run(ctx context.Context) error {
 			continue
 		}
 
-		m.lastActivity = time.Now()
-		if m.observer != nil {
-			m.observer.SetHealthy(true)
-			m.observer.SetBatchPending(len(resp.Msgs) > 0 || m.pendingCursor != "")
-		}
-
 		// Session expired — reset sync buf and reconnect silently
 		if resp.ErrCode == errCodeSessionExpired {
+			if m.observer != nil {
+				m.observer.SetHealthy(false)
+			}
 			if m.getUpdatesBuf != "" {
 				log.Printf("[monitor] session expired, resetting sync buf")
 				if err := m.saveBuf(""); err != nil {
 					return fmt.Errorf("reset expired sync cursor: %w", err)
+				}
+				if m.observer != nil {
+					m.observer.SetBatchPending(false)
 				}
 			} else {
 				// Sync buf already empty but still getting session expired:
@@ -138,9 +138,26 @@ func (m *Monitor) Run(ctx context.Context) error {
 		}
 
 		// Other server errors
-		if resp.Ret != 0 && resp.ErrCode != 0 {
-			log.Printf("[monitor] server error: ret=%d errcode=%d errmsg=%s", resp.Ret, resp.ErrCode, resp.ErrMsg)
+		if resp.Ret != 0 || resp.ErrCode != 0 {
+			if m.observer != nil {
+				m.observer.SetHealthy(false)
+			}
+			m.failures++
+			backoff := m.calcBackoff()
+			log.Printf("[monitor] server error: ret=%d errcode=%d errmsg=%s backoff=%s", resp.Ret, resp.ErrCode, resp.ErrMsg, backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			continue
+		}
+
+		// 只有业务层成功响应才刷新健康状态和最近成功轮询时间。
+		m.lastActivity = time.Now()
+		if m.observer != nil {
+			m.observer.SetHealthy(true)
+			m.observer.SetBatchPending(len(resp.Msgs) > 0 || m.pendingCursor != "")
 		}
 
 		if m.messageHold != nil && m.messageHold() {

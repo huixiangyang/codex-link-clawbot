@@ -169,9 +169,9 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation and process restarts. Menu revisions expire after ten minutes; expired numbers and navigation phrases are explicitly rejected and never become Codex prompts.
 
-The idle home card has only four primary actions: project, session, task center, and more. While a task is active it changes to current task, task center, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `任务中心`, `暂停队列`, `继续队列`, `回答方式`, `开启语音模式`, `阅读模式`, `自适应模式`, `自动化`, `素材箱`, `交付记录`, `语音简报` or the shorter `发语音`, `远程锁定`, `状态`, and `取消`. `发语音` creates one briefing; `开启语音模式` persists paired image-and-MP3 delivery for subsequent Codex replies. Audio delivery requires the current inbound `context_token`; out-of-conversation delivery is rejected instead of reporting a false success.
+The idle home card has only four primary actions: project, session, task center, and more. While a task is active it changes to current task, task center, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `任务中心`, `暂停队列`, `继续队列`, `回答方式`, `开启语音模式`, `阅读模式`, `自适应模式`, `自动化`, `素材箱`, `交付记录`, `语音简报` or the shorter `发语音`, `为什么没回复`, `远程锁定`, `状态`, and `取消`. `发语音` creates one briefing; `开启语音模式` persists paired image-and-MP3 delivery for subsequent Codex replies. Audio delivery requires the current inbound `context_token`; out-of-conversation delivery is rejected instead of reporting a false success.
 
-The main card always identifies its bridge version. The runtime center adds bridge uptime and whether proactive sending is enabled alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
+The main card always identifies its bridge version. The runtime center adds bridge uptime and whether proactive sending is enabled alongside the Codex App Server protocol, model, working directory, and process ID. Its `为什么没回复` action reads deterministic lock, runtime, Codex, WeChat polling, persistence, queue, and recent-delivery signals without invoking Codex. If no blocker is proven, it says so instead of guessing and never exposes owner IDs, message bodies, paths, or raw errors.
 
 The task center is backed by a persistent global FIFO. Text, image, and file requests are fully stored before acknowledgement, then executed by one Coordinator using the project, thread, response mode, and visual style captured at enqueue time. Owners can pause, resume, reorder, delete, cancel, retry, or inspect tasks without a command wall. Queued tasks survive restart; interrupted execution and ambiguous delivery require explicit recovery and never repeat Codex automatically. The visible index contains only sanitized metadata, never answer bodies, context tokens, attachment names, terminal output, account IDs, or private paths.
 
@@ -242,6 +242,7 @@ More details:
 - [v2.6 typed control routing implementation](docs/v2.6-control-routing.md)
 - [v2.6 persistent interaction and control receipts](docs/v2.6-persistent-control.md)
 - [v2.6 local management and proactive-send security](docs/v2.6-api-security.md)
+- [v2.6 deterministic no-reply diagnostics](docs/v2.6-diagnostics.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

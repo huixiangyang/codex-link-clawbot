@@ -11,6 +11,66 @@ import (
 	"time"
 )
 
+type monitorObserverRecorder struct {
+	cancel  context.CancelFunc
+	healthy []bool
+}
+
+func (*monitorObserverRecorder) SetRunning(bool)      {}
+func (*monitorObserverRecorder) SetBatchPending(bool) {}
+func (observer *monitorObserverRecorder) SetHealthy(healthy bool) {
+	observer.healthy = append(observer.healthy, healthy)
+	if observer.cancel != nil {
+		observer.cancel()
+	}
+}
+
+func TestMonitorTreatsExpiredSessionAsUnhealthy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ret":1,"errcode":-14,"errmsg":"expired"}`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	observer := &monitorObserverRecorder{cancel: cancel}
+	client := NewClient(&Credentials{ILinkBotID: "bot-test", BotToken: "token", BaseURL: server.URL})
+	monitor, err := NewMonitor(client, func(context.Context, *Client, WeixinMessage) error { return nil }, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(observer.healthy) != 1 || observer.healthy[0] {
+		t.Fatalf("health observations = %#v", observer.healthy)
+	}
+}
+
+func TestMonitorTreatsAnyBusinessErrorAsUnhealthy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ret":7,"errmsg":"rejected"}`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	observer := &monitorObserverRecorder{cancel: cancel}
+	client := NewClient(&Credentials{ILinkBotID: "bot-test", BotToken: "token", BaseURL: server.URL})
+	monitor, err := NewMonitor(client, func(context.Context, *Client, WeixinMessage) error { return nil }, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(observer.healthy) != 1 || observer.healthy[0] {
+		t.Fatalf("health observations = %#v", observer.healthy)
+	}
+}
+
 func TestMonitorMessageHoldDoesNotConsumeOrAdvanceCursor(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -201,6 +201,9 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	controlSourceKey, _ := sourceMessageKey(client, msg)
 	if h.remoteLock != nil && h.remoteLock.IsLocked(msg.FromUserID) {
 		reply := h.handleLockedInput(msg.FromUserID, trimmed)
+		if h.isNoReplyDiagnostic(trimmed) {
+			reply = h.buildNoReplyDiagnostic(msg.FromUserID)
+		}
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[security] failed to send locked-state reply to %s: %v", userLabel, err)
 		}

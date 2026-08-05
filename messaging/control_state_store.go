@@ -542,7 +542,7 @@ func (action controlAction) valid() bool {
 		actionRestoreSession, actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
 		actionActivityPage, actionActivityDetail, actionTaskMoveFront, actionTaskDelete,
 		actionTaskRetry, actionTaskFrozenText, actionQueuePause, actionQueueResume,
-		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionMore,
+		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic, actionMore,
 		actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery,
 		actionRemoteLock, actionVoiceBriefing, actionAutomations, actionAutomation,

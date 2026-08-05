@@ -294,6 +294,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize scheduled reports: %w", err)
 	}
 	handler.SetAutomationProvider(reportScheduler)
+	// 全部持久状态均已严格打开；后续记录只代表本次运行期故障。
+	statefile.ClearLastFailure()
 	go reportScheduler.Run(ctx)
 	coordinatorErr := make(chan error, 1)
 	go func() {

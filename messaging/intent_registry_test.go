@@ -24,6 +24,7 @@ func TestDefaultIntentRegistryResolvesUniqueActions(t *testing.T) {
 		{text: "视觉风格 简洁", wantID: IntentVisualStyle, argument: "简洁"},
 		{text: "发语音", wantID: IntentVoiceBriefing},
 		{text: "codex信息", wantID: IntentRuntime},
+		{text: "为什么没回复？", wantID: IntentNoReplyDiagnostic},
 	}
 	for _, item := range tests {
 		resolved, ok := registry.Resolve(item.text)

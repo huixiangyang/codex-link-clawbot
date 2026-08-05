@@ -68,6 +68,7 @@ const (
 	actionConfirmQueueClear   controlAction = "confirm_queue_clear"
 	actionQueueClear          controlAction = "queue_clear"
 	actionRuntimeInfo         controlAction = "runtime_info"
+	actionNoReplyDiagnostic   controlAction = "no_reply_diagnostic"
 	actionMore                controlAction = "more"
 	actionProjectCenter       controlAction = "project_center"
 	actionSelectProject       controlAction = "select_project"
@@ -380,6 +381,7 @@ func (h *Handler) confirmCancelTask(userID string) string {
 
 func (h *Handler) openRuntimeInfo(userID string) string {
 	options := []controlOption{
+		{Label: "为什么没回复", Action: actionNoReplyDiagnostic},
 		{Label: "项目中心", Action: actionProjectCenter},
 		{Label: "刷新运行中心", Action: actionRuntimeInfo},
 	}

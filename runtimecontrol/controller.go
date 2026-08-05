@@ -26,8 +26,11 @@ type ComponentStatus struct {
 }
 
 type WeChatStatus struct {
-	Monitors int `json:"monitors"`
-	Healthy  int `json:"healthy"`
+	Monitors              int   `json:"monitors"`
+	Healthy               int   `json:"healthy"`
+	PendingBatches        int   `json:"pending_batches"`
+	OldestPendingSeconds  int64 `json:"oldest_pending_seconds"`
+	LastSuccessSecondsAgo int64 `json:"last_success_seconds_ago"`
 }
 
 type TaskStatus struct {
@@ -48,19 +51,20 @@ type Snapshot struct {
 }
 
 type Controller struct {
-	mu          sync.Mutex
-	version     string
-	startedAt   time.Time
-	state       State
-	codexReady  bool
-	draining    bool
-	initialized bool
-	staging     int
-	monitors    int
-	healthy     int
-	pendingSync int
-	tasks       *taskqueue.Store
-	drainer     Drainer
+	mu                sync.Mutex
+	version           string
+	startedAt         time.Time
+	state             State
+	codexReady        bool
+	draining          bool
+	initialized       bool
+	staging           int
+	monitors          int
+	healthy           int
+	pendingBatches    map[*MonitorProbe]time.Time
+	lastWeChatSuccess time.Time
+	tasks             *taskqueue.Store
+	drainer           Drainer
 }
 
 func New(version string, tasks *taskqueue.Store, drainer Drainer) *Controller {
@@ -69,7 +73,7 @@ func New(version string, tasks *taskqueue.Store, drainer Drainer) *Controller {
 	}
 	return &Controller{
 		version: version, startedAt: time.Now(), state: StateStarting,
-		tasks: tasks, drainer: drainer,
+		tasks: tasks, drainer: drainer, pendingBatches: make(map[*MonitorProbe]time.Time),
 	}
 }
 
@@ -139,7 +143,14 @@ func (controller *Controller) Snapshot() Snapshot {
 	staging := controller.staging
 	monitors := controller.monitors
 	healthy := controller.healthy
-	pendingSync := controller.pendingSync
+	pendingSync := len(controller.pendingBatches)
+	pendingSince := time.Time{}
+	for _, startedAt := range controller.pendingBatches {
+		if pendingSince.IsZero() || startedAt.Before(pendingSince) {
+			pendingSince = startedAt
+		}
+	}
+	lastWeChatSuccess := controller.lastWeChatSuccess
 	controller.mu.Unlock()
 	queue := taskqueue.QueueStatus{}
 	if controller.tasks != nil {
@@ -149,10 +160,27 @@ func (controller *Controller) Snapshot() Snapshot {
 	if uptime < 0 {
 		uptime = 0
 	}
+	lastSuccessSecondsAgo := int64(-1)
+	if !lastWeChatSuccess.IsZero() {
+		lastSuccessSecondsAgo = int64(time.Since(lastWeChatSuccess).Seconds())
+		if lastSuccessSecondsAgo < 0 {
+			lastSuccessSecondsAgo = 0
+		}
+	}
+	oldestPendingSeconds := int64(-1)
+	if pendingSync > 0 && !pendingSince.IsZero() {
+		oldestPendingSeconds = int64(time.Since(pendingSince).Seconds())
+		if oldestPendingSeconds < 0 {
+			oldestPendingSeconds = 0
+		}
+	}
 	return Snapshot{
 		Status: state, Version: version, UptimeSeconds: uptime,
-		Codex:         ComponentStatus{Ready: codexReady},
-		WeChat:        WeChatStatus{Monitors: monitors, Healthy: healthy},
+		Codex: ComponentStatus{Ready: codexReady},
+		WeChat: WeChatStatus{
+			Monitors: monitors, Healthy: healthy, PendingBatches: pendingSync,
+			OldestPendingSeconds: oldestPendingSeconds, LastSuccessSecondsAgo: lastSuccessSecondsAgo,
+		},
 		Tasks:         TaskStatus{Running: queue.Running, Queued: queue.Queued, Delivering: queue.Delivering},
 		Draining:      draining,
 		DrainComplete: draining && queue.Running == 0 && queue.Delivering == 0 && staging == 0 && pendingSync == 0,
@@ -195,6 +223,11 @@ func (probe *MonitorProbe) SetHealthy(healthy bool) {
 		healthy = false
 	}
 	probe.setHealthyLocked(healthy)
+	if healthy {
+		probe.controller.mu.Lock()
+		probe.controller.lastWeChatSuccess = time.Now()
+		probe.controller.mu.Unlock()
+	}
 	probe.mu.Unlock()
 }
 
@@ -245,9 +278,9 @@ func (probe *MonitorProbe) setPendingLocked(pending bool) {
 	probe.pending = pending
 	probe.controller.mu.Lock()
 	if pending {
-		probe.controller.pendingSync++
-	} else if probe.controller.pendingSync > 0 {
-		probe.controller.pendingSync--
+		probe.controller.pendingBatches[probe] = time.Now()
+	} else {
+		delete(probe.controller.pendingBatches, probe)
 	}
 	probe.controller.mu.Unlock()
 }

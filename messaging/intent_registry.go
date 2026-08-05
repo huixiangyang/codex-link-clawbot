@@ -12,6 +12,7 @@ const (
 	IntentMenu              IntentID = "system.menu"
 	IntentGuide             IntentID = "system.guide"
 	IntentRuntime           IntentID = "system.runtime"
+	IntentNoReplyDiagnostic IntentID = "system.no_reply_diagnostic"
 	IntentCancel            IntentID = "task.cancel"
 	IntentTaskStatus        IntentID = "task.status"
 	IntentTaskCenter        IntentID = "task.center"
@@ -202,6 +203,7 @@ func defaultIntentDefinitions() []IntentDefinition {
 		{ID: IntentMenu, Domain: DomainSystem, ExactPhrases: []string{"/", "菜单", "打开菜单", "功能", "操作", "功能菜单", "打开功能"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_menu"},
 		{ID: IntentGuide, Domain: DomainSystem, ExactPhrases: []string{"帮助", "怎么用", "使用说明"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_guide"},
 		{ID: IntentRuntime, Domain: DomainSystem, ExactPhrases: []string{"运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_runtime"},
+		{ID: IntentNoReplyDiagnostic, Domain: DomainSystem, ExactPhrases: []string{"为什么没回复", "怎么没回复", "为什么没反应", "怎么没反应", "没响应", "没有响应", "没回复"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "diagnose_no_reply"},
 		{ID: IntentCancel, Domain: DomainTask, ExactPhrases: []string{"取消", "取消任务", "停止", "停止任务", "停下", "停一下"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "cancel_task_or_operation"},
 		{ID: IntentTaskStatus, Domain: DomainTask, ExactPhrases: []string{"状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_task_status"},
 		{ID: IntentTaskCenter, Domain: DomainTask, ExactPhrases: []string{"任务队列", "排队任务", "任务中心"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_task_center"},

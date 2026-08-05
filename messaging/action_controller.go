@@ -91,6 +91,8 @@ func (h *Handler) executeSystemControlAction(ctx context.Context, userID string,
 		text = h.openMainMenu(ctx, userID)
 	case actionRuntimeInfo:
 		text = h.openRuntimeInfo(userID)
+	case actionNoReplyDiagnostic:
+		text = h.buildNoReplyDiagnostic(userID)
 	case actionMore:
 		text = h.openMoreMenu(userID)
 	case actionGuide:
@@ -110,6 +112,8 @@ func (h *Handler) dispatchSystemIntent(ctx context.Context, userID string, resol
 		text = h.openGuide(userID)
 	case IntentRuntime:
 		text = h.openRuntimeInfo(userID)
+	case IntentNoReplyDiagnostic:
+		text = h.buildNoReplyDiagnostic(userID)
 	default:
 		return invalidIntentResult(resolved)
 	}
