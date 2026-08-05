@@ -57,6 +57,9 @@ func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {
 	if !strings.Contains(text, "发送“取消”") {
 		t.Error("guide should mention natural-language cancellation")
 	}
+	if !strings.Contains(text, "发送“视觉风格”") {
+		t.Error("guide should mention visual style selection")
+	}
 	if strings.Contains(text, "/status") || strings.Contains(text, "/session") {
 		t.Error("guide must not expose legacy slash commands")
 	}

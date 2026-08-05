@@ -105,7 +105,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if visualErr != nil {
 			return fmt.Errorf("initialize visual control cards: %w", visualErr)
 		}
+		styleStore, styleErr := visual.NewStyleStore("")
+		if styleErr != nil {
+			return fmt.Errorf("initialize visual style preferences: %w", styleErr)
+		}
 		handler.SetVisualRenderer(visualRenderer)
+		handler.SetVisualStyleStore(styleStore)
 		handler.SetVisualReplyConfig(cfg.Visual.LongReplies, cfg.Visual.LongReplyMinRunes)
 		log.Printf("Visual control cards enabled (browser=%s)", visualRenderer.BrowserCommand())
 	}

@@ -14,7 +14,9 @@ import (
 	"unicode"
 
 	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/visual"
 )
 
 const (
@@ -62,6 +64,8 @@ const (
 	actionPromptWorkingDir    controlAction = "prompt_working_dir"
 	actionScheduledReports    controlAction = "scheduled_reports"
 	actionScheduledReport     controlAction = "scheduled_report"
+	actionVisualStyles        controlAction = "visual_styles"
+	actionSetVisualStyle      controlAction = "set_visual_style"
 	actionGuide               controlAction = "guide"
 )
 
@@ -135,6 +139,20 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	}
 	if isOneOf(text, "帮助", "怎么用", "使用说明") {
 		return h.openGuide(userID), true
+	}
+	if isOneOf(text, "视觉风格", "卡片风格", "更换风格", "切换风格", "主题风格") {
+		return h.openVisualStyles(userID), true
+	}
+	if argument, matched := intentArgument(text, []string{"视觉风格", "卡片风格", "更换风格", "切换风格"}); matched {
+		argument = cleanIntentArgument(argument)
+		if argument == "" {
+			return h.openVisualStyles(userID), true
+		}
+		style, ok := visual.ResolveStyle(argument)
+		if !ok {
+			return "没有这个视觉风格。发送“视觉风格”查看可选模板。", true
+		}
+		return h.setVisualStyle(userID, style), true
 	}
 	if isOneOf(text, "定时巡检", "巡检状态", "定时报告", "报告计划") {
 		return h.openScheduledReports(userID, 1), true
@@ -384,6 +402,10 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.openScheduledReports(userID, option.Page)
 	case actionScheduledReport:
 		return h.openScheduledReport(userID, option.Value, option.Page)
+	case actionVisualStyles:
+		return h.openVisualStyles(userID)
+	case actionSetVisualStyle:
+		return h.setVisualStyle(userID, visual.Style(option.Value))
 	case actionGuide:
 		return h.openGuide(userID)
 	default:
@@ -414,6 +436,9 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 	}
 	if len(statuses) > 0 {
 		options = append(options, controlOption{Label: "定时巡检", Action: actionScheduledReports, Page: 1})
+	}
+	if h.visual != nil && h.visualStyles != nil {
+		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
 	}
 	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
 	lines := []string{
@@ -473,9 +498,65 @@ func (h *Handler) openGuide(userID string) string {
 		{Label: "会话中心", Action: actionSessionMenu},
 		{Label: "任务状态", Action: actionTaskStatus},
 	}
+	if h.visual != nil && h.visualStyles != nil {
+		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
+	}
 	prompt := "使用说明\n\n" + controlGuide() + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
 	return prompt + "\n\n回复数字继续，0 返回。"
+}
+
+func (h *Handler) openVisualStyles(userID string) string {
+	if h.visual == nil || h.visualStyles == nil {
+		return "视觉卡片当前不可用。"
+	}
+	current := h.visualStyles.Get(userID)
+	definitions := visual.Styles()
+	options := make([]controlOption, 0, len(definitions))
+	for _, definition := range definitions {
+		label := definition.Name + " · " + definition.Description
+		options = append(options, controlOption{Label: label, Action: actionSetVisualStyle, Value: string(definition.ID)})
+	}
+	currentDefinition := current.Definition()
+	prompt := strings.Join([]string{
+		"视觉风格",
+		"",
+		"当前：" + currentDefinition.Name,
+		"说明：选择后立即应用，同时用于控制卡和长回复。",
+		"",
+		renderControlOptions(options),
+	}, "\n")
+	h.storeChoice(userID, prompt, options, actionMain)
+	return prompt + "\n\n回复数字切换并查看效果，0 返回。"
+}
+
+func (h *Handler) setVisualStyle(userID string, style visual.Style) string {
+	if h.visual == nil || h.visualStyles == nil {
+		return "视觉卡片当前不可用。"
+	}
+	if !style.Valid() {
+		return "没有这个视觉风格。发送“视觉风格”查看可选模板。"
+	}
+	if err := h.visualStyles.Set(userID, style); err != nil {
+		log.Printf("[visual] failed to persist style for %s: %v", ilink.LogLabel(userID), err)
+		return "视觉风格保存失败，请稍后重试。"
+	}
+	definition := style.Definition()
+	options := []controlOption{
+		{Label: "返回主菜单", Action: actionMain},
+		{Label: "选择其他风格", Action: actionVisualStyles},
+	}
+	prompt := strings.Join([]string{
+		"视觉风格已切换",
+		"",
+		"当前：" + definition.Name,
+		"质感：" + definition.Description,
+		"范围：控制卡与长回复",
+		"",
+		renderControlOptions(options),
+	}, "\n")
+	h.storeChoice(userID, prompt, options, actionMain)
+	return prompt + "\n\n当前卡片就是新风格预览；回复数字继续，0 返回。"
 }
 
 func (h *Handler) openSessionMenu(ctx context.Context, userID string) string {
@@ -1020,6 +1101,7 @@ func controlGuide() string {
 		"直接发送文字、图片或文件，内容会交给 Codex。",
 		"较长回复自动整理为阅读卡片，回复“文字版”可获取可复制原文。",
 		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
+		"发送“视觉风格”可在刊物、构筑和黑标之间切换，选择会自动保存。",
 		"也可以直接说“新建会话”“搜索会话”“切换会话 登录”“运行中心”或“工作目录”。",
 		"任务运行时发送“状态”查看进度，发送“取消”停止任务。",
 	}, "\n")

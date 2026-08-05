@@ -12,6 +12,7 @@ import (
 	"github.com/huixiangyang/weclaw/codex"
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/visual"
 )
 
 // Handler processes incoming WeChat messages and dispatches replies.
@@ -25,6 +26,7 @@ type Handler struct {
 	progress            ProgressConfig
 	sessions            *session.Manager
 	visual              controlVisualRenderer
+	visualStyles        *visual.StyleStore
 	visualReplies       sync.Map // map[userID]*cachedVisualReply — 最近一条可取回的视觉长回复
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
@@ -43,6 +45,11 @@ func (h *Handler) SetSessionManager(manager *session.Manager) {
 // SetVisualRenderer 注入可信模板的微信视觉卡片渲染器。
 func (h *Handler) SetVisualRenderer(renderer controlVisualRenderer) {
 	h.visual = renderer
+}
+
+// SetVisualStyleStore 注入按绑定用户隔离的视觉风格偏好。
+func (h *Handler) SetVisualStyleStore(store *visual.StyleStore) {
+	h.visualStyles = store
 }
 
 // SetScheduledReportProvider 注入只读巡检状态，不允许微信修改调度配置。

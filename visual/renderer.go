@@ -60,6 +60,7 @@ type Option struct {
 type Card struct {
 	Variant       Variant
 	Theme         Theme
+	Style         Style
 	Title         string
 	Subtitle      string
 	Facts         []Fact
@@ -261,7 +262,7 @@ func (r *Renderer) renderArtifact(ctx context.Context, pattern string, height in
 
 func (r *Renderer) renderHTML(card Card) ([]byte, error) {
 	var output bytes.Buffer
-	if err := r.tmpl.ExecuteTemplate(&output, "card.html", card); err != nil {
+	if err := r.tmpl.ExecuteTemplate(&output, cardTemplateName(card.Style), card); err != nil {
 		return nil, fmt.Errorf("execute visual card template: %w", err)
 	}
 	return output.Bytes(), nil
@@ -269,13 +270,14 @@ func (r *Renderer) renderHTML(card Card) ([]byte, error) {
 
 func (r *Renderer) renderDocumentHTML(document Document) ([]byte, error) {
 	var output bytes.Buffer
-	if err := r.tmpl.ExecuteTemplate(&output, "document.html", document); err != nil {
+	if err := r.tmpl.ExecuteTemplate(&output, documentTemplateName(document.Style), document); err != nil {
 		return nil, fmt.Errorf("execute visual document template: %w", err)
 	}
 	return output.Bytes(), nil
 }
 
 func normalizeCard(card Card) Card {
+	card.Style = NormalizeStyle(card.Style)
 	if card.Variant == "" {
 		card.Variant = VariantNeutral
 	}
@@ -441,6 +443,7 @@ func runeLines(value string, width int) int {
 }
 
 func normalizeDocument(document Document) Document {
+	document.Style = NormalizeStyle(document.Style)
 	if document.Theme != ThemeDay && document.Theme != ThemeNight {
 		document.Theme = ThemeNight
 	}

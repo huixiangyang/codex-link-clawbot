@@ -1,0 +1,61 @@
+{{define "card.editorial"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
+    body {
+      --paper: #171513; --sheet: #201d1a; --ink: #f3ede2; --muted: rgba(243,237,226,.58); --line: rgba(243,237,226,.16);
+      --accent: #dfa091; --accent-rgb: 223,160,145;
+      margin: 0; color: var(--ink); background: var(--paper);
+      font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif; -webkit-font-smoothing: antialiased;
+    }
+    body.day { --paper: #f3eee4; --sheet: #fbf8f1; --ink: #27211d; --muted: rgba(39,33,29,.61); --line: rgba(52,42,35,.2); --accent: #923f35; --accent-rgb: 146,63,53; }
+    body.day.session { --accent: #3d5f83; --accent-rgb: 61,95,131; }
+    body.day.progress { --accent: #356d65; --accent-rgb: 53,109,101; }
+    body.day.system { --accent: #805b29; --accent-rgb: 128,91,41; }
+    body.day.success { --accent: #356f55; --accent-rgb: 53,111,85; }
+    body.day.warning { --accent: #9a4034; --accent-rgb: 154,64,52; }
+    body.night.session { --accent: #9eb5cf; --accent-rgb: 158,181,207; }
+    body.night.progress { --accent: #8fc0b5; --accent-rgb: 143,192,181; }
+    body.night.system { --accent: #d2b17c; --accent-rgb: 210,177,124; }
+    body.night.success { --accent: #8ec2a5; --accent-rgb: 142,194,165; }
+    body.night.warning { --accent: #e19a8e; --accent-rgb: 225,154,142; }
+    .page { height: 100%; padding: 44px 58px 38px; display: flex; flex-direction: column; }
+    .masthead { height: 44px; display: flex; align-items: center; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+    .brand { color: var(--ink); font: 760 18px/1 "Noto Sans CJK SC", sans-serif; letter-spacing: .22em; }
+    .hero { margin: 30px 0 27px; }
+    h1 { margin: 0; color: var(--ink); font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; font-size: 72px; font-weight: 760; line-height: 1.05; letter-spacing: -.045em; text-wrap: balance; overflow-wrap: anywhere; }
+    .subtitle { max-width: 900px; margin-top: 14px; color: var(--muted); font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; font-size: 27px; font-weight: 560; line-height: 1.42; overflow-wrap: anywhere; }
+    .facts { display: grid; gap: 14px 24px; margin-bottom: 25px; }
+    .facts.cols-2 { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .facts.cols-3 { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .fact { min-width: 0; min-height: 98px; padding: 15px 2px 13px; border-top: 2px solid var(--accent); border-bottom: 1px solid var(--line); }
+    .fact-label { margin-bottom: 9px; color: var(--muted); font-size: 15px; font-weight: 720; letter-spacing: .1em; }
+    .fact-value { color: var(--ink); font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; font-size: 27px; font-weight: 680; line-height: 1.28; overflow-wrap: anywhere; }
+    .body-copy { display: grid; gap: 8px; margin-bottom: 21px; }
+    .body-line { color: var(--muted); font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; font-size: 27px; line-height: 1.52; overflow-wrap: anywhere; }
+    .options { display: grid; gap: 0 24px; border-top: 1px solid var(--line); }
+    .options.cols-2 { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .option { min-width: 0; min-height: 94px; display: grid; grid-template-columns: 62px minmax(0,1fr); align-items: center; border-bottom: 1px solid var(--line); background: rgba(var(--accent-rgb),.025); }
+    .option-number { align-self: stretch; display: grid; place-items: center; color: var(--accent); border-right: 1px solid var(--line); font: 720 26px/1 "Noto Serif CJK SC", serif; }
+    .option-copy { min-width: 0; padding: 17px 18px; }
+    .option-label { color: var(--ink); font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; font-size: 28px; font-weight: 650; line-height: 1.32; overflow-wrap: anywhere; }
+    .option-meta { display: inline-block; margin-top: 7px; color: var(--accent); font-size: 15px; font-weight: 720; letter-spacing: .04em; }
+    .footer { margin-top: 27px; padding-top: 17px; border-top: 1px solid var(--line); color: var(--muted); font-size: 18px; line-height: 1.45; }
+  </style>
+</head>
+<body class="{{.Theme}} {{.Style}} {{.Variant}}">
+  <main class="page">
+    <header class="masthead"><div class="brand">WECLAW</div></header>
+    <section class="hero"><h1>{{.Title}}</h1>{{if .Subtitle}}<div class="subtitle">{{.Subtitle}}</div>{{end}}</section>
+    {{if .Facts}}<section class="facts cols-{{.FactColumns}}">{{range .Facts}}<div class="fact"><div class="fact-label">{{.Label}}</div><div class="fact-value">{{.Value}}</div></div>{{end}}</section>{{end}}
+    {{if .Body}}<section class="body-copy">{{range .Body}}<div class="body-line">{{.}}</div>{{end}}</section>{{end}}
+    {{if .Options}}<section class="options cols-{{.OptionColumns}}">{{range .Options}}<div class="option"><div class="option-number">{{.Number}}</div><div class="option-copy"><div class="option-label">{{.DisplayLabel}}</div>{{if .Meta}}<div class="option-meta">{{.Meta}}</div>{{end}}</div></div>{{end}}</section>{{end}}
+    <footer class="footer">{{.Footer}}</footer>
+  </main>
+</body>
+</html>{{end}}

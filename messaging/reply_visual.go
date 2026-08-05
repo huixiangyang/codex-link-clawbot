@@ -61,6 +61,7 @@ func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, use
 	}
 	defer cleanupArtifacts()
 	for _, document := range documents {
+		document.Style = h.currentVisualStyle(userID)
 		artifact, err := renderer.RenderDocument(ctx, document)
 		if err != nil {
 			return false, fmt.Errorf("render page %d/%d: %w", document.PageNumber, document.TotalPages, err)

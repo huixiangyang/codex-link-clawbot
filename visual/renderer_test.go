@@ -114,7 +114,7 @@ func TestCardTemplateEscapesUntrustedText(t *testing.T) {
 	if !strings.Contains(got, "&lt;script&gt;") || !strings.Contains(got, "&lt;img") {
 		t.Fatalf("template did not HTML-escape card text")
 	}
-	if !strings.Contains(got, `class="night neutral`) {
+	if !strings.Contains(got, `class="night atelier neutral`) {
 		t.Fatalf("card template did not render the normalized night theme")
 	}
 	for _, redundant := range []string{"LOCAL CODEX", "DAYLIGHT", "NIGHT", "W /", `class="arrow"`} {
@@ -147,13 +147,48 @@ func TestDocumentTemplateEscapesUntrustedText(t *testing.T) {
 	if !strings.Contains(got, "&lt;script&gt;") || !strings.Contains(got, "&lt;img") {
 		t.Fatalf("document template did not escape dynamic text")
 	}
-	if !strings.Contains(got, `class="night"`) {
+	if !strings.Contains(got, `class="night atelier"`) {
 		t.Fatalf("document template did not render the normalized night theme")
 	}
 	for _, redundant := range []string{"MOBILE READING", "CODEX RESPONSE", "DAYLIGHT", "NIGHT", "page-watermark"} {
 		if strings.Contains(got, redundant) {
 			t.Fatalf("document template still contains redundant element %q", redundant)
 		}
+	}
+}
+
+func TestEveryStyleProvidesEscapedCardAndDocumentTemplates(t *testing.T) {
+	tmpl, err := template.New("visual").ParseFS(assets, "assets/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer := &Renderer{tmpl: tmpl}
+	for _, definition := range Styles() {
+		t.Run(string(definition.ID), func(t *testing.T) {
+			cardHTML, err := renderer.renderHTML(normalizeCard(Card{
+				Style: definition.ID, Theme: ThemeDay, Title: `<b>控制卡</b>`,
+				Options: []Option{{Number: "1", Label: `<img src=x onerror=alert(1)>`}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cardOutput := string(cardHTML)
+			if !strings.Contains(cardOutput, `class="day `+string(definition.ID)) || strings.Contains(cardOutput, `<img src=x`) || !strings.Contains(cardOutput, `&lt;img`) {
+				t.Fatalf("style card output is invalid")
+			}
+
+			documentHTML, err := renderer.renderDocumentHTML(normalizeDocument(Document{
+				Style: definition.ID, Theme: ThemeNight, Title: `<b>阅读卡</b>`, Height: 900,
+				Blocks: []DocumentBlock{{Kind: "paragraph", Text: `<script>alert(1)</script>`}},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			documentOutput := string(documentHTML)
+			if !strings.Contains(documentOutput, `class="night `+string(definition.ID)) || strings.Contains(documentOutput, `<script>alert`) || !strings.Contains(documentOutput, `&lt;script&gt;`) {
+				t.Fatalf("style document output is invalid")
+			}
+		})
 	}
 }
 
@@ -235,6 +270,33 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	defer documentArtifact.Cleanup()
 	if documentArtifact.Width != CanvasWidth || documentArtifact.Height != documents[0].Height {
 		t.Fatalf("document dimensions = %dx%d", documentArtifact.Width, documentArtifact.Height)
+	}
+
+	for _, style := range []Style{StyleEditorial, StyleNoir} {
+		styledDay, err := renderer.Render(context.Background(), Card{Style: style, Title: "风格预览", Facts: []Fact{{Label: "风格", Value: style.Definition().Name}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer styledDay.Cleanup()
+		styledNight, err := renderer.Render(context.Background(), Card{Style: style, Theme: ThemeNight, Title: "风格预览"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer styledNight.Cleanup()
+		if day, night := renderedCornerLuma(t, styledDay.Path), renderedCornerLuma(t, styledNight.Path); day < 180 || night > 70 || day-night < 120 {
+			t.Fatalf("%s rendered luma = day:%d night:%d", style, day, night)
+		}
+
+		styledDocument := documents[0]
+		styledDocument.Style = style
+		styledDocumentArtifact, err := renderer.RenderDocument(context.Background(), styledDocument)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer styledDocumentArtifact.Cleanup()
+		if styledDocumentArtifact.Width != CanvasWidth || styledDocumentArtifact.Height != styledDocument.Height {
+			t.Fatalf("%s document dimensions = %dx%d", style, styledDocumentArtifact.Width, styledDocumentArtifact.Height)
+		}
 	}
 }
 

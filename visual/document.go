@@ -21,6 +21,7 @@ type DocumentBlock struct {
 
 type Document struct {
 	Theme           Theme
+	Style           Style
 	Title           string
 	Blocks          []DocumentBlock
 	PageNumber      int

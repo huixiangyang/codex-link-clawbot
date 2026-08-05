@@ -25,6 +25,7 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 	}
 
 	card := controlCardFromText(reply)
+	card.Style = h.currentVisualStyle(userID)
 	artifact, err := h.visual.Render(ctx, card)
 	if err != nil {
 		log.Printf("[visual] render failed for %s, falling back to text: %v", ilink.LogLabel(userID), err)
@@ -50,6 +51,13 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 	return nil
 }
 
+func (h *Handler) currentVisualStyle(userID string) visual.Style {
+	if h.visualStyles == nil {
+		return visual.DefaultStyle
+	}
+	return h.visualStyles.Get(userID)
+}
+
 // controlCardFromText 将内部控制文本收敛为固定结构，模板层会再次执行 HTML 转义。
 func controlCardFromText(reply string) visual.Card {
 	original := strings.TrimSpace(strings.ReplaceAll(reply, "\r\n", "\n"))
@@ -70,6 +78,8 @@ func controlCardFromText(reply string) visual.Card {
 	case first == "WeClaw":
 		card.Title = first
 	case first == "运行中心":
+		card.Title = first
+	case first == "视觉风格", first == "视觉风格已切换":
 		card.Title = first
 	case first == "会话", first == "当前会话", first == "会话详情", first == "归档会话详情", first == "搜索会话",
 		first == "工作目录", first == "新建会话", first == "重命名会话":
@@ -144,6 +154,10 @@ func controlCardVariant(text string) visual.Variant {
 	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消"):
 		return visual.VariantWarning
 	case strings.HasPrefix(text, "运行中心"):
+		return visual.VariantSystem
+	case strings.HasPrefix(text, "视觉风格已切换"):
+		return visual.VariantSuccess
+	case strings.HasPrefix(text, "视觉风格"):
 		return visual.VariantSystem
 	case strings.HasPrefix(text, "任务记录") || strings.HasPrefix(text, "任务详情"):
 		return visual.VariantProgress

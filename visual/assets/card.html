@@ -1,4 +1,4 @@
-{{define "card.html"}}<!doctype html>
+{{define "card.atelier"}}<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -15,10 +15,9 @@
       --line: rgba(255,255,255,.12);
       --panel: rgba(255,255,255,.046);
       --panel-strong: rgba(255,255,255,.075);
-      --shadow: 0 22px 70px rgba(0,0,0,.22);
       position: relative;
       color: var(--ink);
-      background: radial-gradient(circle at 88% 0%, rgba(var(--accent-rgb),.09), transparent 32%), #080b11;
+      background: #080b11;
       font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
       -webkit-font-smoothing: antialiased;
     }
@@ -35,8 +34,7 @@
       --line: rgba(24,28,25,.13);
       --panel: rgba(255,255,255,.66);
       --panel-strong: rgba(255,255,255,.88);
-      --shadow: 0 24px 65px rgba(44,49,40,.11);
-      background: radial-gradient(circle at 88% 0%, rgba(var(--accent-rgb),.07), transparent 32%), #f1f0e9;
+      background: #f1f0e9;
     }
     body.day.session { --accent: #4d4bc8; --accent-rgb: 77,75,200; }
     body.day.progress { --accent: #007f96; --accent-rgb: 0,127,150; }
@@ -48,7 +46,7 @@
     .brand { min-width: 0; display: flex; align-items: center; gap: 16px; }
     .mark {
       flex: 0 0 auto; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 14px;
-      display: grid; place-items: center; color: var(--accent); background: var(--panel-strong); box-shadow: var(--shadow);
+      display: grid; place-items: center; color: var(--accent); background: var(--panel-strong);
     }
     .mark svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
     .brand-name { color: var(--muted); font-size: 18px; font-weight: 720; letter-spacing: .16em; }
@@ -60,9 +58,8 @@
     .facts.cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
     .fact {
       min-width: 0; min-height: 99px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 18px;
-      background: var(--panel); box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+      background: var(--panel);
     }
-    .day .fact { box-shadow: 0 14px 36px rgba(42,48,39,.055), inset 0 1px 0 rgba(255,255,255,.65); }
     .fact-label { margin-bottom: 7px; color: var(--muted); font-size: 16px; font-weight: 720; letter-spacing: .1em; text-transform: uppercase; }
     .fact-value { color: var(--ink); font-size: 26px; font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
     .body { display: grid; gap: 8px; margin-bottom: 20px; padding: 2px 2px; }
@@ -71,8 +68,7 @@
     .options.cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
     .option {
       position: relative; min-width: 0; min-height: 94px; display: grid; grid-template-columns: 66px minmax(0,1fr); align-items: center;
-      border: 1px solid var(--line); border-radius: 20px; background: linear-gradient(112deg, rgba(var(--accent-rgb),.12), var(--panel) 54%);
-      box-shadow: 0 14px 42px rgba(0,0,0,.055); overflow: hidden;
+      border: 1px solid var(--line); border-radius: 20px; background: var(--panel); overflow: hidden;
     }
     .option:before { content: ""; position: absolute; left: 0; top: 17px; bottom: 17px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
     .option-number { color: var(--accent); font: 740 29px/1 "Noto Sans Mono CJK SC", monospace; text-align: center; letter-spacing: -.05em; }
@@ -84,7 +80,7 @@
     .footer-copy { color: var(--muted); font-size: 18px; line-height: 1.45; }
   </style>
 </head>
-<body class="{{.Theme}} {{.Variant}} facts-{{.FactColumns}} options-{{.OptionColumns}}">
+<body class="{{.Theme}} {{.Style}} {{.Variant}} facts-{{.FactColumns}} options-{{.OptionColumns}}">
   <main class="frame">
     <header class="topline">
       <div class="brand">

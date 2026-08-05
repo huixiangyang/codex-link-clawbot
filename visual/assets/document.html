@@ -1,4 +1,4 @@
-{{define "document.html"}}<!doctype html>
+{{define "document.atelier"}}<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -17,7 +17,7 @@
       --panel-strong: rgba(255,255,255,.075);
       position: relative;
       color: var(--ink);
-      background: radial-gradient(circle at 88% 0%, rgba(114,245,189,.065), transparent 30%), #080b11;
+      background: #080b11;
       font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
       -webkit-font-smoothing: antialiased;
     }
@@ -29,7 +29,7 @@
       --muted: rgba(23,26,24,.63);
       --line: rgba(25,31,27,.13);
       --panel-strong: rgba(255,255,255,.87);
-      background: radial-gradient(circle at 88% 0%, rgba(0,122,84,.055), transparent 30%), #f2f0e9;
+      background: #f2f0e9;
     }
     .frame { position: relative; min-height: 100%; padding: 44px 58px 38px; display: flex; flex-direction: column; }
     .topline { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
@@ -44,25 +44,25 @@
     .hero { margin-bottom: 26px; }
     h1 { margin: 0; max-width: 910px; font-size: 61px; font-weight: 770; line-height: 1.08; letter-spacing: -.048em; text-wrap: balance; overflow-wrap: anywhere; }
     .progress { margin-top: 19px; height: 3px; border-radius: 999px; overflow: hidden; background: var(--line); }
-    .progress span { display: block; height: 100%; width: {{.ProgressPercent}}%; background: linear-gradient(90deg, var(--accent), var(--secondary)); box-shadow: 0 0 20px rgba(var(--accent-rgb),.4); }
+    .progress span { display: block; height: 100%; width: {{.ProgressPercent}}%; background: var(--accent); }
     .content { display: grid; gap: 17px; }
     .heading { margin-top: 6px; color: var(--ink); font-size: 36px; font-weight: 740; line-height: 1.3; letter-spacing: -.028em; overflow-wrap: anywhere; }
     .heading.H2 { font-size: 33px; color: var(--secondary); }
     .heading.H3 { font-size: 29px; color: var(--muted); }
     .paragraph { color: var(--muted); font-size: 28px; font-weight: 480; line-height: 1.58; overflow-wrap: anywhere; }
     .list { display: grid; grid-template-columns: 38px minmax(0,1fr); gap: 10px; color: var(--muted); font-size: 27px; font-weight: 510; line-height: 1.5; overflow-wrap: anywhere; }
-    .bullet-mark { width: 9px; height: 9px; margin: 16px 0 0 7px; border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 13px rgba(var(--accent-rgb),.33); }
+    .bullet-mark { width: 9px; height: 9px; margin: 16px 0 0 7px; border: 2px solid var(--accent); border-radius: 50%; }
     .order-mark { color: var(--accent); font: 720 23px/1.75 "Noto Sans Mono CJK SC", monospace; text-align: left; }
     .quote { padding: 19px 23px; border-left: 4px solid var(--secondary); border-radius: 0 17px 17px 0; color: var(--muted); background: rgba(104,121,230,.085); font-size: 26px; line-height: 1.52; overflow-wrap: anywhere; }
     .code { position: relative; padding: 43px 25px 23px; border: 1px solid var(--line); border-radius: 20px; color: var(--ink); background: rgba(3,7,10,.34); font: 23px/1.5 "Noto Sans Mono CJK SC", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
     .day .code { background: rgba(31,39,34,.055); box-shadow: inset 0 1px 0 rgba(255,255,255,.8); }
     .code:before { content: attr(data-language); position: absolute; top: 14px; left: 25px; color: var(--accent); font-size: 15px; font-weight: 740; letter-spacing: .12em; text-transform: uppercase; }
-    .rule { height: 1px; margin: 5px 0; background: linear-gradient(90deg, rgba(var(--accent-rgb),.8), rgba(106,124,235,.3), transparent); }
+    .rule { height: 1px; margin: 5px 0; background: var(--line); }
     .footer { margin-top: auto; padding-top: 27px; }
     .footer-copy { color: var(--muted); font-size: 18px; line-height: 1.45; }
   </style>
 </head>
-<body class="{{.Theme}}">
+<body class="{{.Theme}} {{.Style}}">
   <main class="frame">
     <header class="topline">
       <div class="brand">
