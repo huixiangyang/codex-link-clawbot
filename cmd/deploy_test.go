@@ -98,6 +98,25 @@ func TestMigrateStateV26RejectsRunningStateLease(t *testing.T) {
 	}
 }
 
+func TestMigrateStateV26DisablesLegacyUnauthenticatedAPI(t *testing.T) {
+	root := t.TempDir()
+	legacy := `{"api_addr":"127.0.0.1:18011","progress":{"enabled":true}}`
+	path := filepath.Join(root, "config.json")
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateStateV26(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "api_addr") || !strings.Contains(string(data), `"send_api"`) || !strings.Contains(string(data), `"enabled": false`) {
+		t.Fatalf("migrated config=%s", data)
+	}
+}
+
 func TestDeploymentSnapshotRestoresManagedStateAndLeavesWorkspace(t *testing.T) {
 	base := t.TempDir()
 	stateRoot := filepath.Join(base, "state")
@@ -168,11 +187,11 @@ func TestRewriteSystemdUnitRemovesLegacyForeground(t *testing.T) {
 	if err := rewriteSystemdUnit(path, "/new/weclaw", true); err != nil {
 		t.Fatalf("rewriteSystemdUnit() error = %v", err)
 	}
-	assertTestFile(t, path, "[Service]\nExecStart=/new/weclaw start --api-addr 127.0.0.1:18011 --draining\nRestart=always\n")
+	assertTestFile(t, path, "[Service]\nExecStart=/new/weclaw start --draining\nRestart=always\n")
 	if err := rewriteSystemdUnit(path, "/new/weclaw", false); err != nil {
 		t.Fatalf("rewriteSystemdUnit(normal) error = %v", err)
 	}
-	assertTestFile(t, path, "[Service]\nExecStart=/new/weclaw start --api-addr 127.0.0.1:18011\nRestart=always\n")
+	assertTestFile(t, path, "[Service]\nExecStart=/new/weclaw start\nRestart=always\n")
 }
 
 func TestInspectCandidateVersionRequiresExactPlatformMetadata(t *testing.T) {

@@ -469,8 +469,19 @@ func rewriteSystemdUnit(path, binaryPath string, draining bool) error {
 			return fmt.Errorf("systemd unit must run weclaw start")
 		}
 		arguments := []string{binaryPath, "start"}
-		for _, argument := range fields[2:] {
+		for argumentIndex := 2; argumentIndex < len(fields); argumentIndex++ {
+			argument := fields[argumentIndex]
 			if argument == "--foreground" || argument == "--draining" {
+				continue
+			}
+			if argument == "--api-addr" {
+				if argumentIndex+1 >= len(fields) {
+					return fmt.Errorf("legacy --api-addr is missing its value")
+				}
+				argumentIndex++
+				continue
+			}
+			if strings.HasPrefix(argument, "--api-addr=") {
 				continue
 			}
 			arguments = append(arguments, argument)

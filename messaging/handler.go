@@ -49,7 +49,7 @@ type Handler struct {
 	remoteLock          *RemoteLock
 	voice               *VoiceBriefing
 	bridgeVersion       string
-	apiAddr             string
+	sendAPIEnabled      bool
 	startedAt           time.Time
 }
 
@@ -120,13 +120,13 @@ func (h *Handler) SetVoiceBriefing(voice *VoiceBriefing) {
 }
 
 // SetBridgeInfo 设置部署身份；运行期间保持不变，可安全用于微信状态快照。
-func (h *Handler) SetBridgeInfo(version, apiAddr string) {
+func (h *Handler) SetBridgeInfo(version string, sendAPIEnabled bool) {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		version = "dev"
 	}
 	h.bridgeVersion = version
-	h.apiAddr = strings.TrimSpace(apiAddr)
+	h.sendAPIEnabled = sendAPIEnabled
 }
 
 // NewHandler 创建只路由到 Codex 的微信消息处理器。
@@ -665,8 +665,8 @@ func (h *Handler) buildStatus() string {
 		"版本：" + h.bridgeVersion,
 		"已运行：" + formatUptime(time.Since(h.startedAt)),
 	}
-	if h.apiAddr != "" {
-		lines = append(lines, "本地接口："+h.apiAddr)
+	if h.sendAPIEnabled {
+		lines = append(lines, "主动发送：已启用")
 	}
 	if h.codex == nil {
 		return strings.Join(append(lines, "Codex：不可用"), "\n")

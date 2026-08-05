@@ -57,7 +57,6 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 }
 
 func TestLoadEnvOverridesCodex(t *testing.T) {
-	t.Setenv("WECLAW_API_ADDR", "127.0.0.1:18011")
 	t.Setenv("WECLAW_CODEX_COMMAND", "/opt/codex")
 	t.Setenv("WECLAW_CODEX_MODEL", "gpt-test")
 	t.Setenv("WECLAW_VISUAL_BROWSER", "/opt/chromium")
@@ -69,9 +68,6 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 		MiMo: &MiMoVoiceProviderConfig{BaseURL: "https://api.xiaomimimo.com/v1", Model: "mimo-v2.5-tts", Voice: "茉莉"},
 	}}
 	loadEnv(cfg)
-	if cfg.APIAddr != "127.0.0.1:18011" {
-		t.Fatalf("APIAddr = %q, want %q", cfg.APIAddr, "127.0.0.1:18011")
-	}
 	if cfg.Codex.Command != "/opt/codex" || cfg.Codex.Model != "gpt-test" {
 		t.Fatalf("codex env overrides = %#v", cfg.Codex)
 	}
@@ -80,6 +76,56 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	}
 	if cfg.Voice.Providers[0].MiMo.APIKey != "mimo-test-key" {
 		t.Fatalf("MiMo API key override was not applied")
+	}
+}
+
+func TestSendAPIDefaultsToDisabled(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.SendAPI.Enabled || cfg.SendAPI.ListenAddr != "" || len(cfg.SendAPI.Tokens) != 0 {
+		t.Fatalf("unexpected default send API config: %#v", cfg.SendAPI)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("default config validation: %v", err)
+	}
+}
+
+func TestSendAPIRequiresExplicitSecurityBoundary(t *testing.T) {
+	validToken := SendAPITokenConfig{
+		CallerID:    "dashboard",
+		TokenSHA256: strings.Repeat("a", 64),
+		Scopes:      []string{"send:text", "send:media"},
+	}
+	tests := []struct {
+		name   string
+		config SendAPIConfig
+	}{
+		{name: "missing address", config: SendAPIConfig{Enabled: true, Tokens: []SendAPITokenConfig{validToken}}},
+		{name: "public plaintext", config: SendAPIConfig{Enabled: true, ListenAddr: "0.0.0.0:18012", Tokens: []SendAPITokenConfig{validToken}}},
+		{name: "proxy without trust", config: SendAPIConfig{Enabled: true, ListenAddr: "0.0.0.0:18012", ProxyMode: true, Tokens: []SendAPITokenConfig{validToken}}},
+		{name: "proxy trusts everyone", config: SendAPIConfig{Enabled: true, ListenAddr: "0.0.0.0:18012", ProxyMode: true, TrustedProxyCIDRs: []string{"0.0.0.0/0"}, Tokens: []SendAPITokenConfig{validToken}}},
+		{name: "missing tokens", config: SendAPIConfig{Enabled: true, ListenAddr: "127.0.0.1:18012"}},
+		{name: "plaintext token", config: SendAPIConfig{Enabled: true, ListenAddr: "127.0.0.1:18012", Tokens: []SendAPITokenConfig{{CallerID: "dashboard", TokenSHA256: "secret", Scopes: []string{"send:text"}}}}},
+		{name: "unknown scope", config: SendAPIConfig{Enabled: true, ListenAddr: "127.0.0.1:18012", Tokens: []SendAPITokenConfig{{CallerID: "dashboard", TokenSHA256: strings.Repeat("b", 64), Scopes: []string{"admin"}}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.SendAPI = test.config
+			if err := cfg.validate(); err == nil {
+				t.Fatal("unsafe send API config was accepted")
+			}
+		})
+	}
+
+	for _, valid := range []SendAPIConfig{
+		{Enabled: true, ListenAddr: "127.0.0.1:18012", Tokens: []SendAPITokenConfig{validToken}},
+		{Enabled: true, ListenAddr: "0.0.0.0:18012", ProxyMode: true, TrustedProxyCIDRs: []string{"10.10.0.0/16"}, Tokens: []SendAPITokenConfig{validToken}},
+	} {
+		cfg := DefaultConfig()
+		cfg.SendAPI = valid
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("valid send API config rejected: %v", err)
+		}
 	}
 }
 
@@ -304,5 +350,12 @@ func TestDecodeRejectsRemovedSilkCommand(t *testing.T) {
 	data := []byte(`{"voice":{"silk_command":"/usr/local/bin/weclaw-silk-encoder"}}`)
 	if _, err := decodeConfig(data); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("decodeConfig() error = %v, want removed silk_command rejection", err)
+	}
+}
+
+func TestDecodeRejectsRemovedUnauthenticatedAPIAddress(t *testing.T) {
+	data := []byte(`{"api_addr":"127.0.0.1:18011"}`)
+	if _, err := decodeConfig(data); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("decodeConfig() error = %v, want removed api_addr rejection", err)
 	}
 }

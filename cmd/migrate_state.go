@@ -104,7 +104,47 @@ func migrateStateV26(root string) error {
 			return fmt.Errorf("remove legacy %s: %w", legacyName, err)
 		}
 	}
+	if err := migrateSendAPIConfig(filepath.Join(root, "config.json")); err != nil {
+		return fmt.Errorf("migrate config: %w", err)
+	}
 	return syncDirectoryPath(root)
+}
+
+func migrateSendAPIConfig(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("config must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := decodeStrictJSONBytes(data, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return fmt.Errorf("config must be a JSON object")
+	}
+	changed := false
+	if _, exists := fields["api_addr"]; exists {
+		delete(fields, "api_addr")
+		changed = true
+	}
+	if _, exists := fields["send_api"]; !exists {
+		fields["send_api"] = json.RawMessage(`{"enabled":false}`)
+		changed = true
+	}
+	if !changed {
+		return os.Chmod(path, 0o600)
+	}
+	return writePrivateJSONAtomic(path, fields)
 }
 
 func migrateCredentialFile(path string) error {

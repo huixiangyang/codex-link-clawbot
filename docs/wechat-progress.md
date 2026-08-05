@@ -97,7 +97,7 @@ go test ./...
 go test -race ./statefile ./taskqueue ./messaging ./ilink ./api ./cmd
 go vet ./...
 systemctl --user status weclaw.service
-curl -fsS http://127.0.0.1:18011/health
+weclaw status
 ```
 
 真机应连续验证文字、图片和 PDF 排队，项目/会话快照，暂停/继续，取消，执行与发送阶段重启，以及部署通知。任务卡只显示短编号、脱敏摘要、项目和必要状态。

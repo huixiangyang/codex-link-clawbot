@@ -44,7 +44,7 @@ weclaw login
 weclaw start
 ```
 
-Production lifecycle is owned exclusively by a systemd user service. `start` always runs in the foreground; there is no daemon or PID-file path. A running v2.5 service can be drained and managed with:
+Production lifecycle is owned exclusively by a systemd user service. `start` always runs in the foreground; there is no daemon or PID-file path. A running service is managed exclusively through the current user's private `~/.weclaw/control.sock`:
 
 ```bash
 weclaw status
@@ -61,13 +61,15 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 
 Deployment verifies candidate version, platform, and SHA-256; drains the old runtime; snapshots state after shutdown; runs an offline migration; atomically installs; and starts the candidate in drain mode. The queue is resumed only after the expected version, Codex, WeChat monitors, and sync cursors are healthy. Failure restores the binary, systemd unit, configuration, and task state together. Success writes a receipt under `~/.weclaw/deployments/` and sends a plain-text WeChat notice.
 
+The first v2.5-to-v2.6 cutover is intentionally a maintenance-window migration because the management transport changes from loopback TCP to an owner-only Unix socket and no compatibility client remains. Stop v2.5 with the installed v2.5 binary, take a complete binary/unit/state backup, then migrate and start v2.6. After that one cutover, transactional `weclaw deploy` is used again. See [the breaking migration guide](docs/migration-v2.md).
+
 ## Configuration
 
 `~/.weclaw/config.json`:
 
 ```json
 {
-  "api_addr": "127.0.0.1:18011",
+  "send_api": {"enabled": false},
   "save_dir": "",
   "progress": {
     "enabled": true,
@@ -155,7 +157,6 @@ Every template follows the service's local timezone automatically: a bright them
 
 Environment overrides:
 
-- `WECLAW_API_ADDR`
 - `WECLAW_SAVE_DIR`
 - `WECLAW_CODEX_COMMAND`
 - `WECLAW_CODEX_MODEL`
@@ -170,7 +171,7 @@ The only public slash entry is `/`. It opens a context-aware numbered menu rende
 
 The idle home card has only four primary actions: project, session, task center, and more. While a task is active it changes to current task, task center, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `任务中心`, `暂停队列`, `继续队列`, `回答方式`, `开启语音模式`, `阅读模式`, `自适应模式`, `自动化`, `素材箱`, `交付记录`, `语音简报` or the shorter `发语音`, `远程锁定`, `状态`, and `取消`. `发语音` creates one briefing; `开启语音模式` persists paired image-and-MP3 delivery for subsequent Codex replies. Audio delivery requires the current inbound `context_token`; out-of-conversation delivery is rejected instead of reporting a false success.
 
-The main card always identifies its bridge version. The runtime center adds bridge uptime and API listen address alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
+The main card always identifies its bridge version. The runtime center adds bridge uptime and whether proactive sending is enabled alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
 
 The task center is backed by a persistent global FIFO. Text, image, and file requests are fully stored before acknowledgement, then executed by one Coordinator using the project, thread, response mode, and visual style captured at enqueue time. Owners can pause, resume, reorder, delete, cancel, retry, or inspect tasks without a command wall. Queued tasks survive restart; interrupted execution and ambiguous delivery require explicit recovery and never repeat Codex automatically. The visible index contains only sanitized metadata, never answer bodies, context tokens, attachment names, terminal output, account IDs, or private paths.
 
@@ -193,13 +194,17 @@ Natural controls are resolved by a deterministic Intent Registry before entering
 - Control cards are rendered from fixed, escaped local templates and uploaded as PNG images. Arbitrary HTML from Codex is never executed.
 
 ```bash
-weclaw send --to "user_id@im.wechat" --text "Build complete"
-weclaw send --to "user_id@im.wechat" --media "https://example.com/result.png"
+weclaw send-token --caller local-cli
+weclaw send --caller local-cli --to "bound-owner-id" --text "Build complete"
 
 curl -X POST http://127.0.0.1:18011/api/send \
+  -H "Authorization: Bearer $WECLAW_SEND_TOKEN" \
+  -H 'Idempotency-Key: release-2026-08-05' \
   -H 'Content-Type: application/json' \
-  -d '{"to":"user_id@im.wechat","text":"Build complete"}'
+  -d '{"caller_id":"local-cli","target_owner":"bound-owner-id","text":"Build complete"}'
 ```
+
+The send API is disabled by default and opens no TCP listener. `weclaw send-token` generates 256 random bits offline and prints the plaintext once together with a config entry containing only its SHA-256 hash; `weclaw send` reads plaintext only from a `WECLAW_SEND_TOKEN` environment value preloaded by the caller's secret manager. To enable loopback delivery, set `send_api.enabled`, an explicit loopback `listen_addr`, and one or more hashed token entries with `send:text` and/or `send:media` scopes. Non-loopback listeners require `proxy_mode`, canonical trusted-proxy CIDRs, and a user-managed TLS reverse proxy; WeClaw verifies the direct peer and never trusts forwarded client addresses. Requests are limited to a configured caller, a bound WeChat owner, an idempotency key, 8,000 text characters, and one public HTTPS media URL. Media downloads ignore environment proxies, reject private/link-local addresses and DNS rebinding, and stop at 25 MiB. The strict 24-hour `~/.weclaw/send-api-state.json` receipt contains only hashes, caller, timestamps, and outcome.
 
 ## Security
 
@@ -208,6 +213,8 @@ curl -X POST http://127.0.0.1:18011/api/send \
 - All domain JSON state uses the shared `statefile` transaction kernel: files are `0600`, directories are `0700`, symlinks and oversized input are rejected, and a failed directory sync restores the prior file. Runtime and offline migration hold mutually exclusive state leases.
 - Account credentials use strict v1 JSON. Offline deployment migration adds `version: 1` once; unknown fields, mismatched filenames, and damaged credentials now fail startup instead of being silently skipped.
 - `~/.weclaw/control-state.json` uses strict v1 revisions for restart-safe menus and 24-hour minimal control receipts. Display text, prompts, paths, attachment names, tokens, and context tokens are never persisted there.
+- Runtime health, drain, resume, and deployment notices exist only on the owner-only `0600` Unix socket. TCP has no `/health` or `/admin/*`; proactive TCP sending is absent unless explicitly enabled.
+- Proactive send tokens are stored only as SHA-256 hashes with caller-specific text/media scopes. At-most-once receipts never store message bodies, targets, URLs, idempotency keys, or plaintext tokens.
 - `~/.weclaw/preferences.json` uses strict v1 JSON, atomic replacement, mode `0600`, and per-owner response-mode and style isolation.
 - Global Codex thread results are intersected with the local ownership index before display.
 - Raw terminal output, commands, diffs, and environment variables are never forwarded as progress messages.
@@ -234,6 +241,7 @@ More details:
 - [v2.6 unified state-kernel implementation](docs/v2.6-state-kernel.md)
 - [v2.6 typed control routing implementation](docs/v2.6-control-routing.md)
 - [v2.6 persistent interaction and control receipts](docs/v2.6-persistent-control.md)
+- [v2.6 local management and proactive-send security](docs/v2.6-api-security.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

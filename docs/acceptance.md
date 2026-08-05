@@ -70,7 +70,16 @@
 4. 排空期间仍可接收和持久化消息，但 Coordinator 不领取新任务。只有运行、发送、staging 和待提交同步批次都为零时 `drain_complete=true`。
 5. 健康、排空、恢复和部署通知只存在于当前用户拥有的 `~/.weclaw/control.sock`；socket 必须为 `0600`，TCP `/health` 与 `/admin/*` 必须返回 404。
 
-## 9. 事务部署与回滚
+## 9. 主动发送 API 安全
+
+1. 默认配置不得创建 TCP 监听；`api_addr`、`WECLAW_API_ADDR`、`start --api-addr` 和直接读取微信凭据的旧 CLI 发送路径必须不存在。
+2. 未认证、错误 token、caller 不匹配、错误文字/媒体 scope、未绑定目标和非可信代理来源必须在任何发送与回执副作用前拒绝。
+3. 相同 caller 与幂等键重投同一请求只发送一次；同键不同请求返回 HTTP 409。明确失败和可能已可见的失败也不得自动重发。
+4. 请求超过 32 KiB、文字超过 8,000 字符、媒体不是公网 HTTPS 或下载超过 25 MiB 时必须拒绝；媒体下载不得访问回环、私网、链路本地或 DNS 重绑定地址。
+5. `~/.weclaw/send-api-state.json` 必须为严格 v1、`0600` 且最多保留 24 小时；不得包含正文、目标绑定者、URL、原始幂等键、token、附件名或 `context_token`。
+6. `weclaw send-token` 生成 256 位随机明文并只输出一次；可写入配置的 token 项只能包含小写 SHA-256 哈希和最小 scope。
+
+## 10. 事务部署与回滚
 
 1. `update`、`upgrade`、daemon、PID 文件和 `scripts/cutover-local.sh` 必须不存在。
 2. 发布部署使用 `weclaw deploy <version>`；本地构建使用 `weclaw deploy --binary /absolute/path --expect-version <version>`，候选必须自证精确版本和 Linux 架构。
@@ -80,7 +89,7 @@
 6. 注入迁移失败、启动失败或版本不符，必须恢复旧二进制、systemd 单元、配置、同步游标和完整任务状态，并验证旧版本重新 `ready`。
 7. 部署收据不得含正文、令牌或附件名；成功后立即删除包含私密任务负载的状态快照。
 
-## 10. 自动化验证
+## 11. 自动化验证
 
 ```bash
 go test ./...

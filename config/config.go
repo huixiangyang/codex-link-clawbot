@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,8 +20,8 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	APIAddr     string             `json:"api_addr,omitempty"`
 	SaveDir     string             `json:"save_dir,omitempty"` // Linkhoard archive directory
+	SendAPI     SendAPIConfig      `json:"send_api"`
 	Progress    ProgressConfig     `json:"progress"`
 	Projects    []ProjectConfig    `json:"projects"`
 	Automations []AutomationConfig `json:"automations,omitempty"`
@@ -27,6 +29,91 @@ type Config struct {
 	Visual      VisualConfig       `json:"visual"`
 	Security    SecurityConfig     `json:"security"`
 	Voice       VoiceConfig        `json:"voice"`
+}
+
+type SendAPIConfig struct {
+	Enabled           bool                 `json:"enabled"`
+	ListenAddr        string               `json:"listen_addr,omitempty"`
+	ProxyMode         bool                 `json:"proxy_mode,omitempty"`
+	TrustedProxyCIDRs []string             `json:"trusted_proxy_cidrs,omitempty"`
+	Tokens            []SendAPITokenConfig `json:"tokens,omitempty"`
+}
+
+type SendAPITokenConfig struct {
+	CallerID    string   `json:"caller_id"`
+	TokenSHA256 string   `json:"token_sha256"`
+	Scopes      []string `json:"scopes"`
+}
+
+func (c SendAPIConfig) validate() error {
+	if c.Enabled && strings.TrimSpace(c.ListenAddr) == "" {
+		return fmt.Errorf("send_api.listen_addr is required when enabled")
+	}
+	if c.ListenAddr != "" {
+		host, portText, err := net.SplitHostPort(c.ListenAddr)
+		if err != nil {
+			return fmt.Errorf("send_api.listen_addr must use an IP address and explicit port")
+		}
+		ip := net.ParseIP(host)
+		port, portErr := strconv.Atoi(portText)
+		if ip == nil || portErr != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("send_api.listen_addr must use an IP address and explicit port")
+		}
+		if !c.ProxyMode && !ip.IsLoopback() {
+			return fmt.Errorf("send_api.listen_addr must be loopback unless proxy_mode is enabled")
+		}
+	}
+	if c.ProxyMode {
+		if len(c.TrustedProxyCIDRs) == 0 || len(c.TrustedProxyCIDRs) > 16 {
+			return fmt.Errorf("send_api.trusted_proxy_cidrs must contain between 1 and 16 networks in proxy mode")
+		}
+	} else if len(c.TrustedProxyCIDRs) != 0 {
+		return fmt.Errorf("send_api.trusted_proxy_cidrs requires proxy_mode")
+	}
+	seenNetworks := make(map[string]bool, len(c.TrustedProxyCIDRs))
+	for _, raw := range c.TrustedProxyCIDRs {
+		_, network, err := net.ParseCIDR(raw)
+		prefixLength, _ := networkMaskSize(network)
+		if err != nil || network.String() != raw || prefixLength == 0 || seenNetworks[raw] {
+			return fmt.Errorf("send_api.trusted_proxy_cidrs contains an invalid or duplicate canonical network")
+		}
+		seenNetworks[raw] = true
+	}
+	if c.Enabled && (len(c.Tokens) == 0 || len(c.Tokens) > 16) {
+		return fmt.Errorf("send_api.tokens must contain between 1 and 16 tokens when enabled")
+	}
+	seenCallers := make(map[string]bool, len(c.Tokens))
+	seenHashes := make(map[string]bool, len(c.Tokens))
+	for index, token := range c.Tokens {
+		prefix := fmt.Sprintf("send_api.tokens[%d]", index)
+		if !projectIDPattern.MatchString(token.CallerID) || seenCallers[token.CallerID] {
+			return fmt.Errorf("%s.caller_id is invalid or duplicated", prefix)
+		}
+		seenCallers[token.CallerID] = true
+		decodedHash, err := hex.DecodeString(token.TokenSHA256)
+		if err != nil || len(decodedHash) != 32 || strings.ToLower(token.TokenSHA256) != token.TokenSHA256 || seenHashes[token.TokenSHA256] {
+			return fmt.Errorf("%s.token_sha256 must be a unique lowercase SHA-256 hash", prefix)
+		}
+		seenHashes[token.TokenSHA256] = true
+		if len(token.Scopes) == 0 || len(token.Scopes) > 2 {
+			return fmt.Errorf("%s.scopes must contain send:text or send:media", prefix)
+		}
+		seenScopes := make(map[string]bool, len(token.Scopes))
+		for _, scope := range token.Scopes {
+			if scope != "send:text" && scope != "send:media" || seenScopes[scope] {
+				return fmt.Errorf("%s.scopes contains an invalid or duplicate scope", prefix)
+			}
+			seenScopes[scope] = true
+		}
+	}
+	return nil
+}
+
+func networkMaskSize(network *net.IPNet) (int, int) {
+	if network == nil {
+		return 0, 0
+	}
+	return network.Mask.Size()
 }
 
 type SecurityConfig struct {
@@ -487,6 +574,9 @@ func decodeConfig(data []byte) (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	if err := c.SendAPI.validate(); err != nil {
+		return err
+	}
 	if err := c.Progress.validate(); err != nil {
 		return err
 	}
@@ -512,9 +602,6 @@ func (c *Config) validate() error {
 }
 
 func loadEnv(cfg *Config) {
-	if v := os.Getenv("WECLAW_API_ADDR"); v != "" {
-		cfg.APIAddr = v
-	}
 	if v := os.Getenv("WECLAW_SAVE_DIR"); v != "" {
 		cfg.SaveDir = v
 	}

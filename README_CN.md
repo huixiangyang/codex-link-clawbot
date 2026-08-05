@@ -56,7 +56,7 @@ weclaw login
 weclaw start
 ```
 
-生产运行只由 systemd 用户服务托管；`start` 始终以前台方式运行，不再创建 daemon 或 PID 文件。运行中的 v2.5 服务可以安全排空、停止和重启：
+生产运行只由 systemd 用户服务托管；`start` 始终以前台方式运行，不再创建 daemon 或 PID 文件。运行状态、排空、停止和重启只通过当前用户私有的 `~/.weclaw/control.sock` 完成：
 
 ```bash
 weclaw status
@@ -73,13 +73,15 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 
 部署会验证候选版本、平台和 SHA-256，排空旧服务，停机后快照全部运行状态，离线迁移，原子安装，并让新进程先以排空模式完成健康验收。只有版本、Codex、微信监控和同步游标都就绪后才恢复队列；失败会同时还原二进制、systemd 单元、配置和任务状态。部署成功后发送纯文字微信通知并写入 `~/.weclaw/deployments/<事务>/receipt.json`。
 
+首次从 v2.5 跨到 v2.6 必须安排维护窗口：管理面从回环 TCP 破坏性迁移到当前用户私有的 Unix socket，代码不保留兼容客户端。先用当前已安装的 v2.5 二进制排空并停止，完整备份二进制、systemd 单元和状态，再执行 v2.6 离线迁移并启动。完成这一次切换后，后续版本重新统一使用事务 `weclaw deploy`。具体步骤见 [破坏性迁移文档](docs/migration-v2.md)。
+
 ## 配置
 
 配置文件位于 `~/.weclaw/config.json`：
 
 ```json
 {
-  "api_addr": "127.0.0.1:18011",
+  "send_api": {"enabled": false},
   "save_dir": "",
   "progress": {
     "enabled": true,
@@ -173,7 +175,6 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 
 支持以下环境变量覆盖：
 
-- `WECLAW_API_ADDR`
 - `WECLAW_SAVE_DIR`
 - `WECLAW_CODEX_COMMAND`
 - `WECLAW_CODEX_MODEL`
@@ -206,7 +207,7 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 
 个人微信 iLink Bot 的音频属于会话回复能力，必须复用当前入站消息的 `context_token`。“发语音”等说法生成一次语音简报；“开启语音模式”会让后续 Codex 回答持续使用图片与 MP3 成对交付，直到发送“关闭语音模式”。原生语音气泡和脱离对话的空令牌主动发送均不受通道支持。
 
-主控制台始终显示当前 WeClaw 版本与项目。“运行中心”展示启动时长、本地 API、Codex 协议、模型、项目目录、进程号，以及 App Server 推送的主/次额度使用率。
+主控制台始终显示当前 WeClaw 版本与项目。“运行中心”展示启动时长、主动发送是否启用、Codex 协议、模型、项目目录、进程号，以及 App Server 推送的主/次额度使用率。
 
 “任务中心”统一展示等待、执行、发送和最近终态任务。文字、图片和文件会先完整落盘，再按全局 FIFO 由唯一 Coordinator 串行执行；忙碌时可以连续排队，不存在单条暂存槽。队列项固定使用创建时的项目、会话、回答方式和视觉风格，之后切换界面不会串任务。详情按状态提供移到最前、删除、暂停、继续、取消、重试或取回冻结文字，且不展示正文、附件名、账号 ID 或私有路径。
 
@@ -236,17 +237,21 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 主动发送：
 
 ```bash
-weclaw send --to "user_id@im.wechat" --text "构建完成"
-weclaw send --to "user_id@im.wechat" --media "https://example.com/result.png"
+weclaw send-token --caller local-cli
+weclaw send --caller local-cli --to "绑定者-id" --text "构建完成"
 ```
 
-本地 API 默认只监听 `127.0.0.1:18011`：
+显式启用 `127.0.0.1:18011` 回环监听后的请求示例：
 
 ```bash
 curl -X POST http://127.0.0.1:18011/api/send \
+  -H "Authorization: Bearer $WECLAW_SEND_TOKEN" \
+  -H 'Idempotency-Key: release-2026-08-05' \
   -H 'Content-Type: application/json' \
-  -d '{"to":"user_id@im.wechat","text":"构建完成"}'
+  -d '{"caller_id":"local-cli","target_owner":"绑定者-id","text":"构建完成"}'
 ```
+
+主动发送 API 默认关闭，并且不会创建任何 TCP 监听。`weclaw send-token` 在离线状态生成 256 位随机令牌，只显示一次明文；可写入配置的部分仅包含 SHA-256 哈希。`weclaw send` 只从调用方 secret 管理器预先注入的 `WECLAW_SEND_TOKEN` 环境值读取明文。回环模式必须显式设置 `send_api.enabled`、回环 `listen_addr`，并为每个 caller 配置 `send:text` 和/或 `send:media` 最小权限。非回环监听必须启用 `proxy_mode`、填写规范化可信代理 CIDR，并由用户自己的 TLS 反向代理提供外层加密；WeClaw 只校验直接对端，不相信转发的客户端地址。每个请求必须带 caller、已绑定微信所有者和幂等键；文字最多 8,000 字符，媒体只能是一个公网 HTTPS URL。媒体下载不继承环境代理，拒绝私网、链路本地地址与 DNS 重绑定，大小上限为 25 MiB。24 小时严格回执 `~/.weclaw/send-api-state.json` 只保存哈希、caller、时间和结果。
 
 ## 安全边界
 
@@ -257,6 +262,8 @@ curl -X POST http://127.0.0.1:18011/api/send \
 - 所有领域 JSON 状态统一通过 `statefile` 原子内核读写：文件 `0600`、目录 `0700`，拒绝符号链接与超限内容，并在目录同步失败时恢复旧文件。运行服务与离线迁移持有互斥状态锁。
 - 账号凭据使用严格 v1；部署离线迁移会一次性加入 `version: 1`。未知字段、错误文件名或损坏凭据会明确阻止启动，不再静默跳过。
 - `~/.weclaw/control-state.json` 使用严格 v1 revision 保存可跨重启菜单和 24 小时最小控制回执；显示正文、提示词、路径、附件名、令牌和 `context_token` 不会写入。
+- 健康、排空、恢复和部署通知只存在于当前用户拥有的 `0600` Unix socket；TCP 不存在 `/health` 或 `/admin/*`，主动发送未显式启用时也没有 TCP 监听。
+- 主动发送 token 只保存 SHA-256 哈希，并按 caller 分配文字/媒体权限。幂等回执不保存正文、目标绑定者、URL、原始幂等键或明文 token。
 - `security.remote_lock_code` 启用远程锁；锁定会取消当前任务并暂停该绑定者队列，解锁后仍需显式继续，避免旧任务突然恢复。
 - 会话列表先读取 Codex 全局 thread，再只保留本地所有权索引中的 ID，避免暴露其他 Codex 客户端历史。
 - 终端原始输出、命令文本、diff 和环境变量不会作为进度消息发送到微信。
@@ -284,6 +291,7 @@ go vet ./...
 - [v2.6 统一状态内核实现](docs/v2.6-state-kernel.md)
 - [v2.6 类型化控制路由实现](docs/v2.6-control-routing.md)
 - [v2.6 持久交互与控制回执实现](docs/v2.6-persistent-control.md)
+- [v2.6 本机管理面与主动发送安全](docs/v2.6-api-security.md)
 
 ## License
 

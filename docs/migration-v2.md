@@ -16,6 +16,8 @@ v2.6 删除项目、会话、偏好、自动化、素材、交付、远程锁、
 
 v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。旧内存菜单没有可迁移格式，也不会双写。该文件不保存卡片正文、提示词、回答、路径、附件名、令牌或 `context_token`；损坏或未知 schema 会阻止启动。
 
+v2.6 同时删除共享 TCP `api_addr`、`WECLAW_API_ADDR`、`start --api-addr`、TCP 健康/管理端点和无认证发送。管理面固定迁移到 `~/.weclaw/control.sock`；主动发送默认关闭，启用后使用独立 `send_api` 哈希 token 配置与严格 v1 无正文回执。
+
 ## 自动离线迁移
 
 `weclaw deploy` 会调用目标候选的隐藏 `migrate-state` 命令，迁移内容严格限定为：
@@ -24,7 +26,8 @@ v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜�
 2. 将已知无版本 `accounts/*.json` 凭据原子转换为严格 v1；非法或未知结构立即失败。
 3. 已是合法 v1 的同步与凭据文件保持不变；未知字段、非法回执或尾随 JSON 立即失败。
 4. 删除已进入事务快照的 `task-history.json` 与 `weclaw.pid`。
-5. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
+5. 从 `config.json` 删除旧 `api_addr` 并加入 `"send_api":{"enabled":false}`；已有新发送配置保持原样，未知配置字段仍由新运行时严格拒绝。
+6. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
 
 迁移命令不是日常修复工具，也不会在 `weclaw start` 中自动运行。服务生命周期持有 `~/.weclaw/.state.lock`；服务仍在运行时迁移必须以 `conflict` 失败，部署器停服后才可获取迁移锁。
 
@@ -38,7 +41,8 @@ v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜�
 二进制  ~/.local/bin/weclaw
 单元    ~/.config/systemd/user/weclaw.service
 状态    ~/.weclaw
-API     http://127.0.0.1:18011
+管理面  ~/.weclaw/control.sock
+发送面  默认关闭；需要时显式配置独立监听
 ```
 
 ## 部署方式
@@ -61,7 +65,7 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 完整事务顺序：
 
 1. 校验候选，不改变运行服务。
-2. 读取旧结构化健康状态，请求排空并等待所有执行、发送、staging 与同步批次结束。
+2. 通过本机管理 socket 读取结构化健康状态，请求排空并等待所有执行、发送、staging 与同步批次结束。
 3. 停止 systemd 服务，创建私有二进制、单元、配置和完整运行状态快照。
 4. 运行目标二进制离线迁移，改写单元并原子安装。
 5. 目标版本以排空模式启动；验收 Codex、全部微信监控、同步游标和版本。
@@ -69,6 +73,12 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 7. 写部署收据，主动发送纯文字微信就绪通知，立即删除包含正文、附件和令牌的状态副本。
 
 任何迁移、安装、启动或验收错误都会停止候选，恢复旧二进制、systemd 单元和完整状态快照，重新启动并验证旧健康版本。只恢复二进制而保留新 schema 不属于有效回滚。
+
+## 首次跨越 v2.6 管理面
+
+v2.5 使用回环 TCP 健康和管理端点，v2.6 只使用 Unix socket。按照本项目的破坏性重构约束，新二进制不会保留旧 TCP 客户端或服务器兼容分支，因此不能直接用 v2.6 的 `weclaw deploy` 驱动仍在运行的 v2.5 服务。
+
+首次跨越必须安排维护窗口：先用当前已安装的 v2.5 二进制执行排空和停止，独立备份二进制、systemd 单元与完整 `~/.weclaw`，再安装候选、运行候选的离线迁移并删除单元中的 `--api-addr`，最后启动 v2.6 并用 `weclaw status` 验证 Unix 管理面。失败时必须在服务停止状态下同时恢复旧二进制、单元和完整状态备份。完成这一次切换后，v2.6 及后续版本重新统一使用事务 `weclaw deploy`。
 
 ## 首次跨越 v2.4
 

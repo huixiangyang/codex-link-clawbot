@@ -32,12 +32,10 @@ import (
 )
 
 var (
-	apiAddrFlag       string
 	startDrainingFlag bool
 )
 
 func init() {
-	startCmd.Flags().StringVar(&apiAddrFlag, "api-addr", "", "API server listen address (default 127.0.0.1:18011)")
 	startCmd.Flags().BoolVar(&startDrainingFlag, "draining", false, "start without claiming queued tasks")
 	_ = startCmd.Flags().MarkHidden("draining")
 	rootCmd.AddCommand(startCmd)
@@ -210,12 +208,21 @@ func runStart(cmd *cobra.Command, args []string) error {
 		log.Printf("Linkhoard archive directory: %s", cfg.SaveDir)
 	}
 
-	// Start HTTP API server for sending messages
+	// 复用同一组已登录客户端启动本机管理面，并按配置决定是否启动主动发送面。
 	var clients []*ilink.Client
-	for _, c := range accounts {
-		client := ilink.NewClient(c)
+	sendTargets := make(map[string]*ilink.Client, len(accounts))
+	for _, credentials := range accounts {
+		client := ilink.NewClient(credentials)
 		clients = append(clients, client)
 		coordinator.RegisterClient(client)
+		owner := strings.TrimSpace(credentials.ILinkUserID)
+		if owner == "" {
+			return fmt.Errorf("account owner is missing")
+		}
+		if _, exists := sendTargets[owner]; exists {
+			return fmt.Errorf("duplicate bound account owner")
+		}
+		sendTargets[owner] = client
 	}
 	managementSocket := filepath.Join(stateRoot, api.ManagementSocketName)
 	managementServer := api.NewManagementServer(runtimeController, managementSocket, func(notifyContext context.Context, notice api.DeploymentNotice) error {
@@ -244,29 +251,42 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return ctx.Err()
 	}
 
-	// Resolve API addr: flag > env/config > default
-	apiAddr := cfg.APIAddr // already includes env override from loadEnv
-	if apiAddrFlag != "" {
-		apiAddr = apiAddrFlag
-	}
-	handler.SetBridgeInfo(Version, apiAddr)
-	apiServer := api.NewServer(clients, apiAddr)
-	apiErr := make(chan error, 1)
-	go func() {
-		apiErr <- apiServer.Run(ctx)
-	}()
-	select {
-	case <-apiServer.Ready():
-	case err := <-apiErr:
-		return fmt.Errorf("start API server: %w", err)
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	go func() {
-		if err := <-apiErr; err != nil {
-			log.Printf("API server error: %v", err)
+	handler.SetBridgeInfo(Version, false)
+	var sendAPIErr <-chan error
+	if cfg.SendAPI.Enabled {
+		delivery, err := api.NewWeChatDelivery(sendTargets)
+		if err != nil {
+			return fmt.Errorf("initialize send API delivery: %w", err)
 		}
-	}()
+		receipts, err := api.NewSendReceiptStore(filepath.Join(stateRoot, "send-api-state.json"))
+		if err != nil {
+			return fmt.Errorf("initialize send API receipts: %w", err)
+		}
+		tokens := make([]api.AccessToken, 0, len(cfg.SendAPI.Tokens))
+		for _, token := range cfg.SendAPI.Tokens {
+			tokens = append(tokens, api.AccessToken{CallerID: token.CallerID, TokenSHA256: token.TokenSHA256, Scopes: token.Scopes})
+		}
+		sendServer, err := api.NewServer(delivery, api.ServerConfig{
+			ListenAddr: cfg.SendAPI.ListenAddr, ProxyMode: cfg.SendAPI.ProxyMode,
+			TrustedProxyCIDRs: cfg.SendAPI.TrustedProxyCIDRs, Tokens: tokens,
+		}, receipts)
+		if err != nil {
+			return fmt.Errorf("initialize send API: %w", err)
+		}
+		errChannel := make(chan error, 1)
+		sendAPIErr = errChannel
+		go func() {
+			errChannel <- sendServer.Run(ctx)
+		}()
+		select {
+		case <-sendServer.Ready():
+		case err := <-errChannel:
+			return fmt.Errorf("start send API: %w", err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		handler.SetBridgeInfo(Version, true)
+	}
 
 	// 确定性自动化复用已登录账号主动通知，状态按计划和绑定者隔离。
 	reportScheduler, err := reporting.NewScheduler(cfg.Automations, cfg.Projects, clients)
@@ -328,6 +348,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		return fmt.Errorf("local management server stopped: %w", err)
+	case err := <-sendAPIErr:
+		if ctx.Err() != nil {
+			<-monitorsDone
+			return nil
+		}
+		return fmt.Errorf("send API stopped: %w", err)
 	case <-ctx.Done():
 		<-monitorsDone
 		return nil

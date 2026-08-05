@@ -38,12 +38,12 @@ func attachTestControlState(t *testing.T, handler *Handler) {
 
 func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	handler.SetBridgeInfo("v1.4.0-runtime.1", "127.0.0.1:18011")
+	handler.SetBridgeInfo("v1.4.0-runtime.1", true)
 	handler.startedAt = time.Now().Add(-2*time.Hour - 5*time.Minute)
 	status := controlReply(t, handler, "owner-1", "运行中心")
 	for _, want := range []string{
 		"运行中心", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
-		"本地接口：127.0.0.1:18011", "Codex：运行中", "协议：App Server",
+		"主动发送：已启用", "Codex：运行中", "协议：App Server",
 		"模型：使用 Codex 默认配置", "项目目录：/workspace", "Codex PID：4242",
 		"1  项目中心", "2  刷新运行中心",
 	} {
