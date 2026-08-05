@@ -27,6 +27,7 @@ import (
 	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/huixiangyang/weclaw/taskqueue"
 	"github.com/huixiangyang/weclaw/visual"
+	"github.com/huixiangyang/weclaw/workflow"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
@@ -114,6 +115,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetControlStateStore(controlStateStore)
 	handler.SetProjectManager(projectManager)
+	projectIDs := make([]string, 0, len(cfg.Projects))
+	for _, configuredProject := range cfg.Projects {
+		projectIDs = append(projectIDs, configuredProject.ID)
+	}
+	workflowStore, err := workflow.NewStore("", projectIDs)
+	if err != nil {
+		return fmt.Errorf("initialize workflow store: %w", err)
+	}
+	handler.SetWorkflowStore(workflowStore)
 	preferenceStore, preferenceErr := preference.NewStore("")
 	if preferenceErr != nil {
 		return fmt.Errorf("initialize owner preferences: %w", preferenceErr)

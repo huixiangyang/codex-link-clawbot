@@ -95,10 +95,7 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
       "name": "WeClaw",
       "root": "/absolute/path/to/weclaw",
       "service_name": "weclaw.service",
-      "health_url": "http://127.0.0.1:18011/health",
-      "quick_tasks": [
-        {"id": "review", "name": "审查改动", "prompt": "审查当前改动并运行必要测试"}
-      ]
+      "health_url": "http://127.0.0.1:18011/health"
     }
   ],
   "automations": [
@@ -157,7 +154,7 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 }
 ```
 
-`projects` 是 Codex 唯一允许进入的目录白名单；ID 必须稳定且唯一，根目录必须是已存在的干净绝对路径。会话和快捷任务均按项目隔离。`codex.command` 只接受 Codex 可执行文件，程序固定追加 `app-server --listen stdio://`；旧 `codex.cwd` 已删除并会被严格拒绝。`model` 为空时沿用 Codex 默认配置。
+`projects` 是 Codex 唯一允许进入的目录白名单；ID 必须稳定且唯一，根目录必须是已存在的干净绝对路径。会话和快捷工作流均按项目隔离。快捷工作流已经从配置中删除，唯一事实来源是按绑定者隔离的严格 v1 `~/.weclaw/workflows.json`；旧 `projects[].quick_tasks` 只由离线迁移单向导入，运行时会严格拒绝。`codex.command` 只接受 Codex 可执行文件，程序固定追加 `app-server --listen stdio://`；旧 `codex.cwd` 已删除并会被严格拒绝。`model` 为空时沿用 Codex 默认配置。
 
 自动化可以设置 `daily_at`，或改用 5–1440 的 `every_minutes`，两者必须且只能设置一个。`notify_on` 支持 `always`、`anomaly`、`change`、`anomaly_or_change`；`checks` 支持 `git`、`service`、`health`。
 
@@ -293,6 +290,7 @@ go vet ./...
 - [v2.6 持久交互与控制回执实现](docs/v2.6-persistent-control.md)
 - [v2.6 本机管理面与主动发送安全](docs/v2.6-api-security.md)
 - [v2.6 确定性无回复诊断](docs/v2.6-diagnostics.md)
+- [v2.7 持久快捷工作流](docs/v2.7-workflows.md)
 
 ## License
 

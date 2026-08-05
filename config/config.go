@@ -278,18 +278,11 @@ func (c CodexConfig) validate() error {
 
 // ProjectConfig 是远程工作空间的安全边界，Codex 只能在这里声明的目录间切换。
 type ProjectConfig struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Root        string            `json:"root"`
-	ServiceName string            `json:"service_name,omitempty"`
-	HealthURL   string            `json:"health_url,omitempty"`
-	QuickTasks  []QuickTaskConfig `json:"quick_tasks,omitempty"`
-}
-
-type QuickTaskConfig struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Prompt string `json:"prompt"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Root        string `json:"root"`
+	ServiceName string `json:"service_name,omitempty"`
+	HealthURL   string `json:"health_url,omitempty"`
 }
 
 var projectIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
@@ -342,29 +335,6 @@ func validateProjects(projects []ProjectConfig) error {
 			healthURL, err := url.Parse(project.HealthURL)
 			if err != nil || (healthURL.Scheme != "http" && healthURL.Scheme != "https") || healthURL.Host == "" {
 				return fmt.Errorf("%s.health_url must be an absolute HTTP URL", prefix)
-			}
-		}
-		if len(project.QuickTasks) > 6 {
-			return fmt.Errorf("%s.quick_tasks supports at most 6 entries", prefix)
-		}
-		quickIDs := make(map[string]struct{}, len(project.QuickTasks))
-		for quickIndex, quickTask := range project.QuickTasks {
-			quickPrefix := fmt.Sprintf("%s.quick_tasks[%d]", prefix, quickIndex)
-			if !projectIDPattern.MatchString(quickTask.ID) {
-				return fmt.Errorf("%s.id is invalid", quickPrefix)
-			}
-			if _, exists := quickIDs[quickTask.ID]; exists {
-				return fmt.Errorf("quick task id %q is duplicated in project %q", quickTask.ID, project.ID)
-			}
-			quickIDs[quickTask.ID] = struct{}{}
-			if strings.TrimSpace(quickTask.Name) == "" || strings.TrimSpace(quickTask.Prompt) == "" {
-				return fmt.Errorf("%s.name and prompt are required", quickPrefix)
-			}
-			if len([]rune(quickTask.Prompt)) > 4000 {
-				return fmt.Errorf("%s.prompt must contain at most 4000 characters", quickPrefix)
-			}
-			if strings.ContainsAny(quickTask.Name, "\r\n") || len([]rune(quickTask.Name)) > 24 {
-				return fmt.Errorf("%s.name must be a single line with at most 24 characters", quickPrefix)
 			}
 		}
 	}

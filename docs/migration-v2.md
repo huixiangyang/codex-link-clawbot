@@ -18,6 +18,8 @@ v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜�
 
 v2.6 同时删除共享 TCP `api_addr`、`WECLAW_API_ADDR`、`start --api-addr`、TCP 健康/管理端点和无认证发送。管理面固定迁移到 `~/.weclaw/control.sock`；主动发送默认关闭，启用后使用独立 `send_api` 哈希 token 配置与严格 v1 无正文回执。
 
+v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独占状态锁时，把每个旧快捷任务复制到每个已绑定者对应项目的严格 v1 `~/.weclaw/workflows.json`，确认全部写入后才原子删除配置字段。工作流保存原始提示模板和参数槽，不保存 Codex 回答；没有可确定绑定者时迁移直接失败，不会把任务变成无归属的共享数据。运行时不读取或兼容旧字段。
+
 ## 自动离线迁移
 
 `weclaw deploy` 会调用目标候选的隐藏 `migrate-state` 命令，迁移内容严格限定为：

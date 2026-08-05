@@ -16,19 +16,12 @@ const stateVersion = 1
 
 var ErrUnknownProject = errors.New("unknown project")
 
-type QuickTask struct {
-	ID     string
-	Name   string
-	Prompt string
-}
-
 type Definition struct {
 	ID          string
 	Name        string
 	Root        string
 	ServiceName string
 	HealthURL   string
-	QuickTasks  []QuickTask
 }
 
 type stateFile struct {
@@ -80,12 +73,6 @@ func NewManager(projects []config.ProjectConfig, path string) (*Manager, error) 
 		definition := Definition{
 			ID: source.ID, Name: strings.TrimSpace(source.Name), Root: source.Root,
 			ServiceName: source.ServiceName, HealthURL: source.HealthURL,
-			QuickTasks: make([]QuickTask, 0, len(source.QuickTasks)),
-		}
-		for _, task := range source.QuickTasks {
-			definition.QuickTasks = append(definition.QuickTasks, QuickTask{
-				ID: task.ID, Name: strings.TrimSpace(task.Name), Prompt: strings.TrimSpace(task.Prompt),
-			})
 		}
 		m.ordered = append(m.ordered, definition)
 		m.byID[definition.ID] = definition
@@ -160,25 +147,8 @@ func (m *Manager) Resolve(reference string) (Definition, error) {
 	return cloneDefinition(matches[0]), nil
 }
 
-func (m *Manager) QuickTask(projectID, taskID string) (QuickTask, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	definition, ok := m.byID[projectID]
-	if !ok {
-		return QuickTask{}, false
-	}
-	for _, task := range definition.QuickTasks {
-		if task.ID == taskID {
-			return task, true
-		}
-	}
-	return QuickTask{}, false
-}
-
 func cloneDefinition(source Definition) Definition {
-	copy := source
-	copy.QuickTasks = append([]QuickTask(nil), source.QuickTasks...)
-	return copy
+	return source
 }
 
 func cloneDefinitions(source []Definition) []Definition {

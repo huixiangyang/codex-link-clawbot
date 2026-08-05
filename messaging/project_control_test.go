@@ -12,18 +12,36 @@ import (
 	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/taskqueue"
 	"github.com/huixiangyang/weclaw/visual"
+	"github.com/huixiangyang/weclaw/workflow"
 )
+
+func attachProjectWorkflow(t *testing.T, handler *Handler, ownerID, projectID, name, prompt string) workflow.Definition {
+	t.Helper()
+	store, err := workflow.NewStore(filepath.Join(t.TempDir(), "workflows.json"), []string{"alpha", "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := store.Create(workflow.CreateInput{
+		OwnerID: ownerID, ProjectID: projectID, Name: name, PromptTemplate: prompt, Slots: []workflow.Slot{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.SetWorkflowStore(store)
+	return definition
+}
 
 func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	projects, err := project.NewManager([]config.ProjectConfig{
 		{ID: "alpha", Name: "Alpha", Root: t.TempDir()},
-		{ID: "beta", Name: "Beta", Root: t.TempDir(), QuickTasks: []config.QuickTaskConfig{{ID: "review", Name: "审查改动", Prompt: "审查当前项目改动"}}},
+		{ID: "beta", Name: "Beta", Root: t.TempDir()},
 	}, filepath.Join(t.TempDir(), "project-state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler.SetProjectManager(projects)
+	attachProjectWorkflow(t, handler, "owner-1", "beta", "审查改动", "审查当前项目改动")
 	created := controlReply(t, handler, "owner-1", "新建会话 Alpha 会话")
 	if !strings.Contains(created, "Alpha 会话") {
 		t.Fatalf("alpha session = %q", created)
@@ -54,12 +72,13 @@ func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *test
 	handler, runtime := newSessionHandler(t)
 	projects, err := project.NewManager([]config.ProjectConfig{
 		{ID: "alpha", Name: "Alpha", Root: t.TempDir()},
-		{ID: "beta", Name: "Beta", Root: t.TempDir(), QuickTasks: []config.QuickTaskConfig{{ID: "review", Name: "审查改动", Prompt: "审查 Beta"}}},
+		{ID: "beta", Name: "Beta", Root: t.TempDir()},
 	}, filepath.Join(t.TempDir(), "project-state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler.SetProjectManager(projects)
+	definition := attachProjectWorkflow(t, handler, "owner-1", "beta", "审查改动", "审查 Beta")
 	store, err := taskqueue.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +106,7 @@ func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *test
 	if !strings.Contains(menu, "审查改动") {
 		t.Fatalf("quick tasks while running = %q", menu)
 	}
-	if reply := handler.runProjectQuickTask("owner-1", "review"); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" {
+	if reply := handler.runProjectQuickTask("owner-1", definition.ID); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" {
 		t.Fatalf("quick task while running = %#v", reply)
 	}
 }
@@ -96,12 +115,12 @@ func TestQuickTaskQueueFailureRestoresMenuRevision(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	projects, err := project.NewManager([]config.ProjectConfig{{
 		ID: "alpha", Name: "Alpha", Root: t.TempDir(),
-		QuickTasks: []config.QuickTaskConfig{{ID: "review", Name: "审查改动", Prompt: "审查当前项目改动"}},
 	}}, filepath.Join(t.TempDir(), "project-state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler.SetProjectManager(projects)
+	attachProjectWorkflow(t, handler, "owner-1", "alpha", "审查改动", "审查当前项目改动")
 	_ = controlReply(t, handler, "owner-1", "快捷任务")
 	before, status, err := handler.controlStates.Load("owner-1")
 	if err != nil || status != controlStateActive {

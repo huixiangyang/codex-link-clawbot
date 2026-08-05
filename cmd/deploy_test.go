@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/huixiangyang/weclaw/statefile"
+	"github.com/huixiangyang/weclaw/workflow"
 )
 
 func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
@@ -37,8 +38,8 @@ func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
 	if err := os.WriteFile(credentialsPath, []byte(`{"bot_token":"secret","ilink_bot_id":"bot","baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"owner"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateStateV26(root); err != nil {
-		t.Fatalf("migrateStateV26() error = %v", err)
+	if err := migrateState(root); err != nil {
+		t.Fatalf("migrateState() error = %v", err)
 	}
 	data, err := os.ReadFile(legacy)
 	if err != nil {
@@ -63,8 +64,8 @@ func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
 			t.Fatalf("legacy %s still exists: %v", name, err)
 		}
 	}
-	if err := migrateStateV26(root); err != nil {
-		t.Fatalf("idempotent migrateStateV26() error = %v", err)
+	if err := migrateState(root); err != nil {
+		t.Fatalf("idempotent migrateState() error = %v", err)
 	}
 }
 
@@ -78,8 +79,8 @@ func TestMigrateStateV26RejectsUnknownSyncSchema(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"get_updates_buf":"cursor","unknown":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateStateV26(root); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("migrateStateV26() error = %v", err)
+	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("migrateState() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "task-history.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func TestMigrateStateV26RejectsRunningStateLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lease.Close()
-	if err := migrateStateV26(root); statefile.ErrorCategory(err) != statefile.CategoryConflict {
+	if err := migrateState(root); statefile.ErrorCategory(err) != statefile.CategoryConflict {
 		t.Fatalf("migration error = %v, category = %q", err, statefile.ErrorCategory(err))
 	}
 }
@@ -105,7 +106,7 @@ func TestMigrateStateV26DisablesLegacyUnauthenticatedAPI(t *testing.T) {
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateStateV26(root); err != nil {
+	if err := migrateState(root); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -114,6 +115,117 @@ func TestMigrateStateV26DisablesLegacyUnauthenticatedAPI(t *testing.T) {
 	}
 	if strings.Contains(string(data), "api_addr") || !strings.Contains(string(data), `"send_api"`) || !strings.Contains(string(data), `"enabled": false`) {
 		t.Fatalf("migrated config=%s", data)
+	}
+}
+
+func TestMigrateStateMovesConfiguredQuickTasksIntoOwnerWorkflows(t *testing.T) {
+	root := t.TempDir()
+	accounts := filepath.Join(root, "accounts")
+	if err := os.MkdirAll(accounts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credential := `{"version":1,"bot_token":"secret","ilink_bot_id":"bot","baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"owner-1"}`
+	if err := os.WriteFile(filepath.Join(accounts, "bot.json"), []byte(credential), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configData := `{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[{"id":"review","name":"审查改动","prompt":"审查当前改动"}]}]}`
+	configPath := filepath.Join(root, "config.json")
+	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	migratedConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(migratedConfig), "quick_tasks") {
+		t.Fatalf("legacy quick_tasks survived migration: %s", migratedConfig)
+	}
+	store, err := workflow.NewStore(filepath.Join(root, "workflows.json"), []string{"weclaw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions := store.List("owner-1", "weclaw")
+	if len(definitions) != 1 || definitions[0].Name != "审查改动" || definitions[0].PromptTemplate != "审查当前改动" || len(definitions[0].Slots) != 0 {
+		t.Fatalf("migrated workflows = %#v", definitions)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatalf("idempotent workflow migration error = %v", err)
+	}
+	reopened, err := workflow.NewStore(filepath.Join(root, "workflows.json"), []string{"weclaw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definitions := reopened.List("owner-1", "weclaw"); len(definitions) != 1 {
+		t.Fatalf("workflow migration duplicated definitions: %#v", definitions)
+	}
+}
+
+func TestMigrateStateRefusesQuickTasksWithoutBoundOwner(t *testing.T) {
+	root := t.TempDir()
+	configData := `{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[{"id":"review","name":"审查改动","prompt":"审查当前改动"}]}]}`
+	configPath := filepath.Join(root, "config.json")
+	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "without a bound owner") {
+		t.Fatalf("migration error = %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(data), "quick_tasks") {
+		t.Fatalf("failed migration removed source tasks: %s, %v", data, err)
+	}
+}
+
+func TestMigrateStateRemovesEmptyQuickTaskFieldWithoutOwner(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil || strings.Contains(string(data), "quick_tasks") {
+		t.Fatalf("empty quick_tasks survived migration: %s, %v", data, err)
+	}
+}
+
+func TestMigrateStateKeepsQuickTasksWhenWorkflowConflicts(t *testing.T) {
+	root := t.TempDir()
+	accounts := filepath.Join(root, "accounts")
+	if err := os.MkdirAll(accounts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	credential := `{"version":1,"bot_token":"secret","ilink_bot_id":"bot","baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"owner-1"}`
+	if err := os.WriteFile(filepath.Join(accounts, "bot.json"), []byte(credential), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.json")
+	configData := `{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[{"id":"review","name":"审查改动","prompt":"配置内容"}]}]}`
+	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := workflow.NewStore(filepath.Join(root, "workflows.json"), []string{"weclaw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Import("owner-1", workflow.Definition{
+		ID: workflow.StableImportID("weclaw", "review"), ProjectID: "weclaw", Name: "审查改动",
+		PromptTemplate: "用户已修改内容", Slots: []workflow.Slot{}, CreatedAt: 1, UpdatedAt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("migration conflict error = %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(data), "quick_tasks") {
+		t.Fatalf("conflicting migration removed source: %s, %v", data, err)
 	}
 }
 

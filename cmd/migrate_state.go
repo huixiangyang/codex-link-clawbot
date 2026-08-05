@@ -8,9 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/huixiangyang/weclaw/statefile"
+	"github.com/huixiangyang/weclaw/workflow"
 	"github.com/spf13/cobra"
 )
 
@@ -42,6 +45,8 @@ type currentCredentialState struct {
 
 var migrationStateRoot string
 
+var migrationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
 func init() {
 	migrateStateCmd.Flags().StringVar(&migrationStateRoot, "root", "", "absolute WeClaw state root")
 	_ = migrateStateCmd.MarkFlagRequired("root")
@@ -54,11 +59,11 @@ var migrateStateCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return migrateStateV26(migrationStateRoot)
+		return migrateState(migrationStateRoot)
 	},
 }
 
-func migrateStateV26(root string) error {
+func migrateState(root string) error {
 	root = filepath.Clean(strings.TrimSpace(root))
 	if !filepath.IsAbs(root) || root == string(filepath.Separator) {
 		return fmt.Errorf("state root must be a specific absolute path")
@@ -107,7 +112,147 @@ func migrateStateV26(root string) error {
 	if err := migrateSendAPIConfig(filepath.Join(root, "config.json")); err != nil {
 		return fmt.Errorf("migrate config: %w", err)
 	}
+	ownerIDs, err := migratedOwnerIDs(accountsPath)
+	if err != nil {
+		return fmt.Errorf("resolve workflow owners: %w", err)
+	}
+	if err := migrateProjectWorkflows(filepath.Join(root, "config.json"), filepath.Join(root, "workflows.json"), ownerIDs); err != nil {
+		return fmt.Errorf("migrate project workflows: %w", err)
+	}
 	return syncDirectoryPath(root)
+}
+
+type legacyQuickTaskConfig struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Prompt string `json:"prompt"`
+}
+
+func migratedOwnerIDs(accountsPath string) ([]string, error) {
+	entries, err := os.ReadDir(accountsPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasSuffix(entry.Name(), ".sync.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(accountsPath, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var credential currentCredentialState
+		if err := decodeStrictJSONBytes(data, &credential); err != nil {
+			return nil, err
+		}
+		if err := validateCredentialState(credential.Version, credential.BotToken, credential.ILinkBotID, credential.BaseURL, credential.ILinkUserID); err != nil {
+			return nil, err
+		}
+		seen[credential.ILinkUserID] = true
+	}
+	owners := make([]string, 0, len(seen))
+	for ownerID := range seen {
+		owners = append(owners, ownerID)
+	}
+	sort.Strings(owners)
+	return owners, nil
+}
+
+func migrateProjectWorkflows(configPath, workflowPath string, ownerIDs []string) error {
+	info, err := os.Lstat(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("config must be a regular file")
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := decodeStrictJSONBytes(data, &fields); err != nil {
+		return err
+	}
+	projectsRaw, exists := fields["projects"]
+	if !exists {
+		return nil
+	}
+	var projects []map[string]json.RawMessage
+	if err := decodeStrictJSONBytes(projectsRaw, &projects); err != nil {
+		return fmt.Errorf("decode projects: %w", err)
+	}
+	projectIDs := make([]string, 0, len(projects))
+	projectTasks := make(map[string][]legacyQuickTaskConfig)
+	hadQuickTaskField := false
+	hasQuickTasks := false
+	for index, projectFields := range projects {
+		var projectID string
+		if rawID, ok := projectFields["id"]; !ok || json.Unmarshal(rawID, &projectID) != nil || !migrationIDPattern.MatchString(projectID) {
+			return fmt.Errorf("projects[%d].id is invalid", index)
+		}
+		projectIDs = append(projectIDs, projectID)
+		rawTasks, ok := projectFields["quick_tasks"]
+		if !ok {
+			continue
+		}
+		hadQuickTaskField = true
+		var tasks []legacyQuickTaskConfig
+		if err := decodeStrictJSONBytes(rawTasks, &tasks); err != nil {
+			return fmt.Errorf("decode projects[%d].quick_tasks: %w", index, err)
+		}
+		seenIDs := make(map[string]bool, len(tasks))
+		for taskIndex, task := range tasks {
+			if !migrationIDPattern.MatchString(task.ID) || seenIDs[task.ID] {
+				return fmt.Errorf("projects[%d].quick_tasks[%d].id is invalid or duplicated", index, taskIndex)
+			}
+			seenIDs[task.ID] = true
+		}
+		if len(tasks) > 0 {
+			hasQuickTasks = true
+			projectTasks[projectID] = tasks
+		}
+		delete(projectFields, "quick_tasks")
+	}
+	if !hadQuickTaskField {
+		return nil
+	}
+	if hasQuickTasks {
+		if len(ownerIDs) == 0 {
+			return fmt.Errorf("cannot assign configured quick tasks without a bound owner")
+		}
+		store, err := workflow.NewStore(workflowPath, projectIDs)
+		if err != nil {
+			return err
+		}
+		for _, ownerID := range ownerIDs {
+			for _, projectID := range projectIDs {
+				for _, task := range projectTasks[projectID] {
+					definition := workflow.Definition{
+						ID: workflow.StableImportID(projectID, task.ID), ProjectID: projectID,
+						Name: strings.TrimSpace(task.Name), PromptTemplate: strings.TrimSpace(task.Prompt),
+						Slots: []workflow.Slot{}, CreatedAt: 1, UpdatedAt: 1,
+					}
+					if _, err := store.Import(ownerID, definition); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	encodedProjects, err := json.Marshal(projects)
+	if err != nil {
+		return err
+	}
+	fields["projects"] = encodedProjects
+	return writePrivateJSONAtomic(configPath, fields)
 }
 
 func migrateSendAPIConfig(path string) error {

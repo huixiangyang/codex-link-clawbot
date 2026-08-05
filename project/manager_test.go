@@ -15,7 +15,7 @@ func TestManagerPersistsProjectSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "project-state.json")
 	projects := []config.ProjectConfig{
 		{ID: "alpha", Name: "Alpha", Root: rootA},
-		{ID: "beta", Name: "Beta", Root: rootB, QuickTasks: []config.QuickTaskConfig{{ID: "review", Name: "审查", Prompt: "审查改动"}}},
+		{ID: "beta", Name: "Beta", Root: rootB},
 	}
 	manager, err := NewManager(projects, path)
 	if err != nil {
@@ -37,9 +37,6 @@ func TestManagerPersistsProjectSelection(t *testing.T) {
 	}
 	if got := reopened.Current("owner").ID; got != "beta" {
 		t.Fatalf("persisted project = %q", got)
-	}
-	if task, ok := reopened.QuickTask("beta", "review"); !ok || task.Prompt != "审查改动" {
-		t.Fatalf("QuickTask() = %#v, %v", task, ok)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("state permissions = %v, %v", info, err)

@@ -83,10 +83,7 @@ The first v2.5-to-v2.6 cutover is intentionally a maintenance-window migration b
       "name": "WeClaw",
       "root": "/absolute/path/to/weclaw",
       "service_name": "weclaw.service",
-      "health_url": "http://127.0.0.1:18011/health",
-      "quick_tasks": [
-        {"id": "review", "name": "Review changes", "prompt": "Review current changes and run the necessary tests"}
-      ]
+      "health_url": "http://127.0.0.1:18011/health"
     }
   ],
   "automations": [
@@ -145,7 +142,7 @@ The first v2.5-to-v2.6 cutover is intentionally a maintenance-window migration b
 }
 ```
 
-`projects` is the only working-directory allowlist. Sessions and quick tasks are isolated per project, and roots must already exist. WeClaw always appends `app-server --listen stdio://` to `codex.command`; the removed `codex.cwd` field is rejected. An empty `model` preserves the user's Codex default. Automations support either `daily_at` or `every_minutes`, deterministic Git/service/health checks, and `always`, `anomaly`, `change`, or `anomaly_or_change` notification policies.
+`projects` is the only working-directory allowlist. Sessions and quick workflows are isolated per project, and roots must already exist. Quick workflows no longer live in configuration: strict v1 `~/.weclaw/workflows.json` is the only runtime source and is isolated by bound owner. Removed `projects[].quick_tasks` entries are accepted only by the one-shot offline migration and are rejected at runtime. WeClaw always appends `app-server --listen stdio://` to `codex.command`; the removed `codex.cwd` field is rejected. An empty `model` preserves the user's Codex default. Automations support either `daily_at` or `every_minutes`, deterministic Git/service/health checks, and `always`, `anomaly`, `change`, or `anomaly_or_change` notification policies.
 
 Voice briefings and persistent voice replies share a strict ordered chain of one to four `piper` or `mimo` providers. Each provider has its own timeout; failures automatically fall through to the next entry, and the result identifies the provider actually used. Piper returns WAV and MiMo returns MP3; the shared delivery layer uses `voice.ffmpeg_command` to normalize either format into a compact 24 kHz mono MP3, then sends it through WeChat's supported file-message path. Every successful voice request first sends a styled reading-card image containing the exact spoken script, project, and provider, followed by the matching MP3; no redundant status card is appended. The dedicated single-card layout omits one-page pagination and progress decoration. Both media items are fully staged on WeChat CDN before either becomes visible, so a second upload failure cannot leave an orphan image. This restores glanceable text because file attachments do not receive WeChat's native voice transcription. Image rendering is mandatory for this paired delivery, so `voice.enabled` requires `visual.enabled`. Personal iLink bots silently discard outbound native `VOICE` items even when the API acknowledges them, so the removed SILK/native-voice path is intentionally rejected instead of claiming delivery. A current conversation context token remains mandatory. `WECLAW_MIMO_API_KEY` can inject the key into every configured MiMo provider. Removed flat MiMo fields, `voice.silk_command`, provider-level `piper.ffmpeg_command`, and legacy `voice.command` are rejected.
 
@@ -243,6 +240,7 @@ More details:
 - [v2.6 persistent interaction and control receipts](docs/v2.6-persistent-control.md)
 - [v2.6 local management and proactive-send security](docs/v2.6-api-security.md)
 - [v2.6 deterministic no-reply diagnostics](docs/v2.6-diagnostics.md)
+- [v2.7 persistent quick workflows](docs/v2.7-workflows.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

@@ -176,14 +176,29 @@ func TestValidateProjects(t *testing.T) {
 	projects := []ProjectConfig{{
 		ID: "weclaw", Name: "WeClaw", Root: "/srv/weclaw",
 		ServiceName: "weclaw.service", HealthURL: "http://127.0.0.1:18011/health",
-		QuickTasks: []QuickTaskConfig{{ID: "review", Name: "审查改动", Prompt: "审查当前改动"}},
 	}}
 	if err := validateProjects(projects); err != nil {
 		t.Fatalf("validateProjects() error = %v", err)
 	}
-	projects[0].QuickTasks[0].ID = "Review!"
+	projects[0].ID = "Review!"
 	if err := validateProjects(projects); err == nil || !strings.Contains(err.Error(), "id") {
-		t.Fatalf("invalid quick task error = %v", err)
+		t.Fatalf("invalid project error = %v", err)
+	}
+}
+
+func TestLoadRejectsRemovedProjectQuickTasks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".weclaw", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project","quick_tasks":[{"id":"review","name":"Review","prompt":"Review changes"}]}],"codex":{"command":"codex"}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("Load() error = %v, want removed quick_tasks rejection", err)
 	}
 }
 

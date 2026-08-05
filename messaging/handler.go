@@ -18,6 +18,7 @@ import (
 	"github.com/huixiangyang/weclaw/session"
 	"github.com/huixiangyang/weclaw/taskqueue"
 	"github.com/huixiangyang/weclaw/visual"
+	"github.com/huixiangyang/weclaw/workflow"
 )
 
 var (
@@ -35,6 +36,7 @@ type Handler struct {
 	intents             *IntentRegistry
 	progress            ProgressConfig
 	projects            *project.Manager
+	workflows           *workflow.Store
 	sessions            *session.Manager
 	visual              controlVisualRenderer
 	preferences         *preference.Store
@@ -81,6 +83,11 @@ func (h *Handler) SetProjectManager(manager *project.Manager) {
 			return manager.Current(ownerID).ID
 		})
 	}
+}
+
+// SetWorkflowStore 注入按绑定者和项目隔离的持久快捷工作流。
+func (h *Handler) SetWorkflowStore(store *workflow.Store) {
+	h.workflows = store
 }
 
 // SetVisualRenderer 注入可信模板的微信视觉卡片渲染器。
