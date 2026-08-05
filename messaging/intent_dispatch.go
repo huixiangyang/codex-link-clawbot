@@ -11,30 +11,37 @@ func (h *Handler) dispatchIntent(ctx context.Context, userID string, resolved Re
 	if h.intentMutationBlocked(userID, resolved, argument) {
 		return intentTextResult(resolved, mutationBusyText())
 	}
+	receiptReserved := false
 	if intentRequiresReceipt(resolved, argument) {
 		reserved, result := h.reserveControlReceipt(userID, sourceKey, string(definition.ID), definition.Domain)
 		if !reserved {
 			return result
 		}
+		receiptReserved = true
 	}
+	var result ActionResult
 	switch definition.Domain {
 	case DomainTask:
-		return h.dispatchTaskIntent(userID, resolved)
+		result = h.dispatchTaskIntent(ctx, userID, resolved)
 	case DomainProject:
-		return h.dispatchProjectIntent(userID, resolved, argument)
+		result = h.dispatchProjectIntent(userID, resolved, argument)
 	case DomainSession:
-		return h.dispatchSessionIntent(ctx, userID, resolved, argument)
+		result = h.dispatchSessionIntent(ctx, userID, resolved, argument)
 	case DomainPreference:
-		return h.dispatchPreferenceIntent(userID, resolved, argument)
+		result = h.dispatchPreferenceIntent(userID, resolved, argument)
 	case DomainLibrary:
-		return h.dispatchLibraryIntent(userID, resolved)
+		result = h.dispatchLibraryIntent(userID, resolved)
 	case DomainAutomation:
-		return h.dispatchAutomationIntent(userID, resolved)
+		result = h.dispatchAutomationIntent(userID, resolved)
 	case DomainSecurity:
-		return h.dispatchSecurityIntent(userID, resolved)
+		result = h.dispatchSecurityIntent(userID, resolved)
 	default:
-		return h.dispatchSystemIntent(ctx, userID, resolved)
+		result = h.dispatchSystemIntent(ctx, userID, resolved)
 	}
+	if receiptReserved && (result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask) {
+		result = result.withReservedReceiptRollback(userID, sourceKey)
+	}
+	return result
 }
 
 func intentRequiresReceipt(resolved ResolvedIntent, argument string) bool {

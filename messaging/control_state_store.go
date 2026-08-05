@@ -34,6 +34,7 @@ const (
 	viewTaskCancelConfirm  controlView = "task.cancel_confirm"
 	viewTaskCenter         controlView = "task.center"
 	viewTaskDetail         controlView = "task.detail"
+	viewTaskResult         controlView = "task.result"
 	viewTaskClearConfirm   controlView = "task.clear_confirm"
 	viewProjectCenter      controlView = "project.center"
 	viewProjectQuickTasks  controlView = "project.quick_tasks"
@@ -42,6 +43,7 @@ const (
 	viewWorkflowRename     controlView = "project.workflow_rename"
 	viewWorkflowEdit       controlView = "project.workflow_edit"
 	viewWorkflowDelete     controlView = "project.workflow_delete"
+	viewWorkflowSave       controlView = "project.workflow_save"
 	viewWorkflowResult     controlView = "project.workflow_result"
 	viewProjectResult      controlView = "project.result"
 	viewSessionCenter      controlView = "session.center"
@@ -251,7 +253,7 @@ func (store *ControlStateStore) RollbackConsumedReceipt(ownerID, sourceKey strin
 	if !exists || receipt.OwnerHash != controlOwnerHash(ownerID) {
 		return fmt.Errorf("control receipt rollback target is missing")
 	}
-	if receipt.ActionID != string(actionRunQuickTask) && receipt.ActionID != string(actionTaskRetry) {
+	if !controlReceiptCanRetryEffect(receipt.ActionID) {
 		return fmt.Errorf("control receipt action cannot be rolled back")
 	}
 	if _, occupied := store.state.Owners[ownerID]; occupied {
@@ -266,6 +268,42 @@ func (store *ControlStateStore) RollbackConsumedReceipt(ownerID, sourceKey strin
 		return err
 	}
 	return nil
+}
+
+// RollbackReservedReceipt 用于没有菜单 revision 的自然语言入队动作；只删除本次安全可重试的回执。
+func (store *ControlStateStore) RollbackReservedReceipt(ownerID, sourceKey, actionID string, domain ActionDomain) error {
+	ownerID = strings.TrimSpace(ownerID)
+	sourceKey = strings.TrimSpace(sourceKey)
+	actionID = strings.TrimSpace(actionID)
+	if ownerID == "" || sourceKey == "" || !controlReceiptCanRetryEffect(actionID) || !validControlReceiptIdentity(actionID, domain) {
+		return fmt.Errorf("invalid reserved control receipt rollback")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	receipt, exists := store.state.Receipts[sourceKey]
+	if !exists || receipt.OwnerHash != controlOwnerHash(ownerID) || receipt.ActionID != actionID || receipt.Domain != domain {
+		return fmt.Errorf("reserved control receipt rollback target is missing")
+	}
+	previous := cloneControlReceipts(store.state.Receipts)
+	delete(store.state.Receipts, sourceKey)
+	if err := store.saveLocked(); err != nil {
+		store.state.Receipts = previous
+		return err
+	}
+	return nil
+}
+
+func controlReceiptCanRetryEffect(actionID string) bool {
+	switch IntentID(actionID) {
+	case IntentTaskRerun, IntentTaskRerunNew:
+		return true
+	}
+	switch controlAction(actionID) {
+	case actionRunQuickTask, actionTaskRetry, actionTaskRerun, actionTaskRerunNewSession:
+		return true
+	default:
+		return false
+	}
 }
 
 func (store *ControlStateStore) FindReceipt(ownerID, sourceKey string) (persistedControlReceipt, bool) {
@@ -381,7 +419,7 @@ func (store *ControlStateStore) validate() error {
 		if strings.TrimSpace(ownerID) == "" || len(ownerID) > 512 || !validControlRevision(state.Revision) || !validControlView(state.View) {
 			return fmt.Errorf("invalid control state owner")
 		}
-		if state.Mode < controlChoice || state.Mode > controlWorkflowEdit || state.ExpiresAt <= 0 || len(state.Options) > controlStateMaxItems {
+		if state.Mode < controlChoice || state.Mode > controlWorkflowSave || state.ExpiresAt <= 0 || len(state.Options) > controlStateMaxItems {
 			return fmt.Errorf("invalid control state value")
 		}
 		if state.Mode == controlChoice && len(state.Options) == 0 || state.Mode != controlChoice && len(state.Options) != 0 {
@@ -514,7 +552,8 @@ func validControlReceiptIdentity(value string, domain ActionDomain) bool {
 		return controlActionDomain(action) == domain
 	}
 	switch IntentID(value) {
-	case IntentCancel, IntentQueuePause, IntentQueueResume, IntentQueueClear:
+	case IntentCancel, IntentTaskContinue, IntentTaskRerun, IntentTaskRerunNew,
+		IntentQueuePause, IntentQueueResume, IntentQueueClear:
 		return domain == DomainTask
 	case IntentProjectSelect:
 		return domain == DomainProject
@@ -547,12 +586,14 @@ func (action controlAction) valid() bool {
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem, actionPickArchivedSession,
 		actionRestoreSession, actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
 		actionActivityPage, actionActivityDetail, actionTaskMoveFront, actionTaskDelete,
-		actionTaskRetry, actionTaskFrozenText, actionQueuePause, actionQueueResume,
+		actionTaskRetry, actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
+		actionTaskFrozenText, actionQueuePause, actionQueueResume,
 		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic, actionMore,
 		actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
 		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit, actionWorkflowEdit,
 		actionConfirmWorkflowDelete, actionWorkflowDelete,
+		actionPromptWorkflowSave, actionWorkflowSave,
 		actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery,
 		actionRemoteLock, actionVoiceBriefing, actionAutomations, actionAutomation,
 		actionRunAutomation, actionVisualStyles, actionSetVisualStyle, actionResponseModes,

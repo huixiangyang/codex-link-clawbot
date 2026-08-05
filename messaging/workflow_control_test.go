@@ -234,7 +234,7 @@ func TestWorkflowParametersResumeAfterRestartAndEnqueueOnce(t *testing.T) {
 		t.Fatalf("menu during parameters = %#v, handled=%v", menu, handled)
 	}
 	projectCenter, handled := environment.handler.handleControlInput(
-		context.Background(), "owner-1", "1", false, nextTestControlSource(),
+		context.Background(), "owner-1", "2", false, nextTestControlSource(),
 	)
 	if !handled || !strings.Contains(projectCenter.Text, "项目中心") {
 		t.Fatalf("menu choice during parameters = %#v, handled=%v", projectCenter, handled)

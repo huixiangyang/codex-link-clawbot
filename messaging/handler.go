@@ -234,9 +234,18 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 					}
 				}
 				if result.rollback != nil && h.controlStates != nil {
-					if rollbackErr := h.controlStates.RollbackConsumedReceipt(
-						result.rollback.OwnerID, result.rollback.SourceKey, result.rollback.State,
-					); rollbackErr != nil {
+					var rollbackErr error
+					if result.rollback.State != nil {
+						rollbackErr = h.controlStates.RollbackConsumedReceipt(
+							result.rollback.OwnerID, result.rollback.SourceKey, *result.rollback.State,
+						)
+					} else {
+						rollbackErr = h.controlStates.RollbackReservedReceipt(
+							result.rollback.OwnerID, result.rollback.SourceKey,
+							result.rollback.ActionID, result.rollback.Domain,
+						)
+					}
+					if rollbackErr != nil {
 						logControlStateError(msg.FromUserID, rollbackErr)
 						return fmt.Errorf("present action result: %w; restore control receipt: %v", err, rollbackErr)
 					}
@@ -320,11 +329,20 @@ func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg 
 
 // enqueueCodexTask 只负责可靠入队。Codex 执行权始终由全局 Coordinator 持有。
 func (h *Handler) enqueueCodexTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) error {
-	return h.enqueueCodexTaskInProject(ctx, client, msg, text, images, files, clientID, "")
+	return h.enqueueCodexTaskInProject(ctx, client, msg, text, images, files, clientID, "", "", false)
 }
 
-// enqueueCodexTaskInProject 允许工作流冻结项目身份；普通消息传空值并继续使用用户当前项目。
-func (h *Handler) enqueueCodexTaskInProject(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID, projectID string) error {
+// enqueueCodexTaskInProject 允许工作流和任务复用冻结项目、既有线程或强制新线程；普通消息使用界面快照。
+func (h *Handler) enqueueCodexTaskInProject(
+	ctx context.Context,
+	client *ilink.Client,
+	msg ilink.WeixinMessage,
+	text string,
+	images []*ilink.ImageItem,
+	files []*ilink.FileItem,
+	clientID, projectID, threadID string,
+	newThread bool,
+) error {
 	if h.tasks == nil || h.coordinator == nil || h.projects == nil || h.sessions == nil || h.preferences == nil {
 		return fmt.Errorf("task queue is not initialized")
 	}
@@ -367,12 +385,16 @@ func (h *Handler) enqueueCodexTaskInProject(ctx context.Context, client *ilink.C
 			return fmt.Errorf("workflow project is unavailable")
 		}
 	}
+	taskThreadID := strings.TrimSpace(threadID)
+	if !newThread && taskThreadID == "" {
+		taskThreadID = h.sessions.SnapshotThreadID(msg.FromUserID, currentProject.ID)
+	}
 	preferences := h.preferences.Get(msg.FromUserID)
 	task, existed, err := h.tasks.Enqueue(taskqueue.EnqueueInput{
 		SourceMessageKey: sourceKey,
 		OwnerID:          msg.FromUserID,
 		ProjectID:        currentProject.ID,
-		ThreadID:         h.sessions.SnapshotThreadID(msg.FromUserID, currentProject.ID),
+		ThreadID:         taskThreadID,
 		Summary:          taskActivitySummary(text, len(queuedImages), len(queuedFiles)),
 		Text:             text,
 		ContextToken:     msg.ContextToken,

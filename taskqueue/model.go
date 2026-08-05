@@ -187,7 +187,8 @@ func validateEnqueueInput(input EnqueueInput) error {
 	if !validSingleLine(input.Summary, 120) {
 		return fmt.Errorf("task summary is invalid")
 	}
-	if len([]byte(input.Text)) > maxRequestTextBytes || len([]byte(input.ContextToken)) > maxContextTokenBytes {
+	if !utf8.ValidString(input.Text) || strings.ContainsRune(input.Text, '\x00') ||
+		len([]byte(input.Text)) > maxRequestTextBytes || len([]byte(input.ContextToken)) > maxContextTokenBytes {
 		return fmt.Errorf("task text or context token exceeds the limit")
 	}
 	if strings.TrimSpace(input.Text) == "" && len(input.Images) == 0 && len(input.Files) == 0 {
@@ -333,7 +334,8 @@ func validateRequest(request Request) error {
 	if request.Version != requestVersion || !validSingleLine(request.SourceMessageKey, 512) {
 		return fmt.Errorf("invalid task request schema")
 	}
-	if len([]byte(request.Text)) > maxRequestTextBytes || len([]byte(request.ContextToken)) > maxContextTokenBytes {
+	if !utf8.ValidString(request.Text) || strings.ContainsRune(request.Text, '\x00') ||
+		len([]byte(request.Text)) > maxRequestTextBytes || len([]byte(request.ContextToken)) > maxContextTokenBytes {
 		return fmt.Errorf("task request exceeds the limit")
 	}
 	if strings.TrimSpace(request.Text) == "" && len(request.Images) == 0 && len(request.Files) == 0 {

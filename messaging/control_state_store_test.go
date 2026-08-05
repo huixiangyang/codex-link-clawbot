@@ -266,6 +266,26 @@ func TestControlReceiptRollbackRestoresRevision(t *testing.T) {
 	}
 }
 
+func TestReservedControlReceiptRollbackRemovesDirectRerun(t *testing.T) {
+	store, err := NewControlStateStore(filepath.Join(t.TempDir(), "control-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reserved, err := store.ReserveReceipt(
+		"owner-1", "account:message:83", string(IntentTaskRerun), DomainTask,
+	); err != nil || !reserved {
+		t.Fatalf("ReserveReceipt() = %v, %v", reserved, err)
+	}
+	if err := store.RollbackReservedReceipt(
+		"owner-1", "account:message:83", string(IntentTaskRerun), DomainTask,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.FindReceipt("owner-1", "account:message:83"); exists {
+		t.Fatal("rolled-back direct rerun receipt remained active")
+	}
+}
+
 func TestControlStateStoreRejectsUnknownSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control-state.json")
 	if err := os.WriteFile(path, []byte(`{"version":1,"owners":{},"receipts":{},"legacy":true}`), 0o600); err != nil {

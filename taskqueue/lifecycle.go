@@ -381,7 +381,10 @@ func (store *Store) transitionLocked(ownerID, taskID string, next State, stage, 
 		}
 	}
 	cleanup := []string(nil)
-	if next == StateSucceeded || next == StateCancelled {
+	completedCleanup := []string(nil)
+	if next == StateSucceeded {
+		completedCleanup = append(completedCleanup, current.ID)
+	} else if next == StateCancelled {
 		cleanup = append(cleanup, current.ID)
 	}
 	completed := owner.Tasks[index]
@@ -392,6 +395,7 @@ func (store *Store) transitionLocked(ownerID, taskID string, next State, stage, 
 		store.state.Owners[ownerID] = previous
 		return Task{}, err
 	}
+	store.cleanupCompletedTaskIDs(completedCleanup)
 	store.cleanupTaskIDs(cleanup)
 	updated, ok := store.findTaskLocked(ownerID, current.ID)
 	if !ok {
@@ -431,6 +435,7 @@ func (store *Store) recoverLocked() (bool, error) {
 	changed := false
 	known := make(map[string]Task)
 	var cleanup []string
+	var completedCleanup []string
 	for ownerID, owner := range store.state.Owners {
 		owner.Tasks = append([]Task(nil), owner.Tasks...)
 		for index := range owner.Tasks {
@@ -459,7 +464,13 @@ func (store *Store) recoverLocked() (bool, error) {
 				task.FinishedAt = taskNow
 				task.PayloadExpiresAt = time.Unix(taskNow, 0).Add(payloadRetention).Unix()
 				changed = true
-			case StateSucceeded, StateCancelled:
+			case StateSucceeded:
+				if taskNow >= task.FinishedAt+int64(payloadRetention.Seconds()) {
+					cleanup = append(cleanup, task.ID)
+				} else {
+					completedCleanup = append(completedCleanup, task.ID)
+				}
+			case StateCancelled:
 				cleanup = append(cleanup, task.ID)
 			case StateFailed, StateInterrupted:
 				if task.PayloadExpiresAt == 0 {
@@ -509,6 +520,7 @@ func (store *Store) recoverLocked() (bool, error) {
 			}
 		}
 	}
+	store.cleanupCompletedTaskIDs(completedCleanup)
 	store.cleanupTaskIDs(cleanup)
 	return changed, nil
 }
@@ -529,7 +541,7 @@ func (store *Store) cleanTaskTemporaryFiles(taskID string) error {
 	return nil
 }
 
-// CleanupExpired 删除已超过保留期限的失败任务输入，供常驻协调器定时调用。
+// CleanupExpired 删除已超过保留期限的失败任务负载和成功任务复用文字，供常驻协调器定时调用。
 func (store *Store) CleanupExpired() error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -541,7 +553,8 @@ func (store *Store) cleanupExpiredPayloadsLocked() error {
 	var cleanup []string
 	for _, owner := range store.state.Owners {
 		for _, task := range owner.Tasks {
-			if (task.State == StateFailed || task.State == StateInterrupted) && task.PayloadExpiresAt > 0 && now >= task.PayloadExpiresAt {
+			if (task.State == StateFailed || task.State == StateInterrupted) && task.PayloadExpiresAt > 0 && now >= task.PayloadExpiresAt ||
+				task.State == StateSucceeded && task.FinishedAt > 0 && now >= task.FinishedAt+int64(payloadRetention.Seconds()) {
 				cleanup = append(cleanup, task.ID)
 			}
 		}

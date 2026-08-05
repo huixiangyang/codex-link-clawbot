@@ -86,7 +86,8 @@ func TestStoreSerialFIFORespectsPauseMoveAndLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := mustEnqueue(t, store, testEnqueueInput("a:1", "owner-a", "alpha"))
-	second := mustEnqueue(t, store, testEnqueueInput("b:1", "owner-b", "beta"))
+	secondInput := testEnqueueInput("b:1", "owner-b", "beta")
+	second := mustEnqueue(t, store, secondInput)
 	third := mustEnqueue(t, store, testEnqueueInput("a:2", "owner-a", "alpha"))
 	if err := store.SetPaused("owner-a", true); err != nil {
 		t.Fatal(err)
@@ -110,8 +111,15 @@ func TestStoreSerialFIFORespectsPauseMoveAndLifecycle(t *testing.T) {
 	if _, err := store.Finish("owner-b", second.ID, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, second.ID)); !os.IsNotExist(err) {
-		t.Fatalf("successful task payload still exists: %v", err)
+	if prompt, err := store.LoadReusablePrompt("owner-b", second.ID); err != nil || prompt != secondInput.Text {
+		t.Fatalf("successful task reusable prompt = %q, %v", prompt, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, second.ID))
+	if err != nil || len(entries) != 1 || entries[0].Name() != reusablePromptFile {
+		t.Fatalf("successful task private directory = %#v, %v", entries, err)
+	}
+	if _, err := store.LoadRequest("owner-b", second.ID); err == nil {
+		t.Fatal("successful task retained its full request")
 	}
 	if err := store.SetPaused("owner-a", false); err != nil {
 		t.Fatal(err)

@@ -44,6 +44,8 @@ type ActionEffect struct {
 	Kind      ActionEffectKind
 	Value     string
 	ProjectID string
+	ThreadID  string
+	NewThread bool
 }
 
 // ActionResult 是控制器与微信投递层之间的唯一结果类型。
@@ -60,7 +62,9 @@ type ActionResult struct {
 type controlReceiptRollback struct {
 	OwnerID   string
 	SourceKey string
-	State     controlState
+	ActionID  string
+	Domain    ActionDomain
+	State     *controlState
 }
 
 func newActionResult(actionID string, domain ActionDomain, text string) ActionResult {
@@ -88,6 +92,17 @@ func (result ActionResult) validate() error {
 	}
 	if result.Effect.ProjectID != "" && (result.Effect.Kind != EffectEnqueuePrompt || !validEffectProjectID(result.Effect.ProjectID)) {
 		return fmt.Errorf("action effect project is invalid")
+	}
+	if result.Effect.ThreadID != "" && (result.Effect.Kind != EffectEnqueuePrompt || result.Effect.NewThread ||
+		len(result.Effect.ThreadID) > 512 || strings.TrimSpace(result.Effect.ThreadID) != result.Effect.ThreadID ||
+		strings.ContainsAny(result.Effect.ThreadID, "\r\n\x00")) {
+		return fmt.Errorf("action effect thread is invalid")
+	}
+	if result.Effect.NewThread && result.Effect.Kind != EffectEnqueuePrompt {
+		return fmt.Errorf("new thread effect is invalid")
+	}
+	if (result.Effect.ThreadID != "" || result.Effect.NewThread) && result.Effect.ProjectID == "" {
+		return fmt.Errorf("thread effect requires a frozen project")
 	}
 	switch result.Effect.Kind {
 	case EffectNone:
@@ -123,7 +138,16 @@ func (result ActionResult) withIdentity(actionID string, domain ActionDomain) Ac
 
 func (result ActionResult) withControlRollback(ownerID, sourceKey string, state controlState) ActionResult {
 	state.Options = append([]controlOption(nil), state.Options...)
-	result.rollback = &controlReceiptRollback{OwnerID: ownerID, SourceKey: sourceKey, State: state}
+	result.rollback = &controlReceiptRollback{
+		OwnerID: ownerID, SourceKey: sourceKey, ActionID: result.ActionID, Domain: result.Domain, State: &state,
+	}
+	return result
+}
+
+func (result ActionResult) withReservedReceiptRollback(ownerID, sourceKey string) ActionResult {
+	result.rollback = &controlReceiptRollback{
+		OwnerID: ownerID, SourceKey: sourceKey, ActionID: result.ActionID, Domain: result.Domain,
+	}
 	return result
 }
 
@@ -134,6 +158,17 @@ func (result ActionResult) withWorkflowRollback(rollback *workflow.SubmissionRol
 
 func (result ActionResult) withProjectID(projectID string) ActionResult {
 	result.Effect.ProjectID = strings.TrimSpace(projectID)
+	return result
+}
+
+func (result ActionResult) withThreadID(threadID string) ActionResult {
+	result.Effect.ThreadID = strings.TrimSpace(threadID)
+	return result
+}
+
+func (result ActionResult) withNewThread() ActionResult {
+	result.Effect.NewThread = true
+	result.Effect.ThreadID = ""
 	return result
 }
 

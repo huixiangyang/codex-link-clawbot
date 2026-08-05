@@ -35,6 +35,7 @@ const (
 	controlWorkflowCreate
 	controlWorkflowRename
 	controlWorkflowEdit
+	controlWorkflowSave
 )
 
 type controlAction string
@@ -66,6 +67,9 @@ const (
 	actionTaskMoveFront         controlAction = "task_move_front"
 	actionTaskDelete            controlAction = "task_delete"
 	actionTaskRetry             controlAction = "task_retry"
+	actionTaskContinueSession   controlAction = "task_continue_in_thread"
+	actionTaskRerun             controlAction = "task_rerun"
+	actionTaskRerunNewSession   controlAction = "task_continue_in_new_thread"
 	actionTaskFrozenText        controlAction = "task_frozen_text"
 	actionQueuePause            controlAction = "queue_pause"
 	actionQueueResume           controlAction = "queue_resume"
@@ -87,6 +91,8 @@ const (
 	actionWorkflowEdit          controlAction = "workflow_edit"
 	actionConfirmWorkflowDelete controlAction = "confirm_workflow_delete"
 	actionWorkflowDelete        controlAction = "workflow_delete"
+	actionPromptWorkflowSave    controlAction = "prompt_workflow_save_from_task"
+	actionWorkflowSave          controlAction = "workflow_save_from_task"
 	actionLibraryCenter         controlAction = "library_center"
 	actionLibraryPage           controlAction = "library_page"
 	actionLibraryDetail         controlAction = "library_detail"
@@ -436,6 +442,26 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			string(actionWorkflowEdit), DomainProject,
 			h.editWorkflow(userID, state.Back.Query, state.Back.Value, content, state.Back.Page),
 		), true
+	case controlWorkflowSave:
+		if text == "0" {
+			if consumed, failure := consume(
+				string(state.Back.Action), controlActionDomain(state.Back.Action), false,
+				"这个操作已经处理。发送 / 重新打开菜单。",
+			); !consumed {
+				return failure, true
+			}
+			return h.executeControlAction(ctx, userID, state.Back), true
+		}
+		if !validWorkflowDisplayName(text) {
+			return newActionResult(string(actionWorkflowSave), DomainProject, "名称不能为空，且最多 32 个字。请重新发送，或回复 0 返回。"), true
+		}
+		if consumed, failure := consume(string(actionWorkflowSave), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
+		}
+		return newActionResult(
+			string(actionWorkflowSave), DomainProject,
+			h.saveTaskAsWorkflow(userID, state.Back.Query, state.Back.Value, text, 1),
+		), true
 	default:
 		if !h.deleteControlState(userID) {
 			return controlStateFailureResult(), true
@@ -459,6 +485,17 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		taskState = "运行中"
 	}
 	statuses := h.automationStatuses(userID)
+	currentProjectID := ""
+	projectName := "未配置"
+	workflowCount := 0
+	if h.projects != nil {
+		currentProject := h.projects.Current(userID)
+		currentProjectID = currentProject.ID
+		projectName = currentProject.Name
+		if h.workflows != nil {
+			workflowCount = len(h.workflows.List(userID, currentProject.ID))
+		}
+	}
 	var options []controlOption
 	if running {
 		options = append(options,
@@ -466,18 +503,37 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 			controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1},
 			controlOption{Label: "当前会话", Action: actionCurrentSession},
 		)
-	} else {
+	} else if h.tasks != nil && h.tasks.Status(userID).Queued > 0 {
+		queued := h.tasks.Status(userID).Queued
 		options = append(options,
+			controlOption{Label: fmt.Sprintf("任务中心 · %d 项等待", queued), Action: actionActivityPage, Page: 1},
 			controlOption{Label: "项目", Action: actionProjectCenter},
 			controlOption{Label: "会话", Action: actionSessionMenu},
-			controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1},
 		)
+	} else {
+		if recent, exists := h.latestSuccessfulTask(userID, false); exists {
+			options = append(options, controlOption{
+				Label: "最近结果", Action: actionActivityDetail, Value: recent.ID, Page: 1,
+			})
+		}
+		if workflowCount > 0 {
+			options = append(options, controlOption{
+				Label: fmt.Sprintf("快捷任务 · %d 项", workflowCount), Action: actionProjectQuickTasks,
+				Query: currentProjectID, Page: 1,
+			})
+		}
+		for _, fallback := range []controlOption{
+			{Label: "项目", Action: actionProjectCenter},
+			{Label: "会话", Action: actionSessionMenu},
+			{Label: "任务中心", Action: actionActivityPage, Page: 1},
+		} {
+			if len(options) >= 3 {
+				break
+			}
+			options = append(options, fallback)
+		}
 	}
 	options = append(options, controlOption{Label: "更多功能", Action: actionMore})
-	projectName := "未配置"
-	if h.projects != nil {
-		projectName = h.projects.Current(userID).Name
-	}
 	lines := []string{
 		"WeClaw",
 		"",

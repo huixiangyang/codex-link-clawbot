@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/huixiangyang/weclaw/taskqueue"
 	"github.com/huixiangyang/weclaw/workflow"
 )
 
@@ -231,6 +232,41 @@ func (h *Handler) confirmWorkflowDelete(userID string, source controlOption) str
 	return prompt + "\n\n回复 1 确认，0 返回详情。"
 }
 
+func (h *Handler) promptWorkflowSaveFromTask(userID string, source controlOption) string {
+	if h.tasks == nil || h.workflows == nil || h.projects == nil {
+		return "任务复用当前不可用。"
+	}
+	task, exists := h.tasks.Find(userID, source.Value)
+	if !exists || task.State != taskqueue.StateSucceeded || task.ProjectID != source.Query {
+		return "这个成功任务已经变化。发送“任务中心”刷新。"
+	}
+	if _, exists := h.projects.Get(task.ProjectID); !exists {
+		return "任务所属项目已经不可用。"
+	}
+	prompt, err := h.tasks.LoadReusablePrompt(userID, task.ID)
+	if err != nil || !reusablePromptCanBecomeWorkflow(prompt) {
+		return "原始请求已过期、包含附件或不符合快捷任务格式，无法保存。"
+	}
+	if source.Page <= 0 {
+		source.Page = 1
+	}
+	back := controlOption{Action: actionActivityDetail, Value: task.ID, Page: source.Page}
+	// Query 冻结任务所属项目；Value 冻结任务 ID，表单中不持久化原始请求。
+	back.Query = task.ProjectID
+	if !h.storeInputWithBack(userID, viewWorkflowSave, controlWorkflowSave, back) {
+		return controlStateFailureResult().Text
+	}
+	return strings.Join([]string{
+		"保存为快捷任务",
+		"",
+		"项目：" + task.ProjectID,
+		"来源：" + task.Summary,
+		"",
+		"发送快捷任务名称。保存的是原始请求，不包含 Codex 回答、附件或交付内容。",
+		"回复 0 返回任务详情。",
+	}, "\n")
+}
+
 func (h *Handler) createWorkflow(userID, projectID string, form workflowCreateForm) string {
 	if h.workflows == nil {
 		return "快捷任务当前不可用。"
@@ -295,6 +331,28 @@ func (h *Handler) deleteWorkflow(userID, projectID, workflowID string, page int)
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字继续，0 返回项目中心。"
+}
+
+func (h *Handler) saveTaskAsWorkflow(userID, projectID, taskID, name string, page int) string {
+	if h.tasks == nil || h.workflows == nil {
+		return "任务复用当前不可用。"
+	}
+	task, exists := h.tasks.Find(userID, taskID)
+	if !exists || task.State != taskqueue.StateSucceeded || task.ProjectID != projectID {
+		return "这个成功任务已经变化。发送“任务中心”刷新。"
+	}
+	prompt, err := h.tasks.LoadReusablePrompt(userID, task.ID)
+	if err != nil || !reusablePromptCanBecomeWorkflow(prompt) {
+		return "原始请求已过期、包含附件或不符合快捷任务格式，无法保存。"
+	}
+	definition, err := h.workflows.Create(workflow.CreateInput{
+		OwnerID: userID, ProjectID: projectID, Name: name,
+		PromptTemplate: prompt, Slots: []workflow.Slot{},
+	})
+	if err != nil {
+		return workflowMutationErrorText(err)
+	}
+	return h.workflowMutationResult(userID, projectID, definition.ID, page, "已从成功任务保存快捷任务。")
 }
 
 func (h *Handler) workflowMutationResult(userID, projectID, workflowID string, page int, headline string) string {
@@ -403,6 +461,12 @@ func compileReadableWorkflowContent(content string) (compiledWorkflowContent, er
 func validWorkflowDisplayName(name string) bool {
 	name = strings.TrimSpace(name)
 	return name != "" && utf8.ValidString(name) && !strings.ContainsAny(name, "\r\n\x00") && len([]rune(name)) <= 32
+}
+
+func reusablePromptCanBecomeWorkflow(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	return prompt != "" && utf8.ValidString(prompt) && !strings.ContainsRune(prompt, '\x00') &&
+		len([]rune(prompt)) <= 8000 && !strings.Contains(prompt, "{{") && !strings.Contains(prompt, "}}")
 }
 
 func workflowParameterPrompt(status workflow.RunStatus) string {

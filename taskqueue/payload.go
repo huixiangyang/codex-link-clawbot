@@ -60,6 +60,13 @@ func (store *Store) stagePayloadLocked(input EnqueueInput, taskID string) (Reque
 	if err := writeJSONSync(filepath.Join(stagingPath, "request.json"), request); err != nil {
 		return Request{}, 0, fmt.Errorf("write task request: %w", err)
 	}
+	// 成功任务只允许复用纯文字原始意图；上下文令牌、附件信息和回答不会进入该副本。
+	if reusablePromptEligible(input) {
+		prompt := reusablePrompt{Version: reusablePromptVersion, Text: strings.TrimSpace(input.Text)}
+		if err := writeJSONSync(filepath.Join(stagingPath, reusablePromptFile), prompt); err != nil {
+			return Request{}, 0, fmt.Errorf("write reusable task prompt: %w", err)
+		}
+	}
 	if err := syncDirectory(inboxPath); err != nil {
 		return Request{}, 0, fmt.Errorf("sync task inbox: %w", err)
 	}

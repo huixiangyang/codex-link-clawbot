@@ -12,7 +12,7 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 	domain := controlActionDomain(action)
 	switch domain {
 	case DomainTask:
-		return h.executeTaskControlAction(userID, option)
+		return h.executeTaskControlAction(ctx, userID, option)
 	case DomainProject:
 		return h.executeProjectControlAction(userID, option)
 	case DomainSession:
@@ -34,13 +34,15 @@ func controlActionDomain(action controlAction) ActionDomain {
 	switch action {
 	case actionTaskStatus, actionConfirmCancelTask, actionCancelTask, actionActivityPage,
 		actionActivityDetail, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
+		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionConfirmQueueClear,
 		actionQueueClear:
 		return DomainTask
 	case actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
 		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit,
-		actionWorkflowEdit, actionConfirmWorkflowDelete, actionWorkflowDelete:
+		actionWorkflowEdit, actionConfirmWorkflowDelete, actionWorkflowDelete,
+		actionPromptWorkflowSave, actionWorkflowSave:
 		return DomainProject
 	case actionSessionMenu, actionCurrentSession, actionPickSession, actionBrowseSessions,
 		actionPromptSessionSearch, actionSessionPage, actionSessionDetail, actionUseSession,
@@ -65,9 +67,10 @@ func controlActionRequiresReceipt(action controlAction) bool {
 	switch action {
 	case actionUseSession, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
 		actionCancelTask, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
+		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionQueueClear,
 		actionSelectProject, actionRunQuickTask, actionWorkflowCreate, actionWorkflowRename,
-		actionWorkflowEdit, actionWorkflowDelete, actionResendDelivery, actionRemoteLock,
+		actionWorkflowEdit, actionWorkflowDelete, actionWorkflowSave, actionResendDelivery, actionRemoteLock,
 		actionVoiceBriefing, actionRunAutomation, actionSetVisualStyle, actionSetResponseMode:
 		return true
 	default:

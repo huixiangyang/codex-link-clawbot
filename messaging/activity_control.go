@@ -100,7 +100,7 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 	if duration < 0 {
 		duration = 0
 	}
-	options := make([]controlOption, 0, 3)
+	options := make([]controlOption, 0, 6)
 	switch task.State {
 	case taskqueue.StateQueued:
 		options = append(options,
@@ -118,6 +118,24 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 		options = append(options, controlOption{Label: "删除任务", Action: actionTaskDelete, Value: task.ID, Page: pageNumber})
 	case taskqueue.StateCancelled:
 		options = append(options, controlOption{Label: "删除记录", Action: actionTaskDelete, Value: task.ID, Page: pageNumber})
+	case taskqueue.StateSucceeded:
+		if task.ThreadID != "" {
+			options = append(options, controlOption{
+				Label: "继续这个会话", Action: actionTaskContinueSession, Value: task.ID, Page: pageNumber,
+			})
+		}
+		if prompt, err := h.tasks.LoadReusablePrompt(userID, task.ID); err == nil {
+			options = append(options,
+				controlOption{Label: "再次执行", Action: actionTaskRerun, Value: task.ID, Page: pageNumber},
+				controlOption{Label: "在新会话执行", Action: actionTaskRerunNewSession, Value: task.ID, Page: pageNumber},
+			)
+			if h.workflows != nil && reusablePromptCanBecomeWorkflow(prompt) {
+				options = append(options, controlOption{
+					Label: "保存为快捷任务", Action: actionPromptWorkflowSave,
+					Value: task.ID, Query: task.ProjectID, Page: pageNumber,
+				})
+			}
+		}
 	}
 	options = append(options, controlOption{Label: "返回任务中心", Action: actionActivityPage, Page: pageNumber})
 	prompt := strings.Join([]string{
