@@ -791,7 +791,7 @@ func (a *Codex) readLoop() {
 			a.handleRateLimitsUpdated(msg.Params)
 		case "thread/started", "thread/archived", "thread/unarchived", "thread/closed",
 			"thread/name/updated",
-			"serverRequest/resolved":
+			"serverRequest/resolved", "remoteControl/status/changed":
 			// 已知但无需转发到微信的稳定事件。
 
 		default:
