@@ -131,7 +131,7 @@ func controlReply(t *testing.T, handler *Handler, ownerID, text string) string {
 	if !handled {
 		t.Fatalf("control input %q was not handled", text)
 	}
-	return reply
+	return reply.Text
 }
 
 func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *testing.T) {
@@ -431,8 +431,8 @@ func TestSessionCompletionPrefersAnExactTitle(t *testing.T) {
 func TestControlChoiceDoesNotConsumeOrdinaryCodexText(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	_ = controlReply(t, handler, "owner-1", "/")
-	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "请检查项目测试", false); handled || reply != "" {
-		t.Fatalf("ordinary text should leave menu and reach Codex: reply=%q handled=%v", reply, handled)
+	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "请检查项目测试", false); handled || reply != (ActionResult{}) {
+		t.Fatalf("ordinary text should leave menu and reach Codex: reply=%#v handled=%v", reply, handled)
 	}
 	if _, exists := handler.controlStates.Load("owner-1"); exists {
 		t.Fatal("ordinary text should clear the pending menu")
@@ -445,8 +445,8 @@ func TestExpiredControlStateDoesNotConsumeNumber(t *testing.T) {
 		Mode: controlChoice, Prompt: "expired", ExpiresAt: time.Now().Add(-time.Second),
 		Options: []controlOption{{Label: "会话", Action: actionSessionMenu}},
 	})
-	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false); handled || reply != "" {
-		t.Fatalf("expired state should not consume a number: reply=%q handled=%v", reply, handled)
+	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false); handled || reply != (ActionResult{}) {
+		t.Fatalf("expired state should not consume a number: reply=%#v handled=%v", reply, handled)
 	}
 	if _, exists := handler.controlStates.Load("owner-1"); exists {
 		t.Fatal("expired control state was not removed")

@@ -32,13 +32,13 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 		t.Fatal("response mode menu was not handled")
 	}
 	for _, want := range []string{"当前：自适应", "1  自适应", "2  阅读", "3  语音", "视觉：构筑"} {
-		if !strings.Contains(menu, want) {
-			t.Fatalf("response mode menu missing %q: %q", want, menu)
+		if !strings.Contains(menu.Text, want) {
+			t.Fatalf("response mode menu missing %q: %q", want, menu.Text)
 		}
 	}
 	switched, handled := handler.handleControlInput(context.Background(), "owner-1", "3", false)
-	if !handled || !strings.Contains(switched, "回答方式已切换") || !strings.Contains(switched, "当前：语音") {
-		t.Fatalf("voice mode switch = %q handled=%v", switched, handled)
+	if !handled || !strings.Contains(switched.Text, "回答方式已切换") || !strings.Contains(switched.Text, "当前：语音") {
+		t.Fatalf("voice mode switch = %q handled=%v", switched.Text, handled)
 	}
 	if got := store.Get("owner-1").ResponseMode; got != preference.ResponseVoice {
 		t.Fatalf("stored response mode = %q", got)
@@ -52,8 +52,8 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 	}
 
 	direct, handled := handler.handleControlInput(context.Background(), "owner-1", "关闭语音模式", false)
-	if !handled || !strings.Contains(direct, "当前：自适应") || store.Get("owner-1").ResponseMode != preference.ResponseAdaptive {
-		t.Fatalf("disable voice mode = %q handled=%v", direct, handled)
+	if !handled || !strings.Contains(direct.Text, "当前：自适应") || store.Get("owner-1").ResponseMode != preference.ResponseAdaptive {
+		t.Fatalf("disable voice mode = %q handled=%v", direct.Text, handled)
 	}
 }
 

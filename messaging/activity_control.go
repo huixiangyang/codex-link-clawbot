@@ -204,30 +204,28 @@ func (h *Handler) deleteTask(userID, taskID string, pageNumber int) string {
 	return "任务已删除。\n\n" + h.openActivities(userID, pageNumber)
 }
 
-func (h *Handler) requestTaskRetry(userID, taskID string) string {
+func (h *Handler) requestTaskRetry(userID, taskID string) ActionResult {
 	if h.tasks == nil {
-		return "任务队列当前不可用。"
+		return newActionResult(string(actionTaskRetry), DomainTask, "任务队列当前不可用。")
 	}
 	if task, ok := h.tasks.Find(userID, taskID); !ok || task.State != taskqueue.StateFailed && task.State != taskqueue.StateInterrupted || h.hasFrozenDelivery(task) {
-		return "这个任务已经不能重试。发送“任务中心”刷新。"
+		return newActionResult(string(actionTaskRetry), DomainTask, "这个任务已经不能重试。发送“任务中心”刷新。")
 	}
-	h.controlRetries.Store(userID, taskID)
-	return "正在创建重试任务。"
+	return effectActionResult(string(actionTaskRetry), DomainTask, "正在创建重试任务。", EffectRetryTask, taskID)
 }
 
-func (h *Handler) requestFrozenTaskText(userID, taskID string) string {
+func (h *Handler) requestFrozenTaskText(userID, taskID string) ActionResult {
 	if h.tasks == nil {
-		return "任务队列当前不可用。"
+		return newActionResult(string(actionTaskFrozenText), DomainTask, "任务队列当前不可用。")
 	}
 	task, ok := h.tasks.Find(userID, taskID)
 	if !ok || !h.hasFrozenDelivery(task) {
-		return "这个任务没有可人工恢复的冻结结果。"
+		return newActionResult(string(actionTaskFrozenText), DomainTask, "这个任务没有可人工恢复的冻结结果。")
 	}
 	if _, err := h.tasks.LoadResult(userID, taskID); err != nil {
-		return "冻结结果已过期或损坏，无法取回。"
+		return newActionResult(string(actionTaskFrozenText), DomainTask, "冻结结果已过期或损坏，无法取回。")
 	}
-	h.controlFrozenTexts.Store(userID, taskID)
-	return "正在取回冻结文字。"
+	return effectActionResult(string(actionTaskFrozenText), DomainTask, "正在取回冻结文字。", EffectFrozenText, taskID)
 }
 
 func (h *Handler) hasFrozenDelivery(task taskqueue.Task) bool {

@@ -68,19 +68,18 @@ func (h *Handler) openProjectQuickTasks(userID string) string {
 	return prompt + "\n\n回复数字执行，0 返回项目中心。"
 }
 
-func (h *Handler) runProjectQuickTask(userID, taskID string) string {
+func (h *Handler) runProjectQuickTask(userID, taskID string) ActionResult {
 	if h.projects == nil {
-		return "项目中心未初始化。"
+		return newActionResult(string(actionRunQuickTask), DomainProject, "项目中心未初始化。")
 	}
 	current := h.projects.Current(userID)
 	task, exists := h.projects.QuickTask(current.ID, taskID)
 	if !exists {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return newActionResult(string(actionRunQuickTask), DomainProject, "快捷任务已经变化。发送“快捷任务”刷新列表。")
 	}
 	// 菜单请求由当前微信消息继续执行，避免要求用户再复制或确认提示词。
-	h.controlDispatches.Store(userID, task.Prompt)
 	h.controlStates.Delete(userID)
-	return ""
+	return effectActionResult(string(actionRunQuickTask), DomainProject, "", EffectEnqueuePrompt, task.Prompt)
 }
 
 func (h *Handler) selectProject(userID, reference string) string {

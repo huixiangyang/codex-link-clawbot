@@ -87,12 +87,12 @@ func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
 	defer cancel()
 
 	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false)
-	if !handled || !strings.Contains(status, "任务状态：运行中") {
-		t.Fatalf("natural status = %q, handled=%v", status, handled)
+	if !handled || !strings.Contains(status.Text, "任务状态：运行中") {
+		t.Fatalf("natural status = %q, handled=%v", status.Text, handled)
 	}
 	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false)
-	if !handled || !strings.Contains(cancelled, "已请求取消当前任务") {
-		t.Fatalf("natural cancellation = %q, handled=%v", cancelled, handled)
+	if !handled || !strings.Contains(cancelled.Text, "已请求取消当前任务") {
+		t.Fatalf("natural cancellation = %q, handled=%v", cancelled.Text, handled)
 	}
 }
 

@@ -222,6 +222,8 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 
 旧斜杠命令已经全部删除。除单独的 `/` 外，以 `/` 开头的内容不会执行，也不会发送给 Codex，只提示打开菜单。
 
+自然语言控制先由确定性 Intent Registry 唯一解析，再进入系统、任务、项目、会话、偏好、素材、自动化或安全控制器。规范化后的短语或前缀发生冲突时注册直接失败；没有匹配的文字仍原样进入 Codex。控制器只返回经过校验的 `ActionResult`，微信投递、任务入队、重试、冻结文字、归档媒体和语音简报统一由 Presenter 执行。旧的跨消息副作用 map 和跨领域大路由已经删除。本批次的数字菜单状态仍在内存，下一批会直接迁入持久 revision，不保留双写兼容层。
+
 ## 图片、文件和主动发送
 
 - 微信图片会在确认入队前下载到任务私有目录，并在执行时作为 Codex `localImage` 输入。每条最多 4 张，单张最大 20 MiB，支持 JPEG、PNG、GIF 和 WebP。
@@ -279,6 +281,7 @@ go vet ./...
 - [v2.5 持久任务队列与安全部署规格](docs/v2.5-task-queue.md)
 - [v2.6 可靠控制面与状态内核规划](docs/v2.6-control-plane.md)
 - [v2.6 统一状态内核实现](docs/v2.6-state-kernel.md)
+- [v2.6 类型化控制路由实现](docs/v2.6-control-routing.md)
 
 ## License
 

@@ -114,178 +114,57 @@ type sessionMatch struct {
 
 // handleControlInput 解析菜单、数字回复和高置信度中文控制意图。
 // 返回 handled=false 时，原始消息必须原样交给 Codex，不能静默吞掉。
-func (h *Handler) handleControlInput(ctx context.Context, userID, text string, hasAttachments bool) (string, bool) {
+func (h *Handler) handleControlInput(ctx context.Context, userID, text string, hasAttachments bool) (ActionResult, bool) {
 	text = strings.TrimSpace(text)
+	registry := h.intents
+	if registry == nil {
+		registry = mustDefaultIntentRegistry()
+	}
 	if hasAttachments {
 		h.controlStates.Delete(userID)
-		return "", false
+		if resolved, ok := registry.Resolve(text); ok && resolved.Definition.AllowAttachments {
+			return h.dispatchIntent(ctx, userID, resolved), true
+		}
+		return ActionResult{}, false
 	}
 
-	if isOneOf(text, "取消", "取消任务", "停止", "停止任务", "停下", "停一下") {
-		if h.hasActiveTask(userID) {
-			h.controlStates.Delete(userID)
-			return h.cancelActiveTask(userID), true
-		}
-		if _, exists := h.controlStates.LoadAndDelete(userID); exists {
-			return "已退出当前操作。直接发送内容即可交给 Codex。", true
-		}
-		return "当前没有正在执行的任务。发送 / 可以打开操作菜单。", true
-	}
-
-	if text == "/" || isOneOf(text, "菜单", "打开菜单", "功能", "操作", "功能菜单", "打开功能") {
-		return h.openMainMenu(ctx, userID), true
+	if resolved, ok := registry.Resolve(text); ok &&
+		(resolved.Definition.ID == IntentCancel || resolved.Definition.ID == IntentMenu) {
+		return h.dispatchIntent(ctx, userID, resolved), true
 	}
 
 	if state, ok := h.loadControlState(userID); ok {
-		if reply, handled := h.handlePendingControl(ctx, userID, text, state); handled {
-			return reply, true
+		if result, handled := h.handlePendingControl(ctx, userID, text, state); handled {
+			return result, true
 		}
 	}
 
 	// 旧斜杠命令不再执行，也不转发到 Codex，避免看似成功却走错通道。
 	if strings.HasPrefix(text, "/") {
-		return "斜杠命令已取消。发送一个 / 打开操作菜单，或直接用中文描述操作。", true
+		return newActionResult(
+			"system.invalid_slash",
+			DomainSystem,
+			"斜杠命令已取消。发送一个 / 打开操作菜单，或直接用中文描述操作。",
+		), true
 	}
 
-	if isOneOf(text, "状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了") {
-		return h.openTaskStatus(userID), true
+	if resolved, ok := registry.Resolve(text); ok {
+		return h.dispatchIntent(ctx, userID, resolved), true
 	}
-	if isOneOf(text, "任务队列", "排队任务", "任务中心") {
-		return h.openActivities(userID, 1), true
-	}
-	if isOneOf(text, "暂停队列", "暂停任务队列", "停止排队任务") {
-		return h.setQueuePaused(userID, true), true
-	}
-	if isOneOf(text, "继续队列", "恢复队列", "继续任务队列") {
-		return h.setQueuePaused(userID, false), true
-	}
-	if isOneOf(text, "清空队列", "删除排队任务") {
-		return h.confirmClearQueue(userID), true
-	}
-	if isOneOf(text, "素材箱", "素材中心", "收藏链接", "交付记录", "交付中心") {
-		return h.openLibraryCenter(userID), true
-	}
-	if isOneOf(text, "远程锁定", "锁定 WeClaw", "锁定WeClaw", "锁定服务") {
-		return h.lockRemote(userID), true
-	}
-	if isOneOf(text, "回答方式", "回复方式", "输出方式", "偏好设置", "语音模式") {
-		return h.openResponseModes(userID), true
-	}
-	if isOneOf(text, "开启语音模式", "打开语音模式", "启用语音模式") {
-		return h.setResponseMode(userID, preference.ResponseVoice), true
-	}
-	if isOneOf(text, "关闭语音模式", "退出语音模式", "自适应模式") {
-		return h.setResponseMode(userID, preference.ResponseAdaptive), true
-	}
-	if isOneOf(text, "开启阅读模式", "打开阅读模式", "阅读模式") {
-		return h.setResponseMode(userID, preference.ResponseReading), true
-	}
-	if isOneOf(text,
-		"语音简报", "播放简报", "工作简报",
-		"发语音", "发个语音", "来段语音", "播报一下", "读给我听",
-	) {
-		return h.requestVoiceBriefing(userID), true
-	}
-	if isOneOf(text, "运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息") {
-		return h.openRuntimeInfo(userID), true
-	}
-	if isOneOf(text, "项目", "项目中心", "项目列表", "查看项目", "当前项目") {
-		return h.openProjectCenter(userID), true
-	}
-	if isOneOf(text, "快捷任务", "项目快捷任务", "快速任务") {
-		return h.openProjectQuickTasks(userID), true
-	}
-	if argument, matched := intentArgument(text, []string{"切换项目", "切到项目", "进入项目"}); matched {
-		argument = cleanIntentArgument(argument)
-		if argument == "" {
-			return h.openProjectCenter(userID), true
-		}
-		return h.selectProject(userID, argument), true
-	}
-	if isOneOf(text, "帮助", "怎么用", "使用说明") {
-		return h.openGuide(userID), true
-	}
-	if isOneOf(text, "视觉风格", "卡片风格", "更换风格", "切换风格", "主题风格") {
-		return h.openVisualStyles(userID), true
-	}
-	if argument, matched := intentArgument(text, []string{"视觉风格", "卡片风格", "更换风格", "切换风格"}); matched {
-		argument = cleanIntentArgument(argument)
-		if argument == "" {
-			return h.openVisualStyles(userID), true
-		}
-		style, ok := visual.ResolveStyle(argument)
-		if !ok {
-			return "没有这个视觉风格。发送“视觉风格”查看可选模板。", true
-		}
-		return h.setVisualStyle(userID, style), true
-	}
-	if isOneOf(text, "自动化", "自动化中心", "自动检查", "检查计划") {
-		return h.openAutomations(userID, 1), true
-	}
-	if isOneOf(text, "会话", "查看会话", "看看会话", "会话菜单") {
-		return h.openSessionMenu(ctx, userID), true
-	}
-	if isOneOf(text, "会话列表", "列出会话", "切换会话", "选择会话") {
-		return h.openSessionBrowser(ctx, userID, false, ""), true
-	}
-	if isOneOf(text, "搜索会话", "查找会话", "找会话") {
-		return h.promptSessionSearch(userID), true
-	}
-	if argument, matched := intentArgument(text, []string{"搜索会话", "查找会话", "找会话"}); matched && strings.TrimSpace(argument) != "" {
-		return h.openSessionBrowser(ctx, userID, false, cleanIntentArgument(argument)), true
-	}
-	if isOneOf(text, "当前会话", "这个会话", "会话详情") {
-		return h.currentSessionDetail(ctx, userID), true
-	}
-	if isOneOf(text, "已归档会话", "恢复会话", "找回会话") {
-		return h.openSessionPicker(ctx, userID, true, ""), true
-	}
-
-	if argument, matched := intentArgument(text, []string{"新建会话", "创建会话", "开一个新会话", "开个新会话"}); matched {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		argument = cleanIntentArgument(argument)
-		if argument == "" {
-			return h.promptNewSessionName(userID), true
-		}
-		return h.createSession(ctx, userID, argument), true
-	}
-	if argument, matched := intentArgument(text, []string{"切换到会话", "切换会话", "切到会话", "进入会话"}); matched {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		return h.openSessionPicker(ctx, userID, false, cleanIntentArgument(argument)), true
-	}
-	if argument, matched := intentArgument(text, []string{"重命名当前会话", "当前会话改名", "把当前会话改名"}); matched {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		argument = cleanIntentArgument(argument)
-		if argument == "" {
-			return h.promptRenameSession(userID), true
-		}
-		return h.renameSession(ctx, userID, argument), true
-	}
-	if isOneOf(text, "归档当前会话", "把当前会话归档", "归档这个会话") {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		return h.confirmArchiveCurrent(ctx, userID), true
-	}
-	if argument, matched := intentArgument(text, []string{"恢复会话", "找回会话"}); matched && strings.TrimSpace(argument) != "" {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		return h.openSessionPicker(ctx, userID, true, cleanIntentArgument(argument)), true
-	}
-	return "", false
+	return ActionResult{}, false
 }
 
-func (h *Handler) handlePendingControl(ctx context.Context, userID, text string, state *controlState) (string, bool) {
+func (h *Handler) handlePendingControl(ctx context.Context, userID, text string, state *controlState) (ActionResult, bool) {
+	systemResult := func(text string) ActionResult {
+		return newActionResult("system.control_input", DomainSystem, text)
+	}
+	sessionResult := func(actionID, text string) ActionResult {
+		return newActionResult(actionID, DomainSession, text)
+	}
+
 	if isOneOf(text, "返回", "回到菜单") {
 		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "操作状态已经变化。发送 / 重新打开菜单。", true
+			return systemResult("操作状态已经变化。发送 / 重新打开菜单。"), true
 		}
 		return h.executeControlAction(ctx, userID, state.Back), true
 	}
@@ -296,199 +175,66 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		if err != nil {
 			if option, ok := controlNavigationOption(text, state.Options); ok {
 				if !h.controlStates.CompareAndDelete(userID, state) {
-					return "操作状态已经变化。发送 / 重新打开菜单。", true
+					return systemResult("操作状态已经变化。发送 / 重新打开菜单。"), true
 				}
 				return h.executeControlAction(ctx, userID, option), true
 			}
 			// 非数字内容退出选择态，继续尝试自然语言；普通内容最终进入 Codex。
 			h.controlStates.CompareAndDelete(userID, state)
-			return "", false
+			return ActionResult{}, false
 		}
 		if choice == 0 {
 			if !h.controlStates.CompareAndDelete(userID, state) {
-				return "操作状态已经变化。发送 / 重新打开菜单。", true
+				return systemResult("操作状态已经变化。发送 / 重新打开菜单。"), true
 			}
 			return h.executeControlAction(ctx, userID, state.Back), true
 		}
 		if choice < 1 || choice > len(state.Options) {
-			return state.Prompt + fmt.Sprintf("\n\n请输入 1-%d，或回复 0 返回。", len(state.Options)), true
+			return systemResult(state.Prompt + fmt.Sprintf("\n\n请输入 1-%d，或回复 0 返回。", len(state.Options))), true
 		}
 		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "这个选项已经处理。发送 / 重新打开菜单。", true
+			return systemResult("这个选项已经处理。发送 / 重新打开菜单。"), true
 		}
 		return h.executeControlAction(ctx, userID, state.Options[choice-1]), true
 	case controlNewSessionName:
 		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "这个操作已经处理。发送 / 重新打开菜单。", true
+			return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
 		}
 		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
+			return sessionResult(string(IntentSessionNew), mutationBusyText()), true
 		}
 		if text == "0" || isOneOf(text, "跳过", "不命名") {
-			return h.createSession(ctx, userID, ""), true
+			return sessionResult(string(IntentSessionNew), h.createSession(ctx, userID, "")), true
 		}
-		return h.createSession(ctx, userID, text), true
+		return sessionResult(string(IntentSessionNew), h.createSession(ctx, userID, text)), true
 	case controlRenameSession:
 		if text == "0" {
 			if !h.controlStates.CompareAndDelete(userID, state) {
-				return "这个操作已经处理。发送 / 重新打开菜单。", true
+				return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
 			}
-			return h.openSessionMenu(ctx, userID), true
+			return sessionResult(string(IntentSessionCenter), h.openSessionMenu(ctx, userID)), true
 		}
 		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "这个操作已经处理。发送 / 重新打开菜单。", true
+			return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
 		}
 		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
+			return sessionResult(string(IntentSessionRename), mutationBusyText()), true
 		}
-		return h.renameSession(ctx, userID, text), true
+		return sessionResult(string(IntentSessionRename), h.renameSession(ctx, userID, text)), true
 	case controlSessionSearch:
 		if text == "0" {
 			if !h.controlStates.CompareAndDelete(userID, state) {
-				return "这个操作已经处理。发送 / 重新打开菜单。", true
+				return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
 			}
-			return h.openSessionMenu(ctx, userID), true
+			return sessionResult(string(IntentSessionCenter), h.openSessionMenu(ctx, userID)), true
 		}
 		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "这个操作已经处理。发送 / 重新打开菜单。", true
+			return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
 		}
-		return h.openSessionBrowser(ctx, userID, false, text), true
+		return sessionResult(string(IntentSessionSearch), h.openSessionBrowser(ctx, userID, false, text)), true
 	default:
 		h.controlStates.Delete(userID)
-		return "", false
-	}
-}
-
-func (h *Handler) executeControlAction(ctx context.Context, userID string, option controlOption) string {
-	switch option.Action {
-	case actionExit:
-		return "已退出菜单。直接发送文字、图片或文件即可交给 Codex。"
-	case actionMain, "":
-		return h.openMainMenu(ctx, userID)
-	case actionSessionMenu:
-		return h.openSessionMenu(ctx, userID)
-	case actionCurrentSession:
-		return h.currentSessionDetail(ctx, userID)
-	case actionPickSession:
-		return h.openSessionPicker(ctx, userID, false, "")
-	case actionBrowseSessions:
-		return h.openSessionBrowser(ctx, userID, false, "")
-	case actionPromptSessionSearch:
-		return h.promptSessionSearch(userID)
-	case actionSessionPage:
-		return h.openSessionPickerPage(ctx, userID, option.Archived, option.Query, option.Page, option.AutoUse)
-	case actionSessionDetail:
-		return h.sessionDetail(ctx, userID, option)
-	case actionUseSession:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.useSession(ctx, userID, option.Value)
-	case actionPromptNewSession:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.promptNewSessionName(userID)
-	case actionPromptRenameSession:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.promptRenameSession(userID)
-	case actionConfirmArchive:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.confirmArchiveCurrent(ctx, userID)
-	case actionArchiveCurrent:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.archiveCurrentSession(ctx, userID)
-	case actionConfirmArchiveItem:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.confirmArchiveSession(ctx, userID, option)
-	case actionArchiveItem:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.archiveSession(ctx, userID, option.Value)
-	case actionPickArchivedSession:
-		return h.openSessionPicker(ctx, userID, true, "")
-	case actionRestoreSession:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
-		return h.restoreSession(ctx, userID, option.Value)
-	case actionTaskStatus:
-		return h.openTaskStatus(userID)
-	case actionConfirmCancelTask:
-		return h.confirmCancelTask(userID)
-	case actionCancelTask:
-		return h.cancelActiveTask(userID)
-	case actionActivityPage:
-		return h.openActivities(userID, option.Page)
-	case actionActivityDetail:
-		return h.openActivityDetail(userID, option.Value, option.Page)
-	case actionTaskMoveFront:
-		return h.moveTaskToFront(userID, option.Value, option.Page)
-	case actionTaskDelete:
-		return h.deleteTask(userID, option.Value, option.Page)
-	case actionTaskRetry:
-		return h.requestTaskRetry(userID, option.Value)
-	case actionTaskFrozenText:
-		return h.requestFrozenTaskText(userID, option.Value)
-	case actionQueuePause:
-		return h.setQueuePaused(userID, true)
-	case actionQueueResume:
-		return h.setQueuePaused(userID, false)
-	case actionConfirmQueueClear:
-		return h.confirmClearQueue(userID)
-	case actionQueueClear:
-		return h.clearQueue(userID)
-	case actionRuntimeInfo:
-		return h.openRuntimeInfo(userID)
-	case actionMore:
-		return h.openMoreMenu(userID)
-	case actionProjectCenter:
-		return h.openProjectCenter(userID)
-	case actionSelectProject:
-		return h.selectProject(userID, option.Value)
-	case actionProjectQuickTasks:
-		return h.openProjectQuickTasks(userID)
-	case actionRunQuickTask:
-		return h.runProjectQuickTask(userID, option.Value)
-	case actionLibraryCenter:
-		return h.openLibraryCenter(userID)
-	case actionLibraryPage:
-		return h.openLibraryPage(userID, LibraryKind(option.Query), option.Page)
-	case actionLibraryDetail:
-		return h.openLibraryDetail(userID, option.Value, LibraryKind(option.Query), option.Page)
-	case actionResendDelivery:
-		return h.resendDelivery(userID, option.Value, option.Page)
-	case actionRemoteLock:
-		return h.lockRemote(userID)
-	case actionVoiceBriefing:
-		return h.requestVoiceBriefing(userID)
-	case actionAutomations:
-		return h.openAutomations(userID, option.Page)
-	case actionAutomation:
-		return h.openAutomation(userID, option.Value, option.Page)
-	case actionRunAutomation:
-		return h.runAutomation(ctx, userID, option.Value, option.Page)
-	case actionVisualStyles:
-		return h.openVisualStyles(userID)
-	case actionSetVisualStyle:
-		return h.setVisualStyle(userID, visual.Style(option.Value))
-	case actionResponseModes:
-		return h.openResponseModes(userID)
-	case actionSetResponseMode:
-		return h.setResponseMode(userID, preference.ResponseMode(option.Value))
-	case actionGuide:
-		return h.openGuide(userID)
-	default:
-		return "这个操作已经失效。发送 / 重新打开菜单。"
+		return ActionResult{}, false
 	}
 }
 

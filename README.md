@@ -182,6 +182,8 @@ Owners can persist one of three response modes. `adaptive` sends short replies a
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected by the control layer and is never forwarded to Codex.
 
+Natural controls are resolved by a deterministic Intent Registry before entering one of eight domain controllers. Normalized phrase and prefix conflicts fail during registry construction; unmatched text remains a Codex prompt. Controllers return only validated `ActionResult` values, and the Presenter is the sole boundary for WeChat delivery, queueing, retry, frozen-text recovery, archived media, and voice briefings. The former cross-message side-effect maps and cross-domain routing switches are removed. Numbered menu state is still memory-only in this batch and will move directly to persistent revisions in the next v2.6 batch.
+
 ## Media and proactive delivery
 
 - WeChat images are persisted before queue acknowledgement and passed to Codex as `localImage` inputs at execution time. Limits: four images, 20 MiB each, JPEG/PNG/GIF/WebP.
@@ -229,6 +231,7 @@ More details:
 - [v2.5 persistent task queue and safe deployment specification](docs/v2.5-task-queue.md)
 - [v2.6 reliable control plane and state-kernel plan](docs/v2.6-control-plane.md)
 - [v2.6 unified state-kernel implementation](docs/v2.6-state-kernel.md)
+- [v2.6 typed control routing implementation](docs/v2.6-control-routing.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

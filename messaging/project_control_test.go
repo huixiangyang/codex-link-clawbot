@@ -35,15 +35,12 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 		t.Fatalf("beta sessions leaked alpha state: %#v", stats)
 	}
 	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "快捷任务", false)
-	if !handled || !strings.Contains(menu, "审查改动") {
-		t.Fatalf("quick task menu = %q, %v", menu, handled)
+	if !handled || !strings.Contains(menu.Text, "审查改动") {
+		t.Fatalf("quick task menu = %q, %v", menu.Text, handled)
 	}
 	reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false)
-	if !handled || reply != "" {
-		t.Fatalf("quick task action = %q, %v", reply, handled)
-	}
-	if prompt, ok := handler.controlDispatches.LoadAndDelete("owner-1"); !ok || prompt != "审查当前项目改动" {
-		t.Fatalf("quick task dispatch = %#v, %v", prompt, ok)
+	if !handled || reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查当前项目改动" {
+		t.Fatalf("quick task action = %#v, %v", reply, handled)
 	}
 }
 
@@ -84,11 +81,8 @@ func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *test
 	if !strings.Contains(menu, "审查改动") {
 		t.Fatalf("quick tasks while running = %q", menu)
 	}
-	if reply := handler.runProjectQuickTask("owner-1", "review"); reply != "" {
-		t.Fatalf("quick task while running = %q", reply)
-	}
-	if prompt, ok := handler.controlDispatches.LoadAndDelete("owner-1"); !ok || prompt != "审查 Beta" {
-		t.Fatalf("queued quick task dispatch = %#v, %v", prompt, ok)
+	if reply := handler.runProjectQuickTask("owner-1", "review"); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" {
+		t.Fatalf("quick task while running = %#v", reply)
 	}
 }
 

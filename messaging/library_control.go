@@ -97,19 +97,18 @@ func (h *Handler) openLibraryDetail(userID, id string, kind LibraryKind, pageNum
 	return prompt + "\n\n回复数字操作，0 返回原列表。"
 }
 
-func (h *Handler) resendDelivery(userID, id string, pageNumber int) string {
+func (h *Handler) resendDelivery(userID, id string, pageNumber int) ActionResult {
 	if h.library == nil {
-		return "交付记录当前不可用。"
+		return newActionResult(string(actionResendDelivery), DomainLibrary, "交付记录当前不可用。")
 	}
 	record, exists := h.library.Find(userID, id)
 	if !exists || record.Kind != LibraryDelivery {
-		return "交付物已经不存在。"
+		return newActionResult(string(actionResendDelivery), DomainLibrary, "交付物已经不存在。")
 	}
-	h.controlMedia.Store(userID, record.FilePath)
 	options := []controlOption{{Label: "返回交付记录", Action: actionLibraryPage, Query: string(LibraryDelivery), Page: pageNumber}}
 	prompt := "交付物已再次发送\n\n名称：" + record.Title + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionLibraryCenter)
-	return prompt + "\n\n回复数字继续，0 返回。"
+	return effectActionResult(string(actionResendDelivery), DomainLibrary, prompt+"\n\n回复数字继续，0 返回。", EffectSendMedia, record.FilePath)
 }
 
 func libraryKindName(kind LibraryKind) string {

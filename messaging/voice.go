@@ -176,12 +176,11 @@ func (b *boundedVoiceOutputBuffer) Write(data []byte) (int, error) {
 	return originalLength, nil
 }
 
-func (h *Handler) requestVoiceBriefing(userID string) string {
+func (h *Handler) requestVoiceBriefing(userID string) ActionResult {
 	if h.voice == nil {
-		return "语音简报未启用。需要配置语音提供商。"
+		return newActionResult(string(actionVoiceBriefing), DomainAutomation, "语音简报未启用。需要配置语音提供商。")
 	}
-	h.controlVoice.Store(userID, true)
-	return "正在生成语音简报。"
+	return effectActionResult(string(actionVoiceBriefing), DomainAutomation, "正在生成语音简报。", EffectVoiceBriefing, "")
 }
 
 func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) (string, error) {

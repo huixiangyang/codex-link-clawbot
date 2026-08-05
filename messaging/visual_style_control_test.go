@@ -29,14 +29,14 @@ func TestVisualStyleMenuSwitchesPersistsAndIsolatesOwners(t *testing.T) {
 		t.Fatal("visual style menu was not handled")
 	}
 	for _, want := range []string{"当前：构筑", "1  刊物", "2  构筑", "3  黑标", "4  可爱", "5  简洁"} {
-		if !strings.Contains(menu, want) {
-			t.Fatalf("style menu missing %q: %q", want, menu)
+		if !strings.Contains(menu.Text, want) {
+			t.Fatalf("style menu missing %q: %q", want, menu.Text)
 		}
 	}
 
 	switched, handled := handler.handleControlInput(context.Background(), "owner-1", "4", false)
-	if !handled || !strings.Contains(switched, "视觉风格已切换") || !strings.Contains(switched, "当前：可爱") {
-		t.Fatalf("style switch = %q, handled=%v", switched, handled)
+	if !handled || !strings.Contains(switched.Text, "视觉风格已切换") || !strings.Contains(switched.Text, "当前：可爱") {
+		t.Fatalf("style switch = %q, handled=%v", switched.Text, handled)
 	}
 	if got := store.Get("owner-1").Style; got != visual.StyleCute {
 		t.Fatalf("owner-1 style = %q", got)
@@ -46,8 +46,8 @@ func TestVisualStyleMenuSwitchesPersistsAndIsolatesOwners(t *testing.T) {
 	}
 
 	direct, handled := handler.handleControlInput(context.Background(), "owner-1", "切换风格 简洁", false)
-	if !handled || !strings.Contains(direct, "当前：简洁") || store.Get("owner-1").Style != visual.StyleMinimal {
-		t.Fatalf("direct style switch = %q, handled=%v style=%q", direct, handled, store.Get("owner-1").Style)
+	if !handled || !strings.Contains(direct.Text, "当前：简洁") || store.Get("owner-1").Style != visual.StyleMinimal {
+		t.Fatalf("direct style switch = %q, handled=%v style=%q", direct.Text, handled, store.Get("owner-1").Style)
 	}
 	reloaded, err := preference.NewStore(path)
 	if err != nil {
@@ -58,15 +58,15 @@ func TestVisualStyleMenuSwitchesPersistsAndIsolatesOwners(t *testing.T) {
 	}
 
 	invalid, handled := handler.handleControlInput(context.Background(), "owner-1", "视觉风格 霓虹", false)
-	if !handled || !strings.Contains(invalid, "没有这个视觉风格") || store.Get("owner-1").Style != visual.StyleMinimal {
-		t.Fatalf("invalid style = %q, handled=%v", invalid, handled)
+	if !handled || !strings.Contains(invalid.Text, "没有这个视觉风格") || store.Get("owner-1").Style != visual.StyleMinimal {
+		t.Fatalf("invalid style = %q, handled=%v", invalid.Text, handled)
 	}
 }
 
 func TestVisualStyleMenuRequiresVisualRendererAndStore(t *testing.T) {
 	handler := newTestHandler()
 	reply, handled := handler.handleControlInput(context.Background(), "owner-1", "视觉风格", false)
-	if !handled || reply != "视觉卡片当前不可用。" {
-		t.Fatalf("unavailable style menu = %q, handled=%v", reply, handled)
+	if !handled || reply.Text != "视觉卡片当前不可用。" {
+		t.Fatalf("unavailable style menu = %q, handled=%v", reply.Text, handled)
 	}
 }

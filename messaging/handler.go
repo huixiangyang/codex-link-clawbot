@@ -31,12 +31,8 @@ type Handler struct {
 	codex               codex.Runtime
 	contextTokens       sync.Map // map[userID]contextToken
 	saveDir             string   // Linkhoard archive directory
-	controlDispatches   sync.Map // map[userID]string — 数字菜单触发的一次性 Codex 请求
-	controlMedia        sync.Map // map[userID]string — 数字菜单触发的交付物再次发送
-	controlVoice        sync.Map // map[userID]bool — 数字菜单触发的一次性语音简报
-	controlRetries      sync.Map // map[userID]taskID — 数字菜单触发的一次性持久任务重试
-	controlFrozenTexts  sync.Map // map[userID]taskID — 人工取回中断交付的冻结文字
 	controlStates       sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
+	intents             *IntentRegistry
 	progress            ProgressConfig
 	projects            *project.Manager
 	sessions            *session.Manager
@@ -132,6 +128,7 @@ func (h *Handler) SetBridgeInfo(version, apiAddr string) {
 func NewHandler(codex codex.Runtime) *Handler {
 	return &Handler{
 		codex:               codex,
+		intents:             mustDefaultIntentRegistry(),
 		progress:            DefaultProgressConfig(),
 		visualReplyEnabled:  true,
 		visualReplyMinRunes: 900,
@@ -208,35 +205,14 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	}
 
 	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
-	if reply, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
-		if prompt, ok := h.controlDispatches.LoadAndDelete(msg.FromUserID); ok {
-			return h.enqueueCodexTask(ctx, client, msg, prompt.(string), nil, nil, clientID)
-		}
-		if taskID, ok := h.controlRetries.LoadAndDelete(msg.FromUserID); ok {
-			return h.retryCodexTask(ctx, client, msg, taskID.(string), clientID)
-		}
-		if taskID, ok := h.controlFrozenTexts.LoadAndDelete(msg.FromUserID); ok {
-			h.sendFrozenTaskText(ctx, client, msg, taskID.(string), clientID)
-			return nil
-		}
-		if path, ok := h.controlMedia.LoadAndDelete(msg.FromUserID); ok {
-			if err := SendMediaFromPath(ctx, client, msg.FromUserID, path.(string), msg.ContextToken); err != nil {
-				reply = fmt.Sprintf("交付物发送失败：%v", err)
+	if result, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
+		if err := h.presentActionResult(ctx, client, msg, result, clientID); err != nil {
+			log.Printf("[handler] failed to present action result to %s: %v", userLabel, err)
+			// 入队和重试使用持久来源键，失败可以安全交给微信长轮询重投。
+			// 其他控制动作可能已经修改本地状态，投递失败不能再次执行。
+			if result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask {
+				return err
 			}
-		}
-		if _, ok := h.controlVoice.LoadAndDelete(msg.FromUserID); ok {
-			_, err := h.sendVoiceBriefing(ctx, client, msg.FromUserID, msg.ContextToken)
-			if err != nil {
-				reply = fmt.Sprintf("语音简报生成失败：%v", err)
-				if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
-					log.Printf("[handler] failed to send voice error to %s: %v", userLabel, sendErr)
-				}
-			}
-			// 成功时配套阅读卡和 MP3 已完整交付，不再追加低信息量状态卡。
-			return nil
-		}
-		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-			log.Printf("[handler] failed to send control result to %s: %v", userLabel, err)
 		}
 		return nil
 	}
