@@ -10,7 +10,6 @@ import (
 
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/messaging"
-	"github.com/huixiangyang/weclaw/runtimecontrol"
 )
 
 // Server provides an HTTP API for sending messages.
@@ -19,15 +18,14 @@ type Server struct {
 	addr    string
 	ready   chan struct{}
 	once    sync.Once
-	runtime *runtimecontrol.Controller
 }
 
 // NewServer creates an API server.
-func NewServer(clients []*ilink.Client, addr string, runtime *runtimecontrol.Controller) *Server {
+func NewServer(clients []*ilink.Client, addr string) *Server {
 	if addr == "" {
 		addr = "127.0.0.1:18011"
 	}
-	return &Server{clients: clients, addr: addr, ready: make(chan struct{}), runtime: runtime}
+	return &Server{clients: clients, addr: addr, ready: make(chan struct{})}
 }
 
 // Ready 在监听端口真正绑定成功后关闭，供调度器避免启动竞态。
@@ -44,17 +42,11 @@ type SendRequest struct {
 
 // Run starts the HTTP server. Blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/send", s.handleSend)
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/admin/drain", s.handleDrain)
-	mux.HandleFunc("/admin/resume", s.handleResume)
-
 	listener, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Addr: s.addr, Handler: mux}
+	srv := &http.Server{Addr: s.addr, Handler: s.handler()}
 
 	go func() {
 		<-ctx.Done()
@@ -69,65 +61,10 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if s.runtime == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(runtimecontrol.Snapshot{Status: runtimecontrol.StateDegraded})
-		return
-	}
-	snapshot := s.runtime.Snapshot()
-	if snapshot.Status != runtimecontrol.StateReady && snapshot.Status != runtimecontrol.StateDraining {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}
-	_ = json.NewEncoder(w).Encode(snapshot)
-}
-
-func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
-	if !loopbackRequest(r) {
-		http.Error(w, "loopback only", http.StatusForbidden)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.runtime == nil {
-		http.Error(w, "runtime unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.runtime.Drain())
-}
-
-func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
-	if !loopbackRequest(r) {
-		http.Error(w, "loopback only", http.StatusForbidden)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.runtime == nil {
-		http.Error(w, "runtime unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.runtime.Resume())
-}
-
-func loopbackRequest(request *http.Request) bool {
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+func (s *Server) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/send", s.handleSend)
+	return mux
 }
 
 func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {

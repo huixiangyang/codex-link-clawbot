@@ -7,10 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var statusAPI string
-
 func init() {
-	statusCmd.Flags().StringVar(&statusAPI, "api", defaultAPIBaseURL, "loopback runtime API origin")
 	rootCmd.AddCommand(statusCmd)
 }
 
@@ -18,7 +15,11 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Print structured runtime health",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		snapshot, err := fetchHealth(cmd.Context(), statusAPI)
+		controlSocket, err := defaultManagementSocketPath()
+		if err != nil {
+			return err
+		}
+		snapshot, err := fetchHealth(cmd.Context(), controlSocket)
 		if err != nil {
 			return err
 		}

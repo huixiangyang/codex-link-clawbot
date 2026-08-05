@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,23 +16,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/huixiangyang/weclaw/api"
 	"github.com/huixiangyang/weclaw/runtimecontrol"
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const (
 	defaultServiceName = "weclaw.service"
-	defaultAPIBaseURL  = "http://127.0.0.1:18011"
 	systemctlPath      = "/usr/bin/systemctl"
 )
 
 var serviceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.@-]+\.service$`)
-
-var serviceHTTPClient = &http.Client{
-	Timeout: 10 * time.Second,
-	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}
 
 func validateServiceName(service string) error {
 	if !serviceNamePattern.MatchString(service) {
@@ -42,29 +35,47 @@ func validateServiceName(service string) error {
 	return nil
 }
 
-func validateLoopbackAPI(raw string) (*url.URL, error) {
-	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
-	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, fmt.Errorf("API address must be a plain loopback HTTP origin")
+func defaultManagementSocketPath() (string, error) {
+	root, err := statefile.DefaultRoot()
+	if err != nil {
+		return "", err
 	}
-	host := parsed.Hostname()
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() || parsed.Port() == "" {
-		return nil, fmt.Errorf("API address must use a loopback IP and explicit port")
-	}
-	return parsed, nil
+	return filepath.Join(root, api.ManagementSocketName), nil
 }
 
-func fetchHealth(ctx context.Context, apiBase string) (runtimecontrol.Snapshot, error) {
-	parsed, err := validateLoopbackAPI(apiBase)
+func newManagementHTTPClient(socketPath string) (*http.Client, error) {
+	if err := api.ValidateManagementSocket(socketPath); err != nil {
+		return nil, err
+	}
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// 每次拨号前重新校验，避免路径在初检后被替换。
+			if err := api.ValidateManagementSocket(socketPath); err != nil {
+				return nil, err
+			}
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
+		},
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}, nil
+}
+
+func fetchHealth(ctx context.Context, socketPath string) (runtimecontrol.Snapshot, error) {
+	client, err := newManagementHTTPClient(socketPath)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String()+"/health", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://weclaw.local/health", nil)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
-	response, err := serviceHTTPClient.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
@@ -88,19 +99,19 @@ func fetchHealth(ctx context.Context, apiBase string) (runtimecontrol.Snapshot, 
 	return snapshot, nil
 }
 
-func requestAdmin(ctx context.Context, apiBase, action string) (runtimecontrol.Snapshot, error) {
-	parsed, err := validateLoopbackAPI(apiBase)
-	if err != nil {
-		return runtimecontrol.Snapshot{}, err
-	}
+func requestAdmin(ctx context.Context, socketPath, action string) (runtimecontrol.Snapshot, error) {
 	if action != "drain" && action != "resume" {
 		return runtimecontrol.Snapshot{}, fmt.Errorf("invalid runtime admin action")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String()+"/admin/"+action, http.NoBody)
+	client, err := newManagementHTTPClient(socketPath)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
-	response, err := serviceHTTPClient.Do(request)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://weclaw.local/admin/"+action, http.NoBody)
+	if err != nil {
+		return runtimecontrol.Snapshot{}, err
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
@@ -120,10 +131,36 @@ func requestAdmin(ctx context.Context, apiBase, action string) (runtimecontrol.S
 	return snapshot, nil
 }
 
-func waitForDrain(ctx context.Context, apiBase string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
+func requestDeploymentNotification(ctx context.Context, socketPath string, notice api.DeploymentNotice) error {
+	client, err := newManagementHTTPClient(socketPath)
+	if err != nil {
+		return err
+	}
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(notice); err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://weclaw.local/admin/deployment-notification", &body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("deployment notification returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+func waitForDrain(ctx context.Context, socketPath string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		snapshot, err := fetchHealth(ctx, apiBase)
+		snapshot, err := fetchHealth(ctx, socketPath)
 		if err == nil && snapshot.Status == runtimecontrol.StateDraining && snapshot.DrainComplete {
 			return snapshot, nil
 		}
@@ -138,10 +175,10 @@ func waitForDrain(ctx context.Context, apiBase string, timeout time.Duration) (r
 	}
 }
 
-func waitForReady(ctx context.Context, apiBase, expectedVersion string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
+func waitForReady(ctx context.Context, socketPath, expectedVersion string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		snapshot, err := fetchHealth(ctx, apiBase)
+		snapshot, err := fetchHealth(ctx, socketPath)
 		if err == nil && snapshot.Status == runtimecontrol.StateReady && snapshot.Codex.Ready && snapshot.WeChat.Monitors > 0 && snapshot.WeChat.Healthy == snapshot.WeChat.Monitors && (expectedVersion == "" || snapshot.Version == expectedVersion) {
 			return snapshot, nil
 		}
@@ -156,10 +193,10 @@ func waitForReady(ctx context.Context, apiBase, expectedVersion string, timeout 
 	}
 }
 
-func waitForHealthyDrain(ctx context.Context, apiBase, expectedVersion string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
+func waitForHealthyDrain(ctx context.Context, socketPath, expectedVersion string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		snapshot, err := fetchHealth(ctx, apiBase)
+		snapshot, err := fetchHealth(ctx, socketPath)
 		if err == nil && snapshot.Status == runtimecontrol.StateDraining && snapshot.Draining && snapshot.Tasks.Running == 0 && snapshot.Tasks.Delivering == 0 && snapshot.Codex.Ready && snapshot.WeChat.Monitors > 0 && snapshot.WeChat.Healthy == snapshot.WeChat.Monitors && snapshot.Version == expectedVersion {
 			return snapshot, nil
 		}

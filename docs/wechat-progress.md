@@ -69,7 +69,7 @@ queued
 
 ## 健康、排空与部署
 
-`GET /health` 返回 `starting`、`ready`、`draining`、`stopping` 或 `degraded`，以及实际版本、Codex 就绪、微信监控、任务数量和 `drain_complete`。`POST /admin/drain` 与 `/admin/resume` 只允许回环来源。
+本机管理面的 `GET /health` 返回 `starting`、`ready`、`draining`、`stopping` 或 `degraded`，以及实际版本、Codex 就绪、微信监控、任务数量和 `drain_complete`。健康、排空、恢复及部署通知只通过当前用户拥有且权限为 `0600` 的 `~/.weclaw/control.sock` 提供；TCP 不再暴露健康或 `/admin/*` 路由。
 
 排空期间继续可靠接收微信消息，但 Coordinator 不领取新任务。`drain_complete` 要求没有运行/发送任务、没有 staging，并且没有待提交同步批次。
 
@@ -88,7 +88,7 @@ weclaw deploy v2.5.0
 weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 ```
 
-候选先验证版本、平台和 SHA-256。旧进程排空并停止后才快照和离线迁移；新进程以隐藏的排空启动模式完成版本、Codex、微信和游标验收，再恢复正常 systemd 单元并放行队列。失败同时恢复旧二进制、单元、配置和任务状态。成功写入无正文部署收据、发送纯文字微信通知，并立即销毁包含任务正文、附件或令牌的状态副本。
+候选先验证版本、平台和 SHA-256。旧进程排空并停止后才快照和离线迁移；新进程以隐藏的排空启动模式完成版本、Codex、微信和游标验收，再恢复正常 systemd 单元并放行队列。失败同时恢复旧二进制、单元、配置和任务状态。成功后，部署器通过本机管理 socket 提交类型化版本元数据，由运行中服务生成固定纯文字通知并发送给绑定者；随后写入无正文部署收据，并立即销毁包含任务正文、附件或令牌的状态副本。
 
 ## 验证
 

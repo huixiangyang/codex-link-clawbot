@@ -68,7 +68,7 @@
 2. 一批消息中前项成功、后项失败时，私有消费回执应避免重做前项，同时保留整批旧游标。
 3. `GET /health` 必须返回严格结构化 JSON，包括版本、运行状态、Codex、微信监控、任务数与排空状态；`starting/degraded/stopping` 返回 HTTP 503。
 4. 排空期间仍可接收和持久化消息，但 Coordinator 不领取新任务。只有运行、发送、staging 和待提交同步批次都为零时 `drain_complete=true`。
-5. `/admin/drain` 与 `/admin/resume` 只接受回环来源。
+5. 健康、排空、恢复和部署通知只存在于当前用户拥有的 `~/.weclaw/control.sock`；socket 必须为 `0600`，TCP `/health` 与 `/admin/*` 必须返回 404。
 
 ## 9. 事务部署与回滚
 

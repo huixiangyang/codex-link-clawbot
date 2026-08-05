@@ -9,13 +9,11 @@ import (
 
 var (
 	restartService string
-	restartAPI     string
 	restartTimeout time.Duration
 )
 
 func init() {
 	restartCmd.Flags().StringVar(&restartService, "service", defaultServiceName, "systemd user service name")
-	restartCmd.Flags().StringVar(&restartAPI, "api", defaultAPIBaseURL, "loopback runtime API origin")
 	restartCmd.Flags().DurationVar(&restartTimeout, "timeout", 10*time.Minute, "maximum drain and readiness wait")
 	rootCmd.AddCommand(restartCmd)
 }
@@ -25,19 +23,23 @@ var restartCmd = &cobra.Command{
 	Short: "Drain and restart the systemd user service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		draining, err := requestAdmin(ctx, restartAPI, "drain")
+		controlSocket, err := defaultManagementSocketPath()
+		if err != nil {
+			return err
+		}
+		draining, err := requestAdmin(ctx, controlSocket, "drain")
 		if err != nil {
 			return fmt.Errorf("request service drain: %w", err)
 		}
-		if _, err := waitForDrain(ctx, restartAPI, restartTimeout); err != nil {
-			_, _ = requestAdmin(ctx, restartAPI, "resume")
+		if _, err := waitForDrain(ctx, controlSocket, restartTimeout); err != nil {
+			_, _ = requestAdmin(ctx, controlSocket, "resume")
 			return err
 		}
 		if err := runSystemctl(ctx, restartService, "restart"); err != nil {
-			_, _ = requestAdmin(ctx, restartAPI, "resume")
+			_, _ = requestAdmin(ctx, controlSocket, "resume")
 			return err
 		}
-		if _, err := waitForReady(ctx, restartAPI, draining.Version, restartTimeout); err != nil {
+		if _, err := waitForReady(ctx, controlSocket, draining.Version, restartTimeout); err != nil {
 			return err
 		}
 		fmt.Printf("WeClaw %s restarted and ready.\n", draining.Version)

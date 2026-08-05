@@ -2,21 +2,16 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/huixiangyang/weclaw/runtimecontrol"
-	"github.com/huixiangyang/weclaw/taskqueue"
 )
 
 func TestServerReadyClosesOnlyAfterListenSucceeds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	server := NewServer(nil, "127.0.0.1:0", nil)
+	server := NewServer(nil, "127.0.0.1:0")
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Run(ctx) }()
 
@@ -38,43 +33,15 @@ func TestServerReadyClosesOnlyAfterListenSucceeds(t *testing.T) {
 	}
 }
 
-func TestStructuredHealthAndLoopbackDrain(t *testing.T) {
-	tasks, err := taskqueue.NewStore(filepath.Join(t.TempDir(), "tasks"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	controller := runtimecontrol.New("v2.5-test", tasks, nil)
-	controller.SetCodexReady(true)
-	controller.SetReady()
-	server := NewServer(nil, "127.0.0.1:0", controller)
-
-	healthRequest := httptest.NewRequest(http.MethodGet, "/health", nil)
-	healthResponse := httptest.NewRecorder()
-	server.handleHealth(healthResponse, healthRequest)
-	if healthResponse.Code != http.StatusOK {
-		t.Fatalf("health status=%d body=%s", healthResponse.Code, healthResponse.Body.String())
-	}
-	var snapshot runtimecontrol.Snapshot
-	if err := json.NewDecoder(healthResponse.Body).Decode(&snapshot); err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Status != runtimecontrol.StateReady || snapshot.Version != "v2.5-test" || !snapshot.Codex.Ready {
-		t.Fatalf("health snapshot = %#v", snapshot)
-	}
-
-	drainRequest := httptest.NewRequest(http.MethodPost, "/admin/drain", nil)
-	drainRequest.RemoteAddr = "127.0.0.1:42000"
-	drainResponse := httptest.NewRecorder()
-	server.handleDrain(drainResponse, drainRequest)
-	if drainResponse.Code != http.StatusOK || !controller.Snapshot().Draining {
-		t.Fatalf("drain status=%d snapshot=%#v", drainResponse.Code, controller.Snapshot())
-	}
-	remoteRequest := httptest.NewRequest(http.MethodPost, "/admin/resume", nil)
-	remoteRequest.RemoteAddr = "203.0.113.8:42000"
-	remoteResponse := httptest.NewRecorder()
-	server.handleResume(remoteResponse, remoteRequest)
-	if remoteResponse.Code != http.StatusForbidden {
-		t.Fatalf("remote admin status=%d", remoteResponse.Code)
+func TestTCPServerDoesNotExposeManagementRoutes(t *testing.T) {
+	server := NewServer(nil, "127.0.0.1:0")
+	for _, route := range []string{"/health", "/admin/drain", "/admin/resume", "/admin/deployment-notification"} {
+		request := httptest.NewRequest(http.MethodPost, route, nil)
+		response := httptest.NewRecorder()
+		server.handler().ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("route %s status=%d, want 404", route, response.Code)
+		}
 	}
 }
 
@@ -85,7 +52,7 @@ func TestServerDoesNotBecomeReadyWhenAddressIsOccupied(t *testing.T) {
 	}
 	defer listener.Close()
 
-	server := NewServer(nil, listener.Addr().String(), nil)
+	server := NewServer(nil, listener.Addr().String())
 	if err := server.Run(context.Background()); err == nil {
 		t.Fatal("Run() error = nil, want bind failure")
 	}

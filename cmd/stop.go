@@ -9,13 +9,11 @@ import (
 
 var (
 	stopService string
-	stopAPI     string
 	stopTimeout time.Duration
 )
 
 func init() {
 	stopCmd.Flags().StringVar(&stopService, "service", defaultServiceName, "systemd user service name")
-	stopCmd.Flags().StringVar(&stopAPI, "api", defaultAPIBaseURL, "loopback runtime API origin")
 	stopCmd.Flags().DurationVar(&stopTimeout, "timeout", 10*time.Minute, "maximum drain wait")
 	rootCmd.AddCommand(stopCmd)
 }
@@ -25,15 +23,19 @@ var stopCmd = &cobra.Command{
 	Short: "Drain and stop the systemd user service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		if _, err := requestAdmin(ctx, stopAPI, "drain"); err != nil {
+		controlSocket, err := defaultManagementSocketPath()
+		if err != nil {
+			return err
+		}
+		if _, err := requestAdmin(ctx, controlSocket, "drain"); err != nil {
 			return fmt.Errorf("request service drain: %w", err)
 		}
-		if _, err := waitForDrain(ctx, stopAPI, stopTimeout); err != nil {
-			_, _ = requestAdmin(ctx, stopAPI, "resume")
+		if _, err := waitForDrain(ctx, controlSocket, stopTimeout); err != nil {
+			_, _ = requestAdmin(ctx, controlSocket, "resume")
 			return err
 		}
 		if err := runSystemctl(ctx, stopService, "stop"); err != nil {
-			_, _ = requestAdmin(ctx, stopAPI, "resume")
+			_, _ = requestAdmin(ctx, controlSocket, "resume")
 			return err
 		}
 		fmt.Println("WeClaw drained and stopped.")

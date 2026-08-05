@@ -17,8 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/ilink"
-	"github.com/huixiangyang/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/api"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +45,6 @@ type deployOptions struct {
 	Binary         string
 	Expected       string
 	Service        string
-	APIBase        string
 	Timeout        time.Duration
 	TargetBinary   string
 	StateRoot      string
@@ -63,7 +61,6 @@ var (
 	deployBinary       string
 	deployExpected     string
 	deployService      string
-	deployAPI          string
 	deployTimeout      time.Duration
 	deployTargetBinary string
 	deployStateRoot    string
@@ -73,7 +70,6 @@ func init() {
 	deployCmd.Flags().StringVar(&deployBinary, "binary", "", "absolute local candidate binary")
 	deployCmd.Flags().StringVar(&deployExpected, "expect-version", "", "required version for a local candidate")
 	deployCmd.Flags().StringVar(&deployService, "service", defaultServiceName, "systemd user service name")
-	deployCmd.Flags().StringVar(&deployAPI, "api", defaultAPIBaseURL, "loopback runtime API origin")
 	deployCmd.Flags().DurationVar(&deployTimeout, "timeout", 10*time.Minute, "maximum drain, rollback and readiness wait")
 	deployCmd.Flags().StringVar(&deployTargetBinary, "target", "", "installed binary path")
 	deployCmd.Flags().StringVar(&deployStateRoot, "state-root", "", "WeClaw state root")
@@ -99,7 +95,7 @@ var deployCmd = &cobra.Command{
 		}
 		return runDeploy(cmd.Context(), deployOptions{
 			ReleaseVersion: releaseVersion, Binary: deployBinary, Expected: deployExpected,
-			Service: deployService, APIBase: deployAPI, Timeout: deployTimeout,
+			Service: deployService, Timeout: deployTimeout,
 			TargetBinary: target, StateRoot: stateRoot,
 		})
 	},
@@ -117,10 +113,11 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 		return err
 	}
 	defer candidate.cleanup()
+	controlSocket := filepath.Join(options.StateRoot, api.ManagementSocketName)
 
-	current, err := fetchHealth(ctx, options.APIBase)
+	current, err := fetchHealth(ctx, controlSocket)
 	if err != nil {
-		return fmt.Errorf("preflight requires the structured v2.5 health protocol: %w", err)
+		return fmt.Errorf("preflight requires the local structured health protocol: %w", err)
 	}
 	if current.Status != "ready" || current.Draining {
 		return fmt.Errorf("service must be ready before deployment (status=%s)", current.Status)
@@ -128,16 +125,16 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	if current.Version == candidate.Version {
 		return fmt.Errorf("version %s is already running", candidate.Version)
 	}
-	if _, err := requestAdmin(ctx, options.APIBase, "drain"); err != nil {
+	if _, err := requestAdmin(ctx, controlSocket, "drain"); err != nil {
 		return fmt.Errorf("request service drain: %w", err)
 	}
 	resumeNeeded := true
 	defer func() {
 		if resumeNeeded {
-			_, _ = requestAdmin(context.Background(), options.APIBase, "resume")
+			_, _ = requestAdmin(context.Background(), controlSocket, "resume")
 		}
 	}()
-	if _, err := waitForDrain(ctx, options.APIBase, options.Timeout); err != nil {
+	if _, err := waitForDrain(ctx, controlSocket, options.Timeout); err != nil {
 		return err
 	}
 
@@ -171,7 +168,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 		restartErr := runSystemctl(context.Background(), options.Service, "start")
 		var readyErr error
 		if restartErr == nil {
-			_, readyErr = waitForReady(context.Background(), options.APIBase, current.Version, options.Timeout)
+			_, readyErr = waitForReady(context.Background(), controlSocket, current.Version, options.Timeout)
 		}
 		receipt.Status, receipt.Phase, receipt.Failure, receipt.FinishedAt = "failed", "snapshot", safeFailure(errors.Join(err, restartErr, readyErr)), time.Now().Unix()
 		_ = writeReceipt()
@@ -199,7 +196,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	}
 	receipt.Phase = "verifying"
 	_ = writeReceipt()
-	if _, err := waitForHealthyDrain(ctx, options.APIBase, candidate.Version, options.Timeout); err != nil {
+	if _, err := waitForHealthyDrain(ctx, controlSocket, candidate.Version, options.Timeout); err != nil {
 		return failAndRollback(options, current.Version, snapshot, unitPath, &receipt, receiptPath, err)
 	}
 	// 当前进程继续保持排空；先把下次启动单元恢复为正常模式，再显式放行队列。
@@ -218,7 +215,11 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	}
 
 	receipt.Status, receipt.Phase, receipt.FinishedAt = "succeeded", "ready", time.Now().Unix()
-	if notifyErr := sendDeploymentNotification(ctx, current.Version, candidate.Version, options.Service); notifyErr != nil {
+	if notifyErr := requestDeploymentNotification(ctx, controlSocket, api.DeploymentNotice{
+		FromVersion: current.Version,
+		ToVersion:   candidate.Version,
+		Service:     options.Service,
+	}); notifyErr != nil {
 		receipt.NotificationStatus = "failed"
 		fmt.Fprintf(os.Stderr, "warning: deployment notification failed: %v\n", notifyErr)
 	} else {
@@ -237,9 +238,10 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 
 func completeDeploymentCommit(ctx context.Context, options deployOptions, expectedVersion string) error {
 	deadline := time.Now().Add(options.Timeout)
+	controlSocket := filepath.Join(options.StateRoot, api.ManagementSocketName)
 	var lastErr error
 	for {
-		snapshot, err := requestAdmin(ctx, options.APIBase, "resume")
+		snapshot, err := requestAdmin(ctx, controlSocket, "resume")
 		if err == nil && snapshot.Status == "ready" && snapshot.Version == expectedVersion && snapshot.Codex.Ready && snapshot.WeChat.Monitors > 0 && snapshot.WeChat.Healthy == snapshot.WeChat.Monitors {
 			return nil
 		}
@@ -248,7 +250,7 @@ func completeDeploymentCommit(ctx context.Context, options deployOptions, expect
 		} else {
 			lastErr = fmt.Errorf("resume returned status %s for version %s", snapshot.Status, snapshot.Version)
 		}
-		health, healthErr := fetchHealth(ctx, options.APIBase)
+		health, healthErr := fetchHealth(ctx, controlSocket)
 		if healthErr == nil && health.Status == "ready" && health.Version == expectedVersion && health.Codex.Ready && health.WeChat.Monitors > 0 && health.WeChat.Healthy == health.WeChat.Monitors {
 			return nil
 		}
@@ -268,9 +270,6 @@ func completeDeploymentCommit(ctx context.Context, options deployOptions, expect
 
 func validateDeployOptions(options deployOptions) error {
 	if err := validateServiceName(options.Service); err != nil {
-		return err
-	}
-	if _, err := validateLoopbackAPI(options.APIBase); err != nil {
 		return err
 	}
 	if options.Timeout <= 0 {
@@ -424,7 +423,7 @@ func failAndRollback(options deployOptions, oldVersion string, snapshot deployme
 		startErr = runSystemctl(rollbackCtx, options.Service, "start")
 	}
 	if restoreErr == nil && reloadErr == nil && startErr == nil {
-		_, readyErr = waitForReady(rollbackCtx, options.APIBase, oldVersion, options.Timeout)
+		_, readyErr = waitForReady(rollbackCtx, filepath.Join(options.StateRoot, api.ManagementSocketName), oldVersion, options.Timeout)
 	}
 	rollbackErr := errors.Join(stopErr, restoreErr, reloadErr, startErr, readyErr)
 	receipt.FinishedAt = time.Now().Unix()
@@ -485,29 +484,6 @@ func rewriteSystemdUnit(path, binaryPath string, draining bool) error {
 		return fmt.Errorf("systemd unit must contain exactly one ExecStart")
 	}
 	return writeAtomicFile(path, []byte(strings.Join(lines, "\n")), info.Mode().Perm())
-}
-
-func sendDeploymentNotification(ctx context.Context, fromVersion, toVersion, service string) error {
-	accounts, err := ilink.LoadAllCredentials()
-	if err != nil {
-		return err
-	}
-	if len(accounts) == 0 {
-		return fmt.Errorf("no WeChat account is configured")
-	}
-	message := fmt.Sprintf("WeClaw 已完成部署并恢复服务。\n版本：%s → %s\n服务：%s\n状态：已就绪", fromVersion, toVersion, service)
-	var failures []error
-	for _, credentials := range accounts {
-		if strings.TrimSpace(credentials.ILinkUserID) == "" {
-			failures = append(failures, fmt.Errorf("account owner is missing"))
-			continue
-		}
-		client := ilink.NewClient(credentials)
-		if err := messaging.SendTextReply(ctx, client, credentials.ILinkUserID, message, "", ""); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
 }
 
 func safeFailure(err error) string {

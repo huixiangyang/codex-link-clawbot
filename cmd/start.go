@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -215,13 +217,40 @@ func runStart(cmd *cobra.Command, args []string) error {
 		clients = append(clients, client)
 		coordinator.RegisterClient(client)
 	}
+	managementSocket := filepath.Join(stateRoot, api.ManagementSocketName)
+	managementServer := api.NewManagementServer(runtimeController, managementSocket, func(notifyContext context.Context, notice api.DeploymentNotice) error {
+		message := fmt.Sprintf("WeClaw 已完成部署并恢复服务。\n版本：%s → %s\n服务：%s\n状态：已就绪", notice.FromVersion, notice.ToVersion, notice.Service)
+		var failures []error
+		for index, credentials := range accounts {
+			if strings.TrimSpace(credentials.ILinkUserID) == "" {
+				failures = append(failures, fmt.Errorf("account owner is missing"))
+				continue
+			}
+			if err := messaging.SendTextReply(notifyContext, clients[index], credentials.ILinkUserID, message, "", ""); err != nil {
+				failures = append(failures, err)
+			}
+		}
+		return errors.Join(failures...)
+	})
+	managementErr := make(chan error, 1)
+	go func() {
+		managementErr <- managementServer.Run(ctx)
+	}()
+	select {
+	case <-managementServer.Ready():
+	case err := <-managementErr:
+		return fmt.Errorf("start local management server: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	// Resolve API addr: flag > env/config > default
 	apiAddr := cfg.APIAddr // already includes env override from loadEnv
 	if apiAddrFlag != "" {
 		apiAddr = apiAddrFlag
 	}
 	handler.SetBridgeInfo(Version, apiAddr)
-	apiServer := api.NewServer(clients, apiAddr, runtimeController)
+	apiServer := api.NewServer(clients, apiAddr)
 	apiErr := make(chan error, 1)
 	go func() {
 		apiErr <- apiServer.Run(ctx)
@@ -293,6 +322,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		return fmt.Errorf("task coordinator stopped: %w", err)
+	case err := <-managementErr:
+		if ctx.Err() != nil {
+			<-monitorsDone
+			return nil
+		}
+		return fmt.Errorf("local management server stopped: %w", err)
 	case <-ctx.Done():
 		<-monitorsDone
 		return nil

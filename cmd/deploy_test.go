@@ -204,7 +204,7 @@ func TestVerifyReleaseChecksum(t *testing.T) {
 }
 
 func TestValidateDeployOptionsSeparatesReleaseAndLocalModes(t *testing.T) {
-	base := deployOptions{Service: defaultServiceName, APIBase: defaultAPIBaseURL, Timeout: time.Minute, TargetBinary: "/tmp/weclaw", StateRoot: "/tmp/state"}
+	base := deployOptions{Service: defaultServiceName, Timeout: time.Minute, TargetBinary: "/tmp/weclaw", StateRoot: "/tmp/state"}
 	release := base
 	release.ReleaseVersion = "v2.5.0-test.1"
 	if err := validateDeployOptions(release); err != nil {
