@@ -24,4 +24,12 @@ v2 不兼容旧运行状态，升级必须停服并一次性迁移；运行时�
 5. 启动服务，验证 systemd、`/health`、微信 `/`、项目会话数量和普通 Codex turn。
 6. 失败时同时恢复三份状态和旧二进制；禁止只回滚其中一部分。
 
+本机 systemd 部署可以在替换二进制后使用参数化切换脚本；脚本会依次重启、等待健康检查、核对实际版本并主动发送微信就绪通知，不再接收或手工终止旧 PID：
+
+```bash
+./scripts/cutover-local.sh v2.3.2-audio.1 'WeClaw v2.3.2-audio.1 已启动，可以继续使用。'
+```
+
+非默认服务名、二进制、状态目录或本地 API 可分别通过 `WECLAW_SERVICE_NAME`、`WECLAW_BINARY`、`WECLAW_STATE_DIR`、`WECLAW_API_URL` 覆盖。
+
 本仓库生产实例的迁移备份位于 `~/.weclaw/backups/v2.0.0-projects.1/`。

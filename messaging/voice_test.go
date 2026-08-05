@@ -282,15 +282,19 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 	}
 
 	var sent []ilink.SendMessageRequest
+	var deliveryEvents []string
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/ilink/bot/getuploadurl":
+			deliveryEvents = append(deliveryEvents, "stage")
 			_ = json.NewEncoder(response).Encode(map[string]any{"ret": 0, "upload_full_url": server.URL + "/upload"})
 		case "/upload":
+			deliveryEvents = append(deliveryEvents, "upload")
 			response.Header().Set("X-Encrypted-Param", "download-token")
 			response.WriteHeader(http.StatusOK)
 		case "/ilink/bot/sendmessage":
+			deliveryEvents = append(deliveryEvents, "send")
 			var message ilink.SendMessageRequest
 			if err := json.NewDecoder(request.Body).Decode(&message); err != nil {
 				t.Errorf("decode sent message: %v", err)
@@ -318,6 +322,9 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 
 	if len(sent) != 2 {
 		t.Fatalf("sent messages = %d, want companion image and MP3 only", len(sent))
+	}
+	if got, want := strings.Join(deliveryEvents, ","), "stage,upload,stage,upload,send,send"; got != want {
+		t.Fatalf("delivery events = %q, want %q", got, want)
 	}
 	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
 		t.Fatalf("first message = %#v, want companion image", item)

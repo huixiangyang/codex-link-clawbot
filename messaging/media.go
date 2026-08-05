@@ -39,36 +39,87 @@ func SendMediaFromURL(ctx context.Context, client *ilink.Client, toUserID, media
 		return fmt.Errorf("download %s: %w", mediaURL, err)
 	}
 
-	return sendMediaData(ctx, client, toUserID, filenameFromURL(mediaURL), mediaURL, data, contentType, contextToken)
+	return sendMediaBatch(ctx, client, toUserID, contextToken, []outboundMediaPayload{{
+		FileName: filenameFromURL(mediaURL), Source: mediaURL, Data: data, ContentType: contentType,
+	}})
 }
 
 // SendMediaFromPath reads a local file and sends it as a media message.
 func SendMediaFromPath(ctx context.Context, client *ilink.Client, toUserID, path, contextToken string) error {
+	payload, err := outboundMediaFromPath(path)
+	if err != nil {
+		return err
+	}
+	return sendMediaBatch(ctx, client, toUserID, contextToken, []outboundMediaPayload{payload})
+}
+
+func outboundMediaFromPath(path string) (outboundMediaPayload, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
+		return outboundMediaPayload{}, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer file.Close()
 	data, err := readAllLimited(file, maxOutboundArtifactBytes)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return outboundMediaPayload{}, fmt.Errorf("read %s: %w", path, err)
 	}
-
-	return sendMediaData(ctx, client, toUserID, filepath.Base(path), path, data, inferContentType(path), contextToken)
+	return outboundMediaPayload{
+		FileName: filepath.Base(path), Source: path, Data: data, ContentType: inferContentType(path),
+	}, nil
 }
 
 func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName, source string, data []byte, contentType, contextToken string) error {
+	return sendMediaBatch(ctx, client, toUserID, contextToken, []outboundMediaPayload{{
+		FileName: fileName, Source: source, Data: data, ContentType: contentType,
+	}})
+}
+
+type outboundMediaPayload struct {
+	FileName    string
+	Source      string
+	Data        []byte
+	ContentType string
+}
+
+type stagedMediaMessage struct {
+	ContentType string
+	Item        ilink.MessageItem
+}
+
+// sendMediaBatch 先把整批媒体上传到 CDN，再按声明顺序发送，避免后项上传失败时留下孤立的前项消息。
+func sendMediaBatch(ctx context.Context, client *ilink.Client, toUserID, contextToken string, payloads []outboundMediaPayload) error {
+	if len(payloads) == 0 {
+		return fmt.Errorf("media batch must not be empty")
+	}
+	staged := make([]stagedMediaMessage, 0, len(payloads))
+	for index, payload := range payloads {
+		message, err := stageMediaMessage(ctx, client, toUserID, payload)
+		if err != nil {
+			return fmt.Errorf("stage media %d/%d: %w", index+1, len(payloads), err)
+		}
+		staged = append(staged, message)
+	}
+	for index, message := range staged {
+		if err := sendStagedMediaMessage(ctx, client, toUserID, contextToken, message); err != nil {
+			return fmt.Errorf("send media %d/%d: %w", index+1, len(staged), err)
+		}
+	}
+	return nil
+}
+
+func stageMediaMessage(ctx context.Context, client *ilink.Client, toUserID string, payload outboundMediaPayload) (stagedMediaMessage, error) {
+	fileName := payload.FileName
 	if fileName == "" {
 		fileName = "file"
 	}
 
-	cdnMediaType, itemType := classifyMedia(contentType, source)
+	cdnMediaType, itemType := classifyMedia(payload.ContentType, payload.Source)
 
-	log.Printf("[media] uploading %s (%d bytes) for %s", contentType, len(data), ilink.LogLabel(toUserID))
+	log.Printf("[media] staging %s (%d bytes) for %s", payload.ContentType, len(payload.Data), ilink.LogLabel(toUserID))
 
-	uploaded, err := UploadFileToCDN(ctx, client, data, toUserID, cdnMediaType)
+	uploaded, err := UploadFileToCDN(ctx, client, payload.Data, toUserID, cdnMediaType)
 	if err != nil {
-		return fmt.Errorf("upload to CDN: %w", err)
+		return stagedMediaMessage{}, fmt.Errorf("upload to CDN: %w", err)
 	}
 
 	media := &ilink.MediaInfo{
@@ -105,7 +156,10 @@ func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName
 			},
 		}
 	}
+	return stagedMediaMessage{ContentType: payload.ContentType, Item: item}, nil
+}
 
+func sendStagedMediaMessage(ctx context.Context, client *ilink.Client, toUserID, contextToken string, staged stagedMediaMessage) error {
 	req := &ilink.SendMessageRequest{
 		Msg: ilink.SendMsg{
 			FromUserID:   client.BotID(),
@@ -113,7 +167,7 @@ func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName
 			ClientID:     NewClientID(),
 			MessageType:  ilink.MessageTypeBot,
 			MessageState: ilink.MessageStateFinish,
-			ItemList:     []ilink.MessageItem{item},
+			ItemList:     []ilink.MessageItem{staged.Item},
 			ContextToken: contextToken,
 		},
 		BaseInfo: ilink.BaseInfo{},
@@ -121,13 +175,13 @@ func sendMediaData(ctx context.Context, client *ilink.Client, toUserID, fileName
 
 	resp, err := client.SendMessage(ctx, req)
 	if err != nil {
-		return fmt.Errorf("send media message: %w", err)
+		return fmt.Errorf("send staged media message: %w", err)
 	}
 	if resp.Ret != 0 {
-		return fmt.Errorf("send media failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)
+		return fmt.Errorf("send staged media failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)
 	}
 
-	log.Printf("[media] sent %s to %s", contentType, ilink.LogLabel(toUserID))
+	log.Printf("[media] sent %s to %s", staged.ContentType, ilink.LogLabel(toUserID))
 	return nil
 }
 

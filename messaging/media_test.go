@@ -1,8 +1,14 @@
 package messaging
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/huixiangyang/weclaw/ilink"
 )
 
 func TestExtractImageURLs(t *testing.T) {
@@ -79,5 +85,43 @@ func TestReadAllLimitedRejectsOversizedBody(t *testing.T) {
 	_, err := readAllLimited(strings.NewReader("12345"), 4)
 	if err == nil {
 		t.Fatal("readAllLimited() error = nil, want size limit error")
+	}
+}
+
+func TestSendMediaBatchDoesNotExposePartialBatchWhenStagingFails(t *testing.T) {
+	stagingCalls := 0
+	sendCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ilink/bot/getuploadurl":
+			stagingCalls++
+			if stagingCalls == 2 {
+				_ = json.NewEncoder(response).Encode(map[string]any{"ret": 1, "errmsg": "second upload rejected"})
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"ret": 0, "upload_full_url": server.URL + "/upload"})
+		case "/upload":
+			response.Header().Set("X-Encrypted-Param", "download-token")
+			response.WriteHeader(http.StatusOK)
+		case "/ilink/bot/sendmessage":
+			sendCalls++
+			_ = json.NewEncoder(response).Encode(map[string]any{"ret": 0})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL})
+	err := sendMediaBatch(context.Background(), client, "owner-1", "context", []outboundMediaPayload{
+		{FileName: "card.png", Source: "card.png", Data: []byte("image"), ContentType: "image/png"},
+		{FileName: "voice.mp3", Source: "voice.mp3", Data: []byte("audio"), ContentType: "audio/mpeg"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stage media 2/2") {
+		t.Fatalf("error = %v, want second staging failure", err)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("send calls = %d, want no visible partial batch", sendCalls)
 	}
 }
