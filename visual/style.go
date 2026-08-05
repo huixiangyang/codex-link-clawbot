@@ -9,6 +9,8 @@ const (
 	StyleEditorial Style = "editorial"
 	StyleAtelier   Style = "atelier"
 	StyleNoir      Style = "noir"
+	StyleCute      Style = "cute"
+	StyleMinimal   Style = "minimal"
 	DefaultStyle         = StyleAtelier
 )
 
@@ -22,6 +24,8 @@ var styleDefinitions = []StyleDefinition{
 	{ID: StyleEditorial, Name: "刊物", Description: "纸张、衬线与克制红"},
 	{ID: StyleAtelier, Name: "构筑", Description: "石材、秩序与建筑网格"},
 	{ID: StyleNoir, Name: "黑标", Description: "黑白、留白与香槟金"},
+	{ID: StyleCute, Name: "可爱", Description: "奶油纸、圆角与柔和色"},
+	{ID: StyleMinimal, Name: "简洁", Description: "留白、细线与纯粹秩序"},
 }
 
 func Styles() []StyleDefinition {
@@ -37,7 +41,7 @@ func NormalizeStyle(style Style) Style {
 
 func (style Style) Valid() bool {
 	switch style {
-	case StyleEditorial, StyleAtelier, StyleNoir:
+	case StyleEditorial, StyleAtelier, StyleNoir, StyleCute, StyleMinimal:
 		return true
 	default:
 		return false
@@ -68,6 +72,10 @@ func ResolveStyle(value string) (Style, bool) {
 		return StyleAtelier, true
 	case "黑金", "奢华":
 		return StyleNoir, true
+	case "软萌", "奶油", "甜美":
+		return StyleCute, true
+	case "极简", "简约", "纯净":
+		return StyleMinimal, true
 	default:
 		return "", false
 	}

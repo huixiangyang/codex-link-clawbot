@@ -272,7 +272,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 		t.Fatalf("document dimensions = %dx%d", documentArtifact.Width, documentArtifact.Height)
 	}
 
-	for _, style := range []Style{StyleEditorial, StyleNoir} {
+	for _, style := range []Style{StyleEditorial, StyleNoir, StyleCute, StyleMinimal} {
 		styledDay, err := renderer.Render(context.Background(), Card{Style: style, Title: "风格预览", Facts: []Fact{{Label: "风格", Value: style.Definition().Name}}})
 		if err != nil {
 			t.Fatal(err)

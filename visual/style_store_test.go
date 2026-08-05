@@ -8,13 +8,15 @@ import (
 
 func TestStyleCatalogAndResolution(t *testing.T) {
 	styles := Styles()
-	if len(styles) != 3 || styles[0].ID != StyleEditorial || styles[1].ID != StyleAtelier || styles[2].ID != StyleNoir {
+	if len(styles) != 5 || styles[0].ID != StyleEditorial || styles[1].ID != StyleAtelier || styles[2].ID != StyleNoir || styles[3].ID != StyleCute || styles[4].ID != StyleMinimal {
 		t.Fatalf("style catalog = %#v", styles)
 	}
 	for input, want := range map[string]Style{
 		"刊物": StyleEditorial, "编辑部": StyleEditorial,
 		"构筑": StyleAtelier, "建筑": StyleAtelier,
 		"黑标": StyleNoir, "黑金": StyleNoir,
+		"可爱": StyleCute, "奶油": StyleCute,
+		"简洁": StyleMinimal, "极简": StyleMinimal,
 	} {
 		got, ok := ResolveStyle(input)
 		if !ok || got != want {
