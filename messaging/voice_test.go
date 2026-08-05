@@ -126,6 +126,20 @@ func TestVoiceBriefingReportsEveryProviderFailure(t *testing.T) {
 	}
 }
 
+func TestVoiceBriefingAcceptsNaturalPhrases(t *testing.T) {
+	handler := NewHandler(nil)
+	handler.SetVoiceBriefing(NewVoiceBriefing("/usr/bin/ffmpeg", "/usr/local/bin/weclaw-silk-encoder", nil))
+	for _, phrase := range []string{"语音简报", "发语音", "发个语音", "来段语音", "播报一下", "读给我听"} {
+		reply, handled := handler.handleControlInput(context.Background(), "owner-1", phrase, false)
+		if !handled || !strings.Contains(reply, "正在生成") {
+			t.Fatalf("phrase %q: handled=%v reply=%q", phrase, handled, reply)
+		}
+		if _, exists := handler.controlVoice.LoadAndDelete("owner-1"); !exists {
+			t.Fatalf("phrase %q did not schedule a voice briefing", phrase)
+		}
+	}
+}
+
 func TestPiperVoiceProviderGeneratesWAV(t *testing.T) {
 	dir := t.TempDir()
 	piper := filepath.Join(dir, "piper")

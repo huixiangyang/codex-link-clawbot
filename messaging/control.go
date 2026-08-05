@@ -157,7 +157,10 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	if isOneOf(text, "远程锁定", "锁定 WeClaw", "锁定WeClaw", "锁定服务") {
 		return h.lockRemote(userID), true
 	}
-	if isOneOf(text, "语音简报", "播放简报", "工作简报") {
+	if isOneOf(text,
+		"语音简报", "播放简报", "工作简报",
+		"发语音", "发个语音", "来段语音", "播报一下", "读给我听",
+	) {
 		return h.requestVoiceBriefing(userID), true
 	}
 	if isOneOf(text, "运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息") {
