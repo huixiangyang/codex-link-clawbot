@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -86,6 +87,34 @@ type stagedMediaMessage struct {
 	Item        ilink.MessageItem
 }
 
+type mediaBatchError struct {
+	Phase        string
+	Index        int
+	Total        int
+	MayBeVisible bool
+	Err          error
+}
+
+func (err *mediaBatchError) Error() string {
+	return fmt.Sprintf("%s media %d/%d: %v", err.Phase, err.Index, err.Total, err.Err)
+}
+
+func (err *mediaBatchError) Unwrap() error { return err.Err }
+
+// mediaBatchMayBeVisible 区分明确拒绝与响应丢失；前项已发送时整批也一定存在部分可见内容。
+func mediaBatchMayBeVisible(err error) bool {
+	var batchErr *mediaBatchError
+	return errors.As(err, &batchErr) && batchErr.MayBeVisible
+}
+
+type stagedMediaSendError struct {
+	MayBeVisible bool
+	Err          error
+}
+
+func (err *stagedMediaSendError) Error() string { return err.Err.Error() }
+func (err *stagedMediaSendError) Unwrap() error { return err.Err }
+
 // sendMediaBatch 先把整批媒体上传到 CDN，再按声明顺序发送，避免后项上传失败时留下孤立的前项消息。
 func sendMediaBatch(ctx context.Context, client *ilink.Client, toUserID, contextToken string, payloads []outboundMediaPayload) error {
 	if len(payloads) == 0 {
@@ -95,13 +124,19 @@ func sendMediaBatch(ctx context.Context, client *ilink.Client, toUserID, context
 	for index, payload := range payloads {
 		message, err := stageMediaMessage(ctx, client, toUserID, payload)
 		if err != nil {
-			return fmt.Errorf("stage media %d/%d: %w", index+1, len(payloads), err)
+			return &mediaBatchError{Phase: "stage", Index: index + 1, Total: len(payloads), Err: err}
 		}
 		staged = append(staged, message)
 	}
 	for index, message := range staged {
 		if err := sendStagedMediaMessage(ctx, client, toUserID, contextToken, message); err != nil {
-			return fmt.Errorf("send media %d/%d: %w", index+1, len(staged), err)
+			var sendErr *stagedMediaSendError
+			ambiguous := errors.As(err, &sendErr) && sendErr.MayBeVisible
+			return &mediaBatchError{
+				Phase: "send", Index: index + 1, Total: len(staged),
+				MayBeVisible: index > 0 || ambiguous,
+				Err:          err,
+			}
 		}
 	}
 	return nil
@@ -175,10 +210,12 @@ func sendStagedMediaMessage(ctx context.Context, client *ilink.Client, toUserID,
 
 	resp, err := client.SendMessage(ctx, req)
 	if err != nil {
-		return fmt.Errorf("send staged media message: %w", err)
+		// 请求可能已经到达微信，只是客户端没有收到响应；此时禁止自动补发正文。
+		return &stagedMediaSendError{MayBeVisible: true, Err: fmt.Errorf("send staged media message: %w", err)}
 	}
 	if resp.Ret != 0 {
-		return fmt.Errorf("send staged media failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)
+		// 微信返回明确拒绝时，本项不可见；是否已有前项可见由批次层判断。
+		return &stagedMediaSendError{Err: fmt.Errorf("send staged media failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)}
 	}
 
 	log.Printf("[media] sent %s to %s", staged.ContentType, ilink.LogLabel(toUserID))

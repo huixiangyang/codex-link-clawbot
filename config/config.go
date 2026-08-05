@@ -503,6 +503,9 @@ func (c *Config) validate() error {
 	if err := c.Visual.validate(); err != nil {
 		return err
 	}
+	if c.Voice.Enabled && !c.Visual.Enabled {
+		return fmt.Errorf("voice.enabled requires visual.enabled for paired image and audio delivery")
+	}
 	if err := c.Security.validate(); err != nil {
 		return err
 	}

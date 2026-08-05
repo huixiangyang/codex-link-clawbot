@@ -124,4 +124,31 @@ func TestSendMediaBatchDoesNotExposePartialBatchWhenStagingFails(t *testing.T) {
 	if sendCalls != 0 {
 		t.Fatalf("send calls = %d, want no visible partial batch", sendCalls)
 	}
+	if mediaBatchMayBeVisible(err) {
+		t.Fatal("staging failure must not be treated as visible")
+	}
+}
+
+func TestMediaBatchVisibilityDistinguishesExplicitRejectionAndPartialSend(t *testing.T) {
+	explicit := &mediaBatchError{
+		Phase: "send", Index: 1, Total: 2,
+		Err: &stagedMediaSendError{Err: context.Canceled},
+	}
+	if mediaBatchMayBeVisible(explicit) {
+		t.Fatal("explicit rejection of the first item must allow complete fallback")
+	}
+	ambiguous := &mediaBatchError{
+		Phase: "send", Index: 1, Total: 2, MayBeVisible: true,
+		Err: &stagedMediaSendError{MayBeVisible: true, Err: context.DeadlineExceeded},
+	}
+	if !mediaBatchMayBeVisible(ambiguous) {
+		t.Fatal("ambiguous first send must suppress duplicate fallback")
+	}
+	partial := &mediaBatchError{
+		Phase: "send", Index: 2, Total: 2, MayBeVisible: true,
+		Err: &stagedMediaSendError{Err: context.Canceled},
+	}
+	if !mediaBatchMayBeVisible(partial) {
+		t.Fatal("a failed later item must preserve already visible earlier items")
+	}
 }

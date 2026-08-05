@@ -267,6 +267,23 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 	}
 }
 
+func TestVoiceRequiresVisualDelivery(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Visual.Enabled = false
+	cfg.Voice = VoiceConfig{
+		Enabled: true, FFmpegCommand: "/usr/bin/ffmpeg",
+		Providers: []VoiceProviderConfig{{
+			ID: "local", Type: "piper", TimeoutSeconds: 30,
+			Piper: &PiperVoiceProviderConfig{
+				Command: "/opt/piper/bin/piper", Model: "/opt/piper/voice.onnx", ModelConfig: "/opt/piper/voice.onnx.json", LengthScale: 1,
+			},
+		}},
+	}
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "visual.enabled") {
+		t.Fatalf("validation error = %v, want paired visual requirement", err)
+	}
+}
+
 func TestLoadRejectsRemovedSingleProviderVoiceSchema(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

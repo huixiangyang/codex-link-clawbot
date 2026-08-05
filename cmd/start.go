@@ -18,6 +18,7 @@ import (
 	"github.com/huixiangyang/weclaw/config"
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/reporting"
 	"github.com/huixiangyang/weclaw/session"
@@ -113,17 +114,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 	defer codex.Stop()
 	handler := messaging.NewHandler(codex)
 	handler.SetProjectManager(projectManager)
+	preferenceStore, preferenceErr := preference.NewStore("")
+	if preferenceErr != nil {
+		return fmt.Errorf("initialize owner preferences: %w", preferenceErr)
+	}
+	handler.SetPreferenceStore(preferenceStore)
 	if cfg.Visual.Enabled {
 		visualRenderer, visualErr := visual.NewRenderer(visual.Config{BrowserCommand: cfg.Visual.BrowserCommand})
 		if visualErr != nil {
 			return fmt.Errorf("initialize visual control cards: %w", visualErr)
 		}
-		styleStore, styleErr := visual.NewStyleStore("")
-		if styleErr != nil {
-			return fmt.Errorf("initialize visual style preferences: %w", styleErr)
-		}
 		handler.SetVisualRenderer(visualRenderer)
-		handler.SetVisualStyleStore(styleStore)
 		handler.SetVisualReplyConfig(cfg.Visual.LongReplies, cfg.Visual.LongReplyMinRunes)
 		log.Printf("Visual control cards enabled (browser=%s)", visualRenderer.BrowserCommand())
 	}

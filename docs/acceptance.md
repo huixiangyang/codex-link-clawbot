@@ -29,6 +29,7 @@
 2. 要求 Codex 生成文件，微信收到后“交付记录”应出现私有副本；原 turn 目录删除后仍能“再次发送”。
 3. 发送图片并写“批注这张图”，Codex 应收到图片批注契约并在 outbox 生成新的 PNG，不覆盖原图。
 4. 长回复仍按所选刊物、构筑、黑标、可爱或简洁风格生成移动阅读卡；“文字版”可取回全文。
+5. 发送“回答方式”应显示当前回答方式和视觉风格；切换后重启服务，选择必须保持。`preferences.json` 的未知字段、非法枚举、旧版本和尾随数据必须拒绝启动。
 
 ## 5. 锁定与语音
 
@@ -41,11 +42,14 @@
 7. 音频 CDN 上传必须使用 `media_type=3`，下载引用必须取上传响应的 `X-Encrypted-Param`；消息必须使用 `ItemTypeFile`、文件名 `weclaw-briefing.mp3`、正确明文长度和 `audio/mpeg` 分类。缺少当前 `context_token` 时必须在上传前失败。
 8. 旧扁平 MiMo 字段、`voice.silk_command`、提供商级 `piper.ffmpeg_command` 和 `voice.command` 必须作为未知字段拒绝。仓库、发布物与容器均不得保留 SILK 编码器或依赖。
 9. `weclaw update` 必须下载单一主程序，通过发布清单 SHA-256 校验后安装；下载或校验失败时不得替换主程序。
+10. 自适应模式下，短回复发送文字、达到阈值的回复发送阅读卡；阅读模式下，短回复也必须发送阅读卡，即使 `visual.long_replies=false`。
+11. 语音模式下，短回答必须依次收到正文完全一致的专用阅读卡和 `weclaw-reply.mp3`。超过 2200 个字符时必须先收到完整阅读卡，再收到明确说明“完整内容已放在前面的阅读卡中”的语音节选卡与 MP3；“文字版”仍返回原始全文。
+12. TTS、编码、渲染或整批预上传在任何消息可见前失败时，必须降级为完整阅读卡，再失败则发送完整文字。发送阶段响应中断时不得盲目补发正文。带 Codex 交付物的回答必须先发送交付物，再执行所选回答方式。
 
 ## 6. 安全与部署
 
 1. 非绑定者、群聊和未知联系人消息必须拒绝。
-2. `session-index.json` 必须为 v3，`task-history.json` 必须为 v2；旧 schema、未知字段和尾随数据必须拒绝启动。
+2. `session-index.json` 必须为 v3，`task-history.json` 必须为 v2，`preferences.json` 必须为 v1；旧 schema、未知字段和尾随数据必须拒绝启动。
 3. `project-state.json`、`automation-state.json`、`library.json`、`remote-lock.json` 和交付副本均不得宽于 `0600/0700`。
 4. 执行：
 

@@ -52,10 +52,10 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 }
 
 func (h *Handler) currentVisualStyle(userID string) visual.Style {
-	if h.visualStyles == nil {
+	if h.preferences == nil {
 		return visual.DefaultStyle
 	}
-	return h.visualStyles.Get(userID)
+	return h.preferences.Get(userID).Style
 }
 
 // controlCardFromText 将内部控制文本收敛为固定结构，模板层会再次执行 HTML 转义。
@@ -81,6 +81,8 @@ func controlCardFromText(reply string) visual.Card {
 		first == "素材与交付", first == "链接素材", first == "交付记录", first == "快捷任务":
 		card.Title = first
 	case first == "视觉风格", first == "视觉风格已切换":
+		card.Title = first
+	case first == "回答方式", first == "回答方式已切换":
 		card.Title = first
 	case first == "会话", first == "当前会话", first == "会话详情", first == "归档会话详情", first == "搜索会话",
 		first == "新建会话", first == "重命名会话":
@@ -160,6 +162,10 @@ func controlCardVariant(text string) visual.Variant {
 	case strings.HasPrefix(text, "视觉风格已切换"):
 		return visual.VariantSuccess
 	case strings.HasPrefix(text, "视觉风格"):
+		return visual.VariantSystem
+	case strings.HasPrefix(text, "回答方式已切换"):
+		return visual.VariantSuccess
+	case strings.HasPrefix(text, "回答方式"):
 		return visual.VariantSystem
 	case strings.HasPrefix(text, "任务记录") || strings.HasPrefix(text, "任务详情"):
 		return visual.VariantProgress

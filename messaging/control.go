@@ -13,6 +13,7 @@ import (
 
 	"github.com/huixiangyang/weclaw/codex"
 	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/session"
 	"github.com/huixiangyang/weclaw/visual"
 )
@@ -77,6 +78,8 @@ const (
 	actionRunAutomation       controlAction = "run_automation"
 	actionVisualStyles        controlAction = "visual_styles"
 	actionSetVisualStyle      controlAction = "set_visual_style"
+	actionResponseModes       controlAction = "response_modes"
+	actionSetResponseMode     controlAction = "set_response_mode"
 	actionGuide               controlAction = "guide"
 )
 
@@ -156,6 +159,18 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	}
 	if isOneOf(text, "远程锁定", "锁定 WeClaw", "锁定WeClaw", "锁定服务") {
 		return h.lockRemote(userID), true
+	}
+	if isOneOf(text, "回答方式", "回复方式", "输出方式", "偏好设置", "语音模式") {
+		return h.openResponseModes(userID), true
+	}
+	if isOneOf(text, "开启语音模式", "打开语音模式", "启用语音模式") {
+		return h.setResponseMode(userID, preference.ResponseVoice), true
+	}
+	if isOneOf(text, "关闭语音模式", "退出语音模式", "自适应模式") {
+		return h.setResponseMode(userID, preference.ResponseAdaptive), true
+	}
+	if isOneOf(text, "开启阅读模式", "打开阅读模式", "阅读模式") {
+		return h.setResponseMode(userID, preference.ResponseReading), true
 	}
 	if isOneOf(text,
 		"语音简报", "播放简报", "工作简报",
@@ -461,6 +476,10 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.openVisualStyles(userID)
 	case actionSetVisualStyle:
 		return h.setVisualStyle(userID, visual.Style(option.Value))
+	case actionResponseModes:
+		return h.openResponseModes(userID)
+	case actionSetResponseMode:
+		return h.setResponseMode(userID, preference.ResponseMode(option.Value))
 	case actionGuide:
 		return h.openGuide(userID)
 	default:
@@ -509,6 +528,7 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		"项目：" + projectName,
 		"会话：" + currentName,
 		"状态：" + taskState,
+		"回答：" + h.currentResponseMode(userID).Definition().Name,
 	}
 	if h.activities != nil {
 		lines = append(lines, fmt.Sprintf("记录：%d 条", len(h.activities.List(userID))))
@@ -580,8 +600,8 @@ func (h *Handler) openMoreMenu(userID string) string {
 		{Label: "素材与交付", Action: actionLibraryCenter},
 		{Label: "远程锁定", Action: actionRemoteLock},
 	}
-	if h.visual != nil && h.visualStyles != nil {
-		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
+	if h.preferences != nil {
+		options = append(options, controlOption{Label: "偏好设置", Action: actionResponseModes})
 	}
 	if h.voice != nil {
 		options = append(options, controlOption{Label: "语音简报", Action: actionVoiceBriefing})
@@ -597,19 +617,89 @@ func (h *Handler) openGuide(userID string) string {
 		{Label: "会话中心", Action: actionSessionMenu},
 		{Label: "任务状态", Action: actionTaskStatus},
 	}
-	if h.visual != nil && h.visualStyles != nil {
-		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
+	if h.preferences != nil {
+		options = append(options, controlOption{Label: "偏好设置", Action: actionResponseModes})
 	}
 	prompt := "使用说明\n\n" + controlGuide() + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
 	return prompt + "\n\n回复数字继续，0 返回。"
 }
 
+func (h *Handler) openResponseModes(userID string) string {
+	if h.preferences == nil {
+		return "回答偏好当前不可用。"
+	}
+	current := h.preferences.Get(userID)
+	options := make([]controlOption, 0, 5)
+	for _, definition := range preference.ResponseModes() {
+		if definition.ID == preference.ResponseReading && h.visual == nil {
+			continue
+		}
+		if definition.ID == preference.ResponseVoice && (h.visual == nil || h.voice == nil) {
+			continue
+		}
+		options = append(options, controlOption{
+			Label:  definition.Name + " · " + definition.Description,
+			Action: actionSetResponseMode,
+			Value:  string(definition.ID),
+		})
+	}
+	if h.visual != nil {
+		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
+	}
+	if h.voice != nil {
+		options = append(options, controlOption{Label: "立即发送语音简报", Action: actionVoiceBriefing})
+	}
+	styleName := current.Style.Definition().Name
+	prompt := strings.Join([]string{
+		"回答方式",
+		"",
+		"当前：" + current.ResponseMode.Definition().Name,
+		"视觉：" + styleName,
+		"说明：语音模式会把 Codex 回答整理为阅读卡和 MP3；长回答同时保留完整阅读卡。",
+		"",
+		renderControlOptions(options),
+	}, "\n")
+	h.storeChoice(userID, prompt, options, actionMain)
+	return prompt + "\n\n回复数字切换，0 返回。"
+}
+
+func (h *Handler) setResponseMode(userID string, mode preference.ResponseMode) string {
+	if h.preferences == nil || !mode.Valid() {
+		return "回答方式当前不可用。"
+	}
+	if mode == preference.ResponseReading && h.visual == nil {
+		return "阅读模式需要启用视觉卡片。"
+	}
+	if mode == preference.ResponseVoice && (h.visual == nil || h.voice == nil) {
+		return "语音模式需要同时启用视觉卡片和语音提供商。"
+	}
+	if err := h.preferences.SetResponseMode(userID, mode); err != nil {
+		log.Printf("[preference] failed to persist response mode for %s: %v", ilink.LogLabel(userID), err)
+		return "回答方式保存失败，请稍后重试。"
+	}
+	definition := mode.Definition()
+	options := []controlOption{
+		{Label: "选择其他回答方式", Action: actionResponseModes},
+		{Label: "返回主菜单", Action: actionMain},
+	}
+	prompt := strings.Join([]string{
+		"回答方式已切换",
+		"",
+		"当前：" + definition.Name,
+		"说明：" + definition.Description,
+		"",
+		renderControlOptions(options),
+	}, "\n")
+	h.storeChoice(userID, prompt, options, actionMain)
+	return prompt + "\n\n回复数字继续，0 返回。"
+}
+
 func (h *Handler) openVisualStyles(userID string) string {
-	if h.visual == nil || h.visualStyles == nil {
+	if h.visual == nil || h.preferences == nil {
 		return "视觉卡片当前不可用。"
 	}
-	current := h.visualStyles.Get(userID)
+	current := h.preferences.Get(userID).Style
 	definitions := visual.Styles()
 	options := make([]controlOption, 0, len(definitions))
 	for _, definition := range definitions {
@@ -625,25 +715,25 @@ func (h *Handler) openVisualStyles(userID string) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	h.storeChoice(userID, prompt, options, actionResponseModes)
 	return prompt + "\n\n回复数字切换并查看效果，0 返回。"
 }
 
 func (h *Handler) setVisualStyle(userID string, style visual.Style) string {
-	if h.visual == nil || h.visualStyles == nil {
+	if h.visual == nil || h.preferences == nil {
 		return "视觉卡片当前不可用。"
 	}
 	if !style.Valid() {
 		return "没有这个视觉风格。发送“视觉风格”查看可选模板。"
 	}
-	if err := h.visualStyles.Set(userID, style); err != nil {
+	if err := h.preferences.SetStyle(userID, style); err != nil {
 		log.Printf("[visual] failed to persist style for %s: %v", ilink.LogLabel(userID), err)
 		return "视觉风格保存失败，请稍后重试。"
 	}
 	definition := style.Definition()
 	options := []controlOption{
-		{Label: "返回主菜单", Action: actionMain},
 		{Label: "选择其他风格", Action: actionVisualStyles},
+		{Label: "返回偏好设置", Action: actionResponseModes},
 	}
 	prompt := strings.Join([]string{
 		"视觉风格已切换",
@@ -654,7 +744,7 @@ func (h *Handler) setVisualStyle(userID string, style visual.Style) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	h.storeChoice(userID, prompt, options, actionResponseModes)
 	return prompt + "\n\n当前卡片就是新风格预览；回复数字继续，0 返回。"
 }
 
@@ -1153,7 +1243,8 @@ func controlNavigationOption(text string, options []controlOption) (controlOptio
 func controlGuide() string {
 	return strings.Join([]string{
 		"直接发送文字、图片或文件，内容会交给 Codex。",
-		"较长回复自动整理为阅读卡片，回复“文字版”可获取可复制原文。",
+		"发送“回答方式”可选择自适应、阅读或语音；语音会配套发送阅读卡和 MP3。",
+		"阅读卡回复支持发送“文字版”获取可复制原文。",
 		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
 		"发送“视觉风格”可在五套完整模板间切换，选择会自动保存。",
 		"也可以直接说“切换项目”“新建会话”“搜索会话”“切换会话 登录”或“运行中心”。",

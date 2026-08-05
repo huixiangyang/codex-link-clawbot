@@ -378,12 +378,14 @@ type stubVoiceProvider struct {
 	err            error
 	waitForContext bool
 	calls          int
+	texts          []string
 }
 
 func (p *stubVoiceProvider) ID() string { return p.id }
 
-func (p *stubVoiceProvider) Generate(ctx context.Context, _ string) (VoiceAudio, error) {
+func (p *stubVoiceProvider) Generate(ctx context.Context, text string) (VoiceAudio, error) {
 	p.calls++
+	p.texts = append(p.texts, text)
 	if p.waitForContext {
 		<-ctx.Done()
 		return VoiceAudio{}, ctx.Err()

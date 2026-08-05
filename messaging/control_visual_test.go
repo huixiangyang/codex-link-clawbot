@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/visual"
 )
 
@@ -161,14 +162,14 @@ func TestHandleMessageSendsVisualControlCardAndCaption(t *testing.T) {
 
 	handler, runtime := newSessionHandler(t)
 	handler.SetVisualRenderer(renderer)
-	styleStore, err := visual.NewStyleStore(filepath.Join(t.TempDir(), "visual-styles.json"))
+	styleStore, err := preference.NewStore(filepath.Join(t.TempDir(), "preferences.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := styleStore.Set("owner-1", visual.StyleNoir); err != nil {
+	if err := styleStore.SetStyle("owner-1", visual.StyleNoir); err != nil {
 		t.Fatal(err)
 	}
-	handler.SetVisualStyleStore(styleStore)
+	handler.SetPreferenceStore(styleStore)
 	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL})
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9201, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
@@ -293,14 +294,14 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 
 	handler, runtime := newSessionHandler(t)
 	handler.SetVisualRenderer(renderer)
-	styleStore, err := visual.NewStyleStore(filepath.Join(t.TempDir(), "visual-styles.json"))
+	styleStore, err := preference.NewStore(filepath.Join(t.TempDir(), "preferences.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := styleStore.Set("owner-1", visual.StyleEditorial); err != nil {
+	if err := styleStore.SetStyle("owner-1", visual.StyleEditorial); err != nil {
 		t.Fatal(err)
 	}
-	handler.SetVisualStyleStore(styleStore)
+	handler.SetPreferenceStore(styleStore)
 	handler.SetVisualReplyConfig(true, 20)
 	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL})
 	reply := "# 移动端结果\n\n" + strings.Repeat("这是一段适合手机阅读并且需要保留可复制原文的 Codex 回复。", 16)

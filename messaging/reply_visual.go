@@ -34,24 +34,19 @@ func (h *Handler) SetVisualReplyConfig(enabled bool, minRunes int) {
 	}
 }
 
-func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string) (bool, error) {
-	if !h.visualReplyEnabled || h.visual == nil {
-		return false, nil
-	}
-	renderer, ok := h.visual.(documentVisualRenderer)
-	if !ok {
+func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string, force bool) (bool, error) {
+	// 显式阅读模式不受“自适应长回复”开关约束，只要求渲染能力可用。
+	if h.visual == nil || (!force && !h.visualReplyEnabled) {
 		return false, nil
 	}
 	runeCount := utf8.RuneCountInString(reply)
-	if runeCount < h.visualReplyMinRunes || runeCount > visualReplyMaxRunes {
+	if (!force && runeCount < h.visualReplyMinRunes) || runeCount > visualReplyMaxRunes {
 		return false, nil
 	}
-	documents := visual.PaginateMarkdown(reply)
-	if len(documents) == 0 {
-		return false, nil
+	artifacts, documents, err := h.renderVisualDocuments(ctx, userID, reply)
+	if err != nil {
+		return false, err
 	}
-
-	artifacts := make([]*visual.Artifact, 0, len(documents))
 	cleanupArtifacts := func() {
 		for _, artifact := range artifacts {
 			if artifact != nil && artifact.Cleanup != nil {
@@ -60,20 +55,6 @@ func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, use
 		}
 	}
 	defer cleanupArtifacts()
-	for _, document := range documents {
-		document.Style = h.currentVisualStyle(userID)
-		artifact, err := renderer.RenderDocument(ctx, document)
-		if err != nil {
-			return false, fmt.Errorf("render page %d/%d: %w", document.PageNumber, document.TotalPages, err)
-		}
-		if artifact == nil || strings.TrimSpace(artifact.Path) == "" {
-			if artifact != nil && artifact.Cleanup != nil {
-				artifact.Cleanup()
-			}
-			return false, fmt.Errorf("render page %d/%d returned an empty artifact", document.PageNumber, document.TotalPages)
-		}
-		artifacts = append(artifacts, artifact)
-	}
 	for index, artifact := range artifacts {
 		if err := SendMediaFromPath(ctx, client, userID, artifact.Path, contextToken); err != nil {
 			document := documents[index]
@@ -88,6 +69,42 @@ func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, use
 		return true, fmt.Errorf("send reading caption: %w", err)
 	}
 	return true, nil
+}
+
+func (h *Handler) renderVisualDocuments(ctx context.Context, userID, reply string) ([]*visual.Artifact, []visual.Document, error) {
+	renderer, ok := h.visual.(documentVisualRenderer)
+	if !ok {
+		return nil, nil, fmt.Errorf("document renderer is unavailable")
+	}
+	documents := visual.PaginateMarkdown(reply)
+	if len(documents) == 0 {
+		return nil, nil, fmt.Errorf("reply cannot be paginated into reading cards")
+	}
+	artifacts := make([]*visual.Artifact, 0, len(documents))
+	cleanup := func() {
+		for _, artifact := range artifacts {
+			if artifact != nil && artifact.Cleanup != nil {
+				artifact.Cleanup()
+			}
+		}
+	}
+	for index := range documents {
+		documents[index].Style = h.currentVisualStyle(userID)
+		artifact, err := renderer.RenderDocument(ctx, documents[index])
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("render page %d/%d: %w", documents[index].PageNumber, documents[index].TotalPages, err)
+		}
+		if artifact == nil || strings.TrimSpace(artifact.Path) == "" {
+			if artifact != nil && artifact.Cleanup != nil {
+				artifact.Cleanup()
+			}
+			cleanup()
+			return nil, nil, fmt.Errorf("render page %d/%d returned an empty artifact", documents[index].PageNumber, documents[index].TotalPages)
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return artifacts, documents, nil
 }
 
 func (h *Handler) sendCachedVisualReply(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text, clientID string) bool {

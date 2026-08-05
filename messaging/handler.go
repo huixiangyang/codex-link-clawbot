@@ -11,9 +11,9 @@ import (
 
 	"github.com/huixiangyang/weclaw/codex"
 	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/session"
-	"github.com/huixiangyang/weclaw/visual"
 )
 
 // Handler processes incoming WeChat messages and dispatches replies.
@@ -32,7 +32,7 @@ type Handler struct {
 	projects            *project.Manager
 	sessions            *session.Manager
 	visual              controlVisualRenderer
-	visualStyles        *visual.StyleStore
+	preferences         *preference.Store
 	visualReplies       sync.Map // map[userID]*cachedVisualReply — 最近一条可取回的视觉长回复
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
@@ -71,9 +71,9 @@ func (h *Handler) SetVisualRenderer(renderer controlVisualRenderer) {
 	h.visual = renderer
 }
 
-// SetVisualStyleStore 注入按绑定用户隔离的视觉风格偏好。
-func (h *Handler) SetVisualStyleStore(store *visual.StyleStore) {
-	h.visualStyles = store
+// SetPreferenceStore 注入按绑定用户隔离的视觉与回答偏好。
+func (h *Handler) SetPreferenceStore(store *preference.Store) {
+	h.preferences = store
 }
 
 // SetAutomationProvider 注入确定性自动化中心和手动检查能力。
@@ -408,11 +408,34 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 
 	reply = appendArtifactSummary(reply, sentPaths, failed)
 
-	visualized, visualErr := h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID)
-	if visualErr != nil {
-		log.Printf("[visual] failed to send long reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
+	delivered := false
+	switch h.currentResponseMode(msg.FromUserID) {
+	case preference.ResponseVoice:
+		voiceDelivered, voiceErr := h.sendVoiceCodexReply(ctx, client, msg.FromUserID, reply, msg.ContextToken)
+		delivered = voiceDelivered
+		if voiceErr != nil {
+			log.Printf("[voice] failed to send Codex voice response to %s: %v", ilink.LogLabel(msg.FromUserID), voiceErr)
+		}
+		if !delivered {
+			delivered, voiceErr = h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true)
+			if voiceErr != nil {
+				log.Printf("[visual] failed to send voice fallback reading cards to %s: %v", ilink.LogLabel(msg.FromUserID), voiceErr)
+			}
+		}
+	case preference.ResponseReading:
+		var visualErr error
+		delivered, visualErr = h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true)
+		if visualErr != nil {
+			log.Printf("[visual] failed to send forced reading reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
+		}
+	default:
+		var visualErr error
+		delivered, visualErr = h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, false)
+		if visualErr != nil {
+			log.Printf("[visual] failed to send long reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
+		}
 	}
-	if !visualized {
+	if !delivered {
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send reply to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 		}
