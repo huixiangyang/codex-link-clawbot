@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/visual"
 )
 
 func TestVoiceBriefingCallsMiMoTTSContract(t *testing.T) {
@@ -264,6 +266,102 @@ func TestVoiceAudioUsesFileProtocol(t *testing.T) {
 	mediaType, itemType := classifyMedia("audio/mpeg", "weclaw-briefing.mp3")
 	if mediaType != ilink.CDNMediaTypeFile || itemType != ilink.ItemTypeFile {
 		t.Fatalf("audio protocol = media:%d item:%d", mediaType, itemType)
+	}
+}
+
+func TestVoiceBriefingDeliversCompanionImageBeforeMP3(t *testing.T) {
+	dir := t.TempDir()
+	ffmpeg := filepath.Join(dir, "ffmpeg")
+	writeExecutable(t, ffmpeg, `#!/bin/sh
+cat >/dev/null
+printf 'ID3\004\000\000\000\000\000\000encoded'
+`)
+	cardPath := filepath.Join(dir, "companion.png")
+	if err := os.WriteFile(cardPath, []byte("rendered companion"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var sent []ilink.SendMessageRequest
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/ilink/bot/getuploadurl":
+			_ = json.NewEncoder(response).Encode(map[string]any{"ret": 0, "upload_full_url": server.URL + "/upload"})
+		case "/upload":
+			response.Header().Set("X-Encrypted-Param", "download-token")
+			response.WriteHeader(http.StatusOK)
+		case "/ilink/bot/sendmessage":
+			var message ilink.SendMessageRequest
+			if err := json.NewDecoder(request.Body).Decode(&message); err != nil {
+				t.Errorf("decode sent message: %v", err)
+			}
+			sent = append(sent, message)
+			_ = json.NewEncoder(response).Encode(map[string]any{"ret": 0})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	renderer := &fakeControlVisualRenderer{path: cardPath}
+	handler := NewHandler(nil)
+	handler.SetVisualRenderer(renderer)
+	handler.SetVoiceBriefing(NewVoiceBriefing(ffmpeg, []VoiceProviderEntry{{
+		Provider: &stubVoiceProvider{id: "local", audio: validTestMP3()}, Timeout: time.Second,
+	}}))
+	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL})
+	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+		MessageID: 1001, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
+		MessageState: ilink.MessageStateFinish, ContextToken: "context-voice",
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "发语音"}}},
+	})
+
+	if len(sent) != 2 {
+		t.Fatalf("sent messages = %d, want companion image and MP3 only", len(sent))
+	}
+	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
+		t.Fatalf("first message = %#v, want companion image", item)
+	}
+	fileItem := sent[1].Msg.ItemList[0]
+	if fileItem.Type != ilink.ItemTypeFile || fileItem.FileItem == nil || fileItem.FileItem.FileName != "weclaw-briefing.mp3" {
+		t.Fatalf("second message = %#v, want MP3 file", fileItem)
+	}
+	if renderer.renderCalls != 1 || renderer.documentRenderCalls != 0 || len(renderer.documents) != 0 {
+		t.Fatalf("renderer = documents:%d cards:%d", renderer.documentRenderCalls, renderer.renderCalls)
+	}
+	card := renderer.card
+	if card.Title != "语音简报" || card.Footer != "配套 MP3 音频文件随后发送" || card.Variant != visual.VariantSystem {
+		t.Fatalf("companion card = %#v", card)
+	}
+	if len(card.Facts) != 2 || card.Facts[0] != (visual.Fact{Label: "当前项目", Value: "未配置项目"}) || card.Facts[1] != (visual.Fact{Label: "音频来源", Value: "local"}) {
+		t.Fatalf("companion facts = %#v", card.Facts)
+	}
+	if len(card.Body) != 1 || !strings.Contains(card.Body[0], "WeClaw 工作简报") {
+		t.Fatalf("companion content = %#v", card.Body)
+	}
+}
+
+func TestVoiceBriefingStopsBeforeAudioWhenCompanionCardFails(t *testing.T) {
+	dir := t.TempDir()
+	ffmpeg := filepath.Join(dir, "ffmpeg")
+	writeExecutable(t, ffmpeg, `#!/bin/sh
+cat >/dev/null
+printf 'ID3\004\000\000\000\000\000\000encoded'
+`)
+
+	renderer := &fakeControlVisualRenderer{err: fmt.Errorf("renderer unavailable")}
+	handler := NewHandler(nil)
+	handler.SetVisualRenderer(renderer)
+	handler.SetVoiceBriefing(NewVoiceBriefing(ffmpeg, []VoiceProviderEntry{{
+		Provider: &stubVoiceProvider{id: "local", audio: validTestMP3()}, Timeout: time.Second,
+	}}))
+
+	_, err := handler.sendVoiceBriefing(context.Background(), nil, "owner-1", "context-voice")
+	if err == nil || !strings.Contains(err.Error(), "渲染阅读卡") {
+		t.Fatalf("error = %v, want companion card failure", err)
+	}
+	if renderer.renderCalls != 1 {
+		t.Fatalf("render calls = %d, want 1", renderer.renderCalls)
 	}
 }
 

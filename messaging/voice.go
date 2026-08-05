@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/visual"
 )
 
 const (
@@ -204,7 +205,8 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, record.Summary, formatActivityStatus(record.Status)))
 		}
 	}
-	synthesis, err := h.voice.Generate(ctx, strings.Join(parts, ""))
+	script := strings.Join(parts, "")
+	synthesis, err := h.voice.Generate(ctx, script)
 	if err != nil {
 		return "", err
 	}
@@ -214,8 +216,49 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 		return "", err
 	}
 	log.Printf("[voice] encoded MP3 bytes=%d for %s", len(mp3), ilink.LogLabel(userID))
+	if err := h.sendVoiceCompanionCard(ctx, client, userID, contextToken, projectName, synthesis.ProviderID, script); err != nil {
+		return "", fmt.Errorf("发送语音配套阅读卡: %w", err)
+	}
 	if err := sendMediaData(ctx, client, userID, "weclaw-briefing.mp3", "weclaw-briefing.mp3", mp3, "audio/mpeg", contextToken); err != nil {
 		return "", err
 	}
+	log.Printf("[voice] delivered companion card and MP3 for %s", ilink.LogLabel(userID))
 	return synthesis.ProviderID, nil
+}
+
+func (h *Handler) sendVoiceCompanionCard(ctx context.Context, client *ilink.Client, userID, contextToken, projectName, providerID, script string) error {
+	if h.visual == nil {
+		return fmt.Errorf("未配置阅读卡渲染器")
+	}
+	// 语音配图使用专用单卡，避免通用长文档模板产生单页页码、进度条等无意义元素。
+	card := visual.Card{
+		Variant: visual.VariantSystem,
+		Style:   h.currentVisualStyle(userID),
+		Title:   "语音简报",
+		Facts: []visual.Fact{
+			{Label: "当前项目", Value: projectName},
+			{Label: "音频来源", Value: providerID},
+		},
+		Body:   []string{script},
+		Footer: "配套 MP3 音频文件随后发送",
+	}
+	artifact, err := h.visual.Render(ctx, card)
+	if err != nil {
+		return fmt.Errorf("渲染阅读卡: %w", err)
+	}
+	if artifact == nil || strings.TrimSpace(artifact.Path) == "" {
+		if artifact != nil && artifact.Cleanup != nil {
+			artifact.Cleanup()
+		}
+		return fmt.Errorf("阅读卡渲染器未生成图片")
+	}
+	if artifact.Cleanup != nil {
+		defer artifact.Cleanup()
+	}
+	if err := SendMediaFromPath(ctx, client, userID, artifact.Path, contextToken); err != nil {
+		return fmt.Errorf("发送阅读卡: %w", err)
+	}
+	h.visualReplies.Store(userID, &cachedVisualReply{Text: script, ExpiresAt: time.Now().Add(visualReplyCacheTTL)})
+	log.Printf("[voice] sent companion reading card for %s", ilink.LogLabel(userID))
+	return nil
 }

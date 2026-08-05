@@ -216,12 +216,15 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			}
 		}
 		if _, ok := h.controlVoice.LoadAndDelete(msg.FromUserID); ok {
-			providerID, err := h.sendVoiceBriefing(ctx, client, msg.FromUserID, msg.ContextToken)
+			_, err := h.sendVoiceBriefing(ctx, client, msg.FromUserID, msg.ContextToken)
 			if err != nil {
 				reply = fmt.Sprintf("语音简报生成失败：%v", err)
-			} else {
-				reply = fmt.Sprintf("音频简报已作为 MP3 文件发送。提供商：%s。", providerID)
+				if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
+					log.Printf("[handler] failed to send voice error to %s: %v", userLabel, sendErr)
+				}
 			}
+			// 成功时配套阅读卡和 MP3 已完整交付，不再追加低信息量状态卡。
+			return
 		}
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send control result to %s: %v", userLabel, err)
