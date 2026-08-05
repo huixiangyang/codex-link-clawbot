@@ -112,13 +112,22 @@ weclaw restart
     "env": {}
   },
   "security": {"remote_lock_code": "change-this-code"},
-  "voice": {"enabled": false, "command": ""}
+  "voice": {
+    "enabled": false,
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "api_key": "",
+    "model": "mimo-v2.5-tts",
+    "voice": "茉莉",
+    "style_prompt": "用自然、克制、清晰的语气播报，语速稍慢，重点明确。"
+  }
 }
 ```
 
 `projects` 是 Codex 唯一允许进入的目录白名单；ID 必须稳定且唯一，根目录必须是已存在的干净绝对路径。会话和快捷任务均按项目隔离。`codex.command` 只接受 Codex 可执行文件，程序固定追加 `app-server --listen stdio://`；旧 `codex.cwd` 已删除并会被严格拒绝。`model` 为空时沿用 Codex 默认配置。
 
-自动化可以设置 `daily_at`，或改用 5–1440 的 `every_minutes`，两者必须且只能设置一个。`notify_on` 支持 `always`、`anomaly`、`change`、`anomaly_or_change`；`checks` 支持 `git`、`service`、`health`。语音简报默认关闭；启用后，`voice.command` 必须是绝对路径，并遵循 `command <text> <output.mp3>` 的本机 TTS 包装器契约。
+自动化可以设置 `daily_at`，或改用 5–1440 的 `every_minutes`，两者必须且只能设置一个。`notify_on` 支持 `always`、`anomaly`、`change`、`anomaly_or_change`；`checks` 支持 `git`、`service`、`health`。
+
+语音简报直接调用 MiMo V2.5 TTS 的 `/chat/completions` 接口，并以真正的微信 MP3 语音消息发送，不再执行本机 TTS 脚本。启用时必须配置 HTTPS `voice.base_url` 与 `voice.api_key`；也可以用 `WECLAW_MIMO_API_KEY` 注入密钥。模型固定为 `mimo-v2.5-tts`，可选音色为中文的 `冰糖`、`茉莉`、`苏打`、`白桦`，以及英文的 `Mia`、`Chloe`、`Milo`、`Dean`。`style_prompt` 只控制语气与节奏，不会作为播报正文。旧 `voice.command` 字段已删除，出现时服务会拒绝启动。
 
 视觉操作卡片默认开启，并提供五套完整模板：`刊物`使用纸张、中文衬线和克制红，`构筑`使用平面石材、几何秩序和建筑色，`黑标`使用高对比黑白与香槟金，`可爱`使用奶油纸、圆润轮廓和柔和色块，`简洁`使用高留白、细线与纯粹信息秩序。五者各自拥有独立的控制卡和阅读卡版式，不是简单换色。发送“视觉风格”或从主菜单进入即可预览并切换；选择按微信账号隔离，保存到严格 v1 的 `~/.weclaw/visual-styles.json`，重启后继续生效。
 
@@ -131,6 +140,7 @@ weclaw restart
 - `WECLAW_CODEX_COMMAND`
 - `WECLAW_CODEX_MODEL`
 - `WECLAW_VISUAL_BROWSER`
+- `WECLAW_MIMO_API_KEY`
 
 配置使用严格解码。旧的 `default_agent`、`agents`、`type`、`args`、`endpoint` 和别名配置会导致启动失败，不做兼容转换。
 

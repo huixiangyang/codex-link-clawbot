@@ -147,7 +147,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetRemoteLock(remoteLock)
 	if cfg.Voice.Enabled {
-		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(cfg.Voice.Command))
+		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(messaging.VoiceBriefingConfig{
+			BaseURL:     cfg.Voice.BaseURL,
+			APIKey:      cfg.Voice.APIKey,
+			Model:       cfg.Voice.Model,
+			Voice:       cfg.Voice.Voice,
+			StylePrompt: cfg.Voice.StylePrompt,
+		}))
+		log.Printf("MiMo voice briefing enabled (model=%s, voice=%s)", cfg.Voice.Model, cfg.Voice.Voice)
 	}
 
 	handler.SetProgressConfig(messaging.ProgressConfig{

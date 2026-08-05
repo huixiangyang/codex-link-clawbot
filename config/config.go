@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -42,18 +43,57 @@ func (c SecurityConfig) validate() error {
 }
 
 type VoiceConfig struct {
-	Enabled bool   `json:"enabled"`
-	Command string `json:"command,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	BaseURL     string `json:"base_url"`
+	APIKey      string `json:"api_key,omitempty"`
+	Model       string `json:"model"`
+	Voice       string `json:"voice"`
+	StylePrompt string `json:"style_prompt,omitempty"`
+}
+
+func defaultVoiceConfig() VoiceConfig {
+	return VoiceConfig{
+		BaseURL:     "https://api.xiaomimimo.com/v1",
+		Model:       "mimo-v2.5-tts",
+		Voice:       "茉莉",
+		StylePrompt: "用自然、克制、清晰的语气播报，语速稍慢，重点明确。",
+	}
 }
 
 func (c VoiceConfig) validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if !filepath.IsAbs(c.Command) {
-		return fmt.Errorf("voice.command must be an absolute executable path")
+	baseURL, err := url.Parse(strings.TrimSpace(c.BaseURL))
+	if err != nil || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return fmt.Errorf("voice.base_url must be an absolute MiMo API URL without credentials, query, or fragment")
+	}
+	if baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && isLoopbackHost(baseURL.Hostname())) {
+		return fmt.Errorf("voice.base_url must use HTTPS except for a loopback test endpoint")
+	}
+	if strings.TrimSpace(c.APIKey) == "" || strings.ContainsAny(c.APIKey, "\r\n") {
+		return fmt.Errorf("voice.api_key is required and must be a single line")
+	}
+	if c.Model != "mimo-v2.5-tts" {
+		return fmt.Errorf("voice.model must be mimo-v2.5-tts")
+	}
+	switch c.Voice {
+	case "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean":
+	default:
+		return fmt.Errorf("voice.voice is not a supported MiMo preset voice")
+	}
+	if len([]rune(c.StylePrompt)) > 500 {
+		return fmt.Errorf("voice.style_prompt must contain at most 500 characters")
 	}
 	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // CodexConfig 是唯一智能体运行配置。App Server 参数由程序固定，避免协议分叉。
@@ -321,6 +361,7 @@ func DefaultConfig() *Config {
 		Projects: defaultProjects(),
 		Codex:    defaultCodexConfig(),
 		Visual:   defaultVisualConfig(),
+		Voice:    defaultVoiceConfig(),
 	}
 }
 
@@ -403,6 +444,9 @@ func loadEnv(cfg *Config) {
 	}
 	if v := os.Getenv("WECLAW_VISUAL_BROWSER"); v != "" {
 		cfg.Visual.BrowserCommand = v
+	}
+	if v := os.Getenv("WECLAW_MIMO_API_KEY"); v != "" {
+		cfg.Voice.APIKey = v
 	}
 }
 

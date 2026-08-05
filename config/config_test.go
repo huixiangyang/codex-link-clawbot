@@ -51,6 +51,9 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
 		t.Fatalf("unexpected default visual config: %#v", cfg.Visual)
 	}
+	if cfg.Voice.Enabled || cfg.Voice.BaseURL != "https://api.xiaomimimo.com/v1" || cfg.Voice.Model != "mimo-v2.5-tts" || cfg.Voice.Voice != "茉莉" {
+		t.Fatalf("unexpected default voice config: %#v", cfg.Voice)
+	}
 }
 
 func TestLoadEnvOverridesCodex(t *testing.T) {
@@ -58,6 +61,7 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	t.Setenv("WECLAW_CODEX_COMMAND", "/opt/codex")
 	t.Setenv("WECLAW_CODEX_MODEL", "gpt-test")
 	t.Setenv("WECLAW_VISUAL_BROWSER", "/opt/chromium")
+	t.Setenv("WECLAW_MIMO_API_KEY", "mimo-test-key")
 
 	cfg := DefaultConfig()
 	loadEnv(cfg)
@@ -69,6 +73,9 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	}
 	if cfg.Visual.BrowserCommand != "/opt/chromium" {
 		t.Fatalf("visual browser override = %q", cfg.Visual.BrowserCommand)
+	}
+	if cfg.Voice.APIKey != "mimo-test-key" {
+		t.Fatalf("MiMo API key override was not applied")
 	}
 }
 
@@ -216,12 +223,43 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 		t.Fatalf("short lock code error = %v", err)
 	}
 	cfg.Security.RemoteLockCode = "secure-code"
-	cfg.Voice = VoiceConfig{Enabled: true, Command: "tts"}
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.command") {
-		t.Fatalf("relative voice command error = %v", err)
+	cfg.Voice.Enabled = true
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.api_key") {
+		t.Fatalf("missing API key error = %v", err)
 	}
-	cfg.Voice.Command = "/usr/local/bin/weclaw-tts"
+	cfg.Voice.APIKey = "test-key"
+	cfg.Voice.BaseURL = "http://example.com/v1"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("insecure base URL error = %v", err)
+	}
+	cfg.Voice.BaseURL = "https://api.xiaomimimo.com/v1"
+	cfg.Voice.Model = "mimo-v2.5-tts-voiceclone"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.model") {
+		t.Fatalf("unsupported model error = %v", err)
+	}
+	cfg.Voice.Model = "mimo-v2.5-tts"
+	cfg.Voice.Voice = "unknown"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.voice") {
+		t.Fatalf("unsupported voice error = %v", err)
+	}
+	cfg.Voice.Voice = "茉莉"
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("valid security and voice config: %v", err)
+	}
+}
+
+func TestLoadRejectsRemovedVoiceCommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".weclaw", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"},"voice":{"enabled":true,"command":"/usr/local/bin/tts"}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("Load() error = %v, want removed voice.command rejection", err)
 	}
 }
