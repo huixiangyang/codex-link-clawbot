@@ -134,6 +134,54 @@ func (m *Manager) Stats(ownerID string) Stats {
 	}
 }
 
+// SnapshotThreadID 只读取指定项目当前会话，用于任务入队时冻结归属。
+func (m *Manager) SnapshotThreadID(ownerID, projectID string) string {
+	threadID, _ := m.store.ActiveForProject(strings.TrimSpace(ownerID), strings.TrimSpace(projectID))
+	return threadID
+}
+
+// OpenTaskThread 按任务快照打开会话，不读取也不改写执行时的界面当前项目。
+func (m *Manager) OpenTaskThread(ctx context.Context, ownerID, projectID, threadID string, client codex.ThreadClient, suggestedName string) (codex.ThreadInfo, error) {
+	ownerID = strings.TrimSpace(ownerID)
+	projectID = strings.TrimSpace(projectID)
+	threadID = strings.TrimSpace(threadID)
+	if ownerID == "" || projectID == "" {
+		return codex.ThreadInfo{}, fmt.Errorf("task owner and project are required")
+	}
+	if threadID != "" {
+		if _, err := m.store.ResolveForProject(ownerID, projectID, threadID, false); err != nil {
+			return codex.ThreadInfo{}, err
+		}
+		thread, err := client.ResumeThread(ctx, threadID)
+		if err != nil {
+			return codex.ThreadInfo{}, fmt.Errorf("resume task session %s: %w", ShortCode(threadID), err)
+		}
+		return thread, nil
+	}
+
+	name, err := normalizeName(suggestedName)
+	if err != nil {
+		return codex.ThreadInfo{}, err
+	}
+	thread, err := client.StartThread(ctx)
+	if err != nil {
+		return codex.ThreadInfo{}, fmt.Errorf("start task session: %w", err)
+	}
+	if name != "" {
+		if err := client.SetThreadName(ctx, thread.ID, name); err != nil {
+			_ = client.ArchiveThread(context.WithoutCancel(ctx), thread.ID)
+			return codex.ThreadInfo{}, fmt.Errorf("name task session: %w", err)
+		}
+		thread.Name = name
+	}
+	// 排队后用户可能已切换会话；新任务线程只登记归属，不抢占后来做出的界面选择。
+	if err := m.store.RegisterProject(ownerID, projectID, thread, false, m.now()); err != nil {
+		_ = client.ArchiveThread(context.WithoutCancel(ctx), thread.ID)
+		return codex.ThreadInfo{}, fmt.Errorf("persist task session: %w", err)
+	}
+	return thread, nil
+}
+
 func (m *Manager) New(ctx context.Context, ownerID string, client codex.ThreadClient, name string) (codex.ThreadInfo, error) {
 	name, err := normalizeName(name)
 	if err != nil {

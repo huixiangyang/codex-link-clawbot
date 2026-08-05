@@ -1,6 +1,8 @@
 package taskqueue
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +21,7 @@ const (
 	ReasonCodexFailed        = "codex_failed"
 	ReasonDeliveryFailed     = "delivery_failed"
 	ReasonDeliveryAmbiguous  = "delivery_ambiguous"
+	ReasonResultFreezeFailed = "result_freeze_failed"
 	ReasonPayloadInvalid     = "payload_invalid"
 	ReasonProjectUnavailable = "project_unavailable"
 	ReasonSessionUnavailable = "session_unavailable"
@@ -82,6 +85,92 @@ func (store *Store) MoveToFront(ownerID, taskID string) (Task, error) {
 
 func (store *Store) DeleteQueued(ownerID, taskID string) (Task, error) {
 	return store.finish(ownerID, taskID, StateCancelled, ReasonUserCancelled)
+}
+
+// Delete 删除等待任务或终态记录；活动任务只能通过取消流程结束。
+func (store *Store) Delete(ownerID, taskID string) error {
+	task, ok := store.Find(ownerID, taskID)
+	if !ok {
+		return fmt.Errorf("task not found")
+	}
+	if task.State == StateQueued {
+		_, err := store.DeleteQueued(ownerID, taskID)
+		return err
+	}
+	if !task.State.Terminal() {
+		return fmt.Errorf("active task cannot be deleted")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	owner := store.state.Owners[strings.TrimSpace(ownerID)]
+	index := taskIndex(owner.Tasks, strings.TrimSpace(taskID))
+	if index < 0 {
+		return fmt.Errorf("task not found")
+	}
+	previous := owner
+	owner.Tasks = append([]Task(nil), owner.Tasks...)
+	owner.Tasks = append(owner.Tasks[:index], owner.Tasks[index+1:]...)
+	store.state.Owners[strings.TrimSpace(ownerID)] = owner
+	if err := store.saveLocked(); err != nil {
+		store.state.Owners[strings.TrimSpace(ownerID)] = previous
+		return err
+	}
+	if err := store.removeTaskIDs([]string{taskID}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Retry 从仍在保留期内的失败输入创建全新任务，绝不回退原任务状态。
+func (store *Store) Retry(ownerID, taskID, sourceMessageKey, contextToken string) (Task, error) {
+	original, ok := store.Find(ownerID, taskID)
+	if !ok || original.State != StateFailed && original.State != StateInterrupted {
+		return Task{}, fmt.Errorf("only a failed or interrupted task can be retried")
+	}
+	request, err := store.LoadRequest(ownerID, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	input := EnqueueInput{
+		SourceMessageKey: strings.TrimSpace(sourceMessageKey), OwnerID: original.OwnerID,
+		ProjectID: original.ProjectID, ThreadID: original.ThreadID, Summary: original.Summary,
+		Text: request.Text, ContextToken: contextToken, ResponseMode: original.ResponseMode,
+		VisualStyle: original.VisualStyle, RetryOf: original.ID,
+	}
+	for _, attachment := range request.Images {
+		data, err := readRetryAttachment(attachment)
+		if err != nil {
+			return Task{}, err
+		}
+		input.Images = append(input.Images, InputAttachment{Name: attachment.Name, ContentType: attachment.ContentType, Data: data})
+	}
+	for _, attachment := range request.Files {
+		data, err := readRetryAttachment(attachment)
+		if err != nil {
+			return Task{}, err
+		}
+		input.Files = append(input.Files, InputAttachment{Name: attachment.Name, ContentType: attachment.ContentType, Data: data})
+	}
+	retried, existed, err := store.Enqueue(input)
+	if err != nil {
+		return Task{}, err
+	}
+	if existed && retried.RetryOf != original.ID {
+		return Task{}, fmt.Errorf("retry source message already belongs to another task")
+	}
+	return retried, nil
+}
+
+func readRetryAttachment(attachment LoadedAttachment) ([]byte, error) {
+	data, err := os.ReadFile(attachment.AbsolutePath)
+	if err != nil {
+		return nil, fmt.Errorf("read retained task attachment: %w", err)
+	}
+	hash := sha256.Sum256(data)
+	if int64(len(data)) != attachment.Size || hex.EncodeToString(hash[:]) != attachment.SHA256 {
+		return nil, fmt.Errorf("retained task attachment changed during retry")
+	}
+	return data, nil
 }
 
 func (store *Store) ClearQueued(ownerID string) (int, error) {
@@ -225,6 +314,13 @@ func (store *Store) AttachUsage(ownerID, taskID string, inputTokens, outputToken
 func (store *Store) BeginDelivery(ownerID, taskID string) (Task, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	task, ok := store.findTaskLocked(strings.TrimSpace(ownerID), strings.TrimSpace(taskID))
+	if !ok || task.State != StateRunning {
+		return Task{}, fmt.Errorf("only a running task can begin delivery")
+	}
+	if _, err := store.loadResult(task); err != nil {
+		return Task{}, fmt.Errorf("load frozen task result: %w", err)
+	}
 	return store.transitionLocked(ownerID, taskID, StateDelivering, "正在发送结果", "")
 }
 
@@ -343,6 +439,11 @@ func (store *Store) recoverLocked() (bool, error) {
 			if taskNow < task.CreatedAt {
 				taskNow = task.CreatedAt
 			}
+			if task.State == StateDelivering {
+				if _, err := store.loadResult(*task); err != nil {
+					return false, fmt.Errorf("recover delivering task %s: %w", task.ID, err)
+				}
+			}
 			switch task.State {
 			case StateRunning:
 				task.State = StateInterrupted
@@ -403,11 +504,29 @@ func (store *Store) recoverLocked() (bool, error) {
 					return false, fmt.Errorf("clean orphan task payload: %w", err)
 				}
 				changed = true
+			} else if err := store.cleanTaskTemporaryFiles(name); err != nil {
+				return false, err
 			}
 		}
 	}
 	store.cleanupTaskIDs(cleanup)
 	return changed, nil
+}
+
+func (store *Store) cleanTaskTemporaryFiles(taskID string) error {
+	entries, err := os.ReadDir(store.taskPath(taskID))
+	if err != nil {
+		return fmt.Errorf("scan task %s private directory: %w", taskID, err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".result-") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(store.taskPath(taskID), entry.Name())); err != nil {
+			return fmt.Errorf("clean task result staging: %w", err)
+		}
+	}
+	return nil
 }
 
 // CleanupExpired 删除已超过保留期限的失败任务输入，供常驻协调器定时调用。

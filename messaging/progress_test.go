@@ -1,10 +1,8 @@
 package messaging
 
 import (
-	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/huixiangyang/weclaw/codex"
 )
@@ -31,53 +29,6 @@ func TestFormatProgressEventTruncatesByRune(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("progress should end with ellipsis: %q", got)
-	}
-}
-
-func TestActiveTaskSummaryContainsSnapshot(t *testing.T) {
-	task := &activeTask{started: time.Now().Add(-70 * time.Second), status: "正在验证链路"}
-	got := task.busySummary()
-	if !strings.Contains(got, "上一项任务仍在执行") || !strings.Contains(got, "正在验证链路") {
-		t.Fatalf("unexpected active task summary: %q", got)
-	}
-}
-
-func TestActiveTaskCancelIsIdempotent(t *testing.T) {
-	task := newActiveTask(context.Background())
-	if !task.requestCancel() {
-		t.Fatal("first cancellation should be accepted")
-	}
-	if task.requestCancel() {
-		t.Fatal("duplicate cancellation should be rejected")
-	}
-	if !task.cancelRequested() {
-		t.Fatal("task should record the cancellation request")
-	}
-	select {
-	case <-task.context().Done():
-	default:
-		t.Fatal("task context should be cancelled")
-	}
-	if got := task.statusSummary(); !strings.Contains(got, "任务状态：正在取消") {
-		t.Fatalf("unexpected cancellation status: %q", got)
-	}
-}
-
-func TestActiveTaskFinishAndCancelRaceHasSingleWinner(t *testing.T) {
-	completed := newActiveTask(context.Background())
-	if !completed.finish() {
-		t.Fatal("an uncancelled task should allow its final result")
-	}
-	if completed.requestCancel() {
-		t.Fatal("cancellation must be rejected after task completion")
-	}
-
-	cancelled := newActiveTask(context.Background())
-	if !cancelled.requestCancel() {
-		t.Fatal("cancellation should win while the task is active")
-	}
-	if cancelled.finish() {
-		t.Fatal("a cancelled task must suppress its final result")
 	}
 }
 

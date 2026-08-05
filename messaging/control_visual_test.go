@@ -117,12 +117,12 @@ func TestControlCardFromBrowsableSessionDetail(t *testing.T) {
 }
 
 func TestControlCardFromTaskHistory(t *testing.T) {
-	reply := "任务记录\n\n页码：1 / 2\n记录：8\n完成：6\n异常：2\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
+	reply := "任务中心\n\n页码：1 / 2\n等待：2\n执行：1\n已暂停：否\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantProgress || card.Title != "任务记录" {
+	if card.Variant != visual.VariantProgress || card.Title != "任务中心" {
 		t.Fatalf("activity card identity = %#v", card)
 	}
-	if len(card.Facts) != 4 || card.Facts[3].Label != "异常" {
+	if len(card.Facts) != 4 || card.Facts[3].Label != "已暂停" {
 		t.Fatalf("activity card facts = %#v", card.Facts)
 	}
 	if len(card.Options) != 3 || card.Options[2].Label != "下一页 · 2/2" {

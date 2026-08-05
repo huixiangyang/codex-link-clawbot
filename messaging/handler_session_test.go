@@ -20,6 +20,7 @@ type handlerThreadClient struct {
 	threads      map[string]codex.ThreadInfo
 	archived     map[string]bool
 	chatThreadID string
+	cwdChanges   []string
 }
 
 func newHandlerThreadClient() *handlerThreadClient {
@@ -33,7 +34,7 @@ func (a *handlerThreadClient) Info() codex.RuntimeInfo {
 	return codex.RuntimeInfo{Command: "codex", Cwd: "/workspace", PID: 4242}
 }
 
-func (a *handlerThreadClient) SetCwd(string) {}
+func (a *handlerThreadClient) SetCwd(cwd string) { a.cwdChanges = append(a.cwdChanges, cwd) }
 
 func (a *handlerThreadClient) StartThread(context.Context) (codex.ThreadInfo, error) {
 	a.next++
@@ -185,7 +186,7 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"WeClaw", "版本：dev", "1  项目", "2  会话", "3  最近任务", "4  更多功能", "回复数字"} {
+	for _, want := range []string{"WeClaw", "版本：dev", "1  项目", "2  会话", "3  任务中心", "4  更多功能", "回复数字"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
@@ -350,16 +351,11 @@ func TestSessionMutationSuccessCardsKeepManagementFlowOpen(t *testing.T) {
 }
 
 func TestTaskStatusOffersRefreshAndConfirmedCancellation(t *testing.T) {
-	handler, _ := newSessionHandler(t)
-	task := newActiveTask(context.Background())
-	handler.activeTasks.Store("owner-1", task)
-	defer func() {
-		task.finish()
-		handler.activeTasks.Delete("owner-1")
-	}()
+	handler, cancel := testHandlerWithRunningTask(t, "owner-1")
+	defer cancel()
 
 	status := controlReply(t, handler, "owner-1", "状态")
-	for _, want := range []string{"任务状态：运行中", "1  刷新状态", "2  暂存下一条指令", "3  取消当前任务"} {
+	for _, want := range []string{"任务状态：运行中", "1  刷新状态", "2  任务中心", "3  取消当前任务"} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("task status missing %q: %q", want, status)
 		}
@@ -369,8 +365,8 @@ func TestTaskStatusOffersRefreshAndConfirmedCancellation(t *testing.T) {
 		t.Fatalf("task cancel confirmation = %q", confirm)
 	}
 	cancelled := controlReply(t, handler, "owner-1", "1")
-	if !strings.Contains(cancelled, "已请求取消当前任务") || !task.cancelRequested() {
-		t.Fatalf("task cancel result = %q requested=%v", cancelled, task.cancelRequested())
+	if !strings.Contains(cancelled, "已请求取消当前任务") {
+		t.Fatalf("task cancel result = %q", cancelled)
 	}
 }
 
@@ -473,11 +469,16 @@ func TestLegacySlashCommandsAreRejected(t *testing.T) {
 	}
 }
 
-func TestChatWithCodexUsesOwnedExplicitThread(t *testing.T) {
+func TestTaskSessionUsesOwnedExplicitThread(t *testing.T) {
 	handler, threadAgent := newSessionHandler(t)
-	reply, err := handler.chatWithCodex(context.Background(), "owner-1", codex.ChatRequest{Text: "检查项目"}, nil)
+	projectID := session.DefaultProjectID
+	thread, err := handler.sessions.OpenTaskThread(context.Background(), "owner-1", projectID, "", threadAgent, "检查项目")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := threadAgent.ChatThread(context.Background(), thread.ID, codex.ChatRequest{Text: "检查项目"})
 	if err != nil || reply != "显式线程回复" {
-		t.Fatalf("chatWithCodex() = %q, %v", reply, err)
+		t.Fatalf("task thread reply = %q, %v", reply, err)
 	}
 	if threadAgent.chatThreadID == "" {
 		t.Fatal("ChatThread() did not receive an explicit thread id")

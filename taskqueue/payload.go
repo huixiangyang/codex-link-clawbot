@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func (store *Store) stagePayloadLocked(input EnqueueInput, taskID string) (Request, int64, error) {
@@ -188,6 +189,35 @@ func (store *Store) LoadRequest(ownerID, taskID string) (LoadedRequest, error) {
 		return LoadedRequest{}, fmt.Errorf("task payload size does not match its index")
 	}
 	return loaded, nil
+}
+
+// PrepareOutbox 创建本次任务唯一的私有交付目录，Codex 只能向该目录写入最终文件。
+func (store *Store) PrepareOutbox(ownerID, taskID string) (string, error) {
+	store.mu.RLock()
+	task, ok := store.findTaskLocked(strings.TrimSpace(ownerID), strings.TrimSpace(taskID))
+	store.mu.RUnlock()
+	if !ok || task.State != StateRunning {
+		return "", fmt.Errorf("only a running task can prepare an outbox")
+	}
+	outboxPath := filepath.Join(store.taskPath(task.ID), "outbox")
+	info, err := os.Lstat(outboxPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		if err := os.Mkdir(outboxPath, 0o700); err != nil {
+			return "", fmt.Errorf("create task outbox: %w", err)
+		}
+	case err != nil:
+		return "", fmt.Errorf("inspect task outbox: %w", err)
+	case !info.IsDir() || info.Mode()&os.ModeSymlink != 0:
+		return "", fmt.Errorf("task outbox is invalid")
+	}
+	if err := os.Chmod(outboxPath, 0o700); err != nil {
+		return "", fmt.Errorf("protect task outbox: %w", err)
+	}
+	if err := syncDirectory(store.taskPath(task.ID)); err != nil {
+		return "", fmt.Errorf("sync task outbox: %w", err)
+	}
+	return outboxPath, nil
 }
 
 func (store *Store) verifyAttachment(taskID string, attachment Attachment) (string, error) {

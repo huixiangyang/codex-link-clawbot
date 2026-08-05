@@ -18,7 +18,7 @@ func (h *Handler) openProjectCenter(userID string) string {
 	current := h.projects.Current(userID)
 	stats := sessionStats(h, userID)
 	options := make([]controlOption, 0, len(h.projects.List())+1)
-	if len(current.QuickTasks) > 0 && !h.hasActiveTask(userID) {
+	if len(current.QuickTasks) > 0 {
 		options = append(options, controlOption{Label: "快捷任务", Action: actionProjectQuickTasks})
 	}
 	for _, definition := range h.projects.List() {
@@ -55,9 +55,6 @@ func (h *Handler) openProjectQuickTasks(userID string) string {
 	if h.projects == nil {
 		return "项目中心未初始化。"
 	}
-	if h.hasActiveTask(userID) {
-		return mutationBusyText()
-	}
 	current := h.projects.Current(userID)
 	if len(current.QuickTasks) == 0 {
 		return "当前项目没有配置快捷任务。"
@@ -75,9 +72,6 @@ func (h *Handler) runProjectQuickTask(userID, taskID string) string {
 	if h.projects == nil {
 		return "项目中心未初始化。"
 	}
-	if h.hasActiveTask(userID) {
-		return mutationBusyText()
-	}
 	current := h.projects.Current(userID)
 	task, exists := h.projects.QuickTask(current.ID, taskID)
 	if !exists {
@@ -93,9 +87,6 @@ func (h *Handler) selectProject(userID, reference string) string {
 	if h.projects == nil {
 		return "项目中心未初始化。"
 	}
-	if h.hasActiveTask(userID) {
-		return mutationBusyText()
-	}
 	definition, err := h.projects.Resolve(reference)
 	if err != nil {
 		if errors.Is(err, project.ErrUnknownProject) {
@@ -107,7 +98,7 @@ func (h *Handler) selectProject(userID, reference string) string {
 	if err != nil {
 		return fmt.Sprintf("项目选择失败：%v", err)
 	}
-	h.codex.SetCwd(selected.Root)
+	// 项目选择只更新界面状态；Codex cwd 只能由串行 Coordinator 在领取任务时设置。
 	log.Printf("[project] selected project=%s for %s", selected.ID, ilink.LogLabel(userID))
 	stats := sessionStats(h, userID)
 	currentSession := "未创建"

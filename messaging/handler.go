@@ -2,9 +2,11 @@ package messaging
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,14 @@ import (
 	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/taskqueue"
+	"github.com/huixiangyang/weclaw/visual"
+)
+
+var (
+	taskSummaryURLPattern         = regexp.MustCompile(`(?i)https?://[^\s，。！？；;]+`)
+	taskSummaryUnixPathPattern    = regexp.MustCompile(`/[^\s，。！？；;]+`)
+	taskSummaryWindowsPathPattern = regexp.MustCompile(`(?i)[a-z]:[\\/][^\s，。！？；;]+`)
 )
 
 // Handler processes incoming WeChat messages and dispatches replies.
@@ -21,12 +31,11 @@ type Handler struct {
 	codex               codex.Runtime
 	contextTokens       sync.Map // map[userID]contextToken
 	saveDir             string   // Linkhoard archive directory
-	seenMsgs            sync.Map // map[int64]time.Time — dedup by message_id
-	activeTasks         sync.Map // map[userID]*activeTask — 同一用户只允许一个活动任务
-	pendingInstructions sync.Map // map[userID]string — 运行中仅暂存一条后续指令
 	controlDispatches   sync.Map // map[userID]string — 数字菜单触发的一次性 Codex 请求
 	controlMedia        sync.Map // map[userID]string — 数字菜单触发的交付物再次发送
 	controlVoice        sync.Map // map[userID]bool — 数字菜单触发的一次性语音简报
+	controlRetries      sync.Map // map[userID]taskID — 数字菜单触发的一次性持久任务重试
+	controlFrozenTexts  sync.Map // map[userID]taskID — 人工取回中断交付的冻结文字
 	controlStates       sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
 	progress            ProgressConfig
 	projects            *project.Manager
@@ -37,13 +46,20 @@ type Handler struct {
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
 	automations         AutomationProvider
-	activities          *ActivityStore
+	tasks               *taskqueue.Store
+	coordinator         *Coordinator
+	lifecycle           ingressLifecycle
 	library             *LibraryStore
 	remoteLock          *RemoteLock
 	voice               *VoiceBriefing
 	bridgeVersion       string
 	apiAddr             string
 	startedAt           time.Time
+}
+
+type ingressLifecycle interface {
+	BeginIngress()
+	EndIngress()
 }
 
 // SetSessionManager 注入显式 Codex 会话管理器。
@@ -81,8 +97,13 @@ func (h *Handler) SetAutomationProvider(provider AutomationProvider) {
 	h.automations = provider
 }
 
-func (h *Handler) SetActivityStore(store *ActivityStore) {
-	h.activities = store
+func (h *Handler) SetTaskQueue(store *taskqueue.Store, coordinator *Coordinator) {
+	h.tasks = store
+	h.coordinator = coordinator
+}
+
+func (h *Handler) SetRuntimeLifecycle(lifecycle ingressLifecycle) {
+	h.lifecycle = lifecycle
 }
 
 func (h *Handler) SetLibraryStore(store *LibraryStore) {
@@ -129,42 +150,24 @@ func (h *Handler) SetSaveDir(dir string) {
 	h.saveDir = dir
 }
 
-// cleanSeenMsgs removes entries older than 5 minutes from the dedup cache.
-func (h *Handler) cleanSeenMsgs() {
-	cutoff := time.Now().Add(-5 * time.Minute)
-	h.seenMsgs.Range(func(key, value any) bool {
-		if t, ok := value.(time.Time); ok && t.Before(cutoff) {
-			h.seenMsgs.Delete(key)
-		}
-		return true
-	})
-}
-
 // HandleMessage processes a single incoming message.
-func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage) {
+func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage) error {
 	// Only process user messages that are finished
 	if msg.MessageType != ilink.MessageTypeUser {
-		return
+		return nil
 	}
 	if msg.MessageState != ilink.MessageStateFinish {
-		return
+		return nil
 	}
 	userLabel := ilink.LogLabel(msg.FromUserID)
 
 	// 只接受扫码绑定账号发来的消息，避免群聊或其他联系人驱动本机 Codex。
 	if ownerUserID := client.OwnerUserID(); ownerUserID != "" && msg.FromUserID != ownerUserID {
 		log.Printf("[handler] rejected message from non-owner user %s", userLabel)
-		return
+		return nil
 	}
-
-	// Deduplicate by message_id to avoid processing the same message multiple times
-	// (voice messages may trigger multiple finish-state updates)
-	if msg.MessageID != 0 {
-		if _, loaded := h.seenMsgs.LoadOrStore(msg.MessageID, time.Now()); loaded {
-			return
-		}
-		// Clean up old entries periodically (fire-and-forget)
-		go h.cleanSeenMsgs()
+	if h.coordinator != nil {
+		h.coordinator.RegisterOwnerClient(msg.FromUserID, client)
 	}
 
 	// Extract text from item list (text message or voice transcription)
@@ -179,7 +182,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	files := extractFiles(msg)
 	if text == "" && len(images) == 0 && len(files) == 0 {
 		log.Printf("[handler] received unsupported message from %s, skipping", userLabel)
-		return
+		return nil
 	}
 
 	if len(images) > 0 || len(files) > 0 {
@@ -198,17 +201,23 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[security] failed to send locked-state reply to %s: %v", userLabel, err)
 		}
-		return
+		return nil
 	}
 	if len(images) == 0 && len(files) == 0 && h.sendCachedVisualReply(ctx, client, msg, trimmed, clientID) {
-		return
+		return nil
 	}
 
 	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
 	if reply, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
 		if prompt, ok := h.controlDispatches.LoadAndDelete(msg.FromUserID); ok {
-			h.sendToCodex(ctx, client, msg, prompt.(string), nil, nil, clientID)
-			return
+			return h.enqueueCodexTask(ctx, client, msg, prompt.(string), nil, nil, clientID)
+		}
+		if taskID, ok := h.controlRetries.LoadAndDelete(msg.FromUserID); ok {
+			return h.retryCodexTask(ctx, client, msg, taskID.(string), clientID)
+		}
+		if taskID, ok := h.controlFrozenTexts.LoadAndDelete(msg.FromUserID); ok {
+			h.sendFrozenTaskText(ctx, client, msg, taskID.(string), clientID)
+			return nil
 		}
 		if path, ok := h.controlMedia.LoadAndDelete(msg.FromUserID); ok {
 			if err := SendMediaFromPath(ctx, client, msg.FromUserID, path.(string), msg.ContextToken); err != nil {
@@ -224,25 +233,12 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 				}
 			}
 			// 成功时配套阅读卡和 MP3 已完整交付，不再追加低信息量状态卡。
-			return
+			return nil
 		}
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send control result to %s: %v", userLabel, err)
 		}
-		return
-	}
-
-	// 任务运行期间普通消息直接返回快照，避免切换、归档等控制操作并发改写线程状态。
-	if active, ok := h.activeTasks.Load(msg.FromUserID); ok {
-		if len(images) == 0 && len(files) == 0 && trimmed != "" {
-			reply := h.queuePendingInstruction(msg.FromUserID, trimmed)
-			if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-				log.Printf("[handler] failed to confirm pending instruction to %s: %v", userLabel, err)
-			}
-		} else {
-			h.sendActiveTaskStatus(ctx, client, msg, active.(*activeTask))
-		}
-		return
+		return nil
 	}
 
 	// 纯链接归档直接处理，不消耗 Codex turn。
@@ -267,84 +263,161 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 				log.Printf("[handler] failed to send reply to %s: %v", userLabel, err)
 			}
-			return
+			return nil
 		}
 	}
 
-	h.sendToCodex(ctx, client, msg, text, images, files, clientID)
+	return h.enqueueCodexTask(ctx, client, msg, text, images, files, clientID)
 }
 
-// sendToCodex 把所有非控制消息统一发送到 Codex。
-func (h *Handler) sendToCodex(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) {
-	var reply, artifactDir string
-	if h.codex != nil {
-		reporter, ok := h.beginTask(ctx, client, msg)
-		if !ok {
-			return
-		}
-		activityID := h.startActivity(msg.FromUserID, taskActivitySummary(text, len(images), len(files)))
-		reporter.task.setActivity(activityID)
-		request, cleanup, prepareErr := h.prepareTaskInput(reporter, text, images, files)
-		if prepareErr != nil {
-			log.Printf("[handler] failed to prepare inbound attachments for %s: %v", ilink.LogLabel(msg.FromUserID), prepareErr)
-			if h.finishTask(msg.FromUserID, reporter) {
-				h.finishActivity(msg.FromUserID, activityID, ActivityFailed)
-				reply = fmt.Sprintf("附件处理失败：%v", prepareErr)
-				h.sendReplyWithMedia(ctx, client, msg, reply, "", clientID)
-			} else {
-				h.finishActivity(msg.FromUserID, activityID, ActivityCancelled)
-			}
-			return
-		}
-		defer cleanup()
-		artifactDir = request.ArtifactDir
-
-		var err error
-		reply, err = h.chatWithCodex(reporter.task.context(), msg.FromUserID, request, reporter.Report)
-		if !h.finishTask(msg.FromUserID, reporter) {
-			h.finishActivity(msg.FromUserID, activityID, ActivityCancelled)
-			log.Printf("[handler] task cancelled for %s", ilink.LogLabel(msg.FromUserID))
-			h.drainPendingInstruction(ctx, client, msg.FromUserID)
-			return
-		}
-		if err != nil {
-			h.finishActivity(msg.FromUserID, activityID, ActivityFailed)
-			reply = fmt.Sprintf("Error: %v", err)
-		} else {
-			h.finishActivity(msg.FromUserID, activityID, ActivitySucceeded)
-		}
-	} else {
-		log.Printf("[handler] codex is unavailable for %s", ilink.LogLabel(msg.FromUserID))
-		reply = "Codex 当前不可用，请稍后重试。"
-	}
-
-	h.sendReplyWithMedia(ctx, client, msg, reply, artifactDir, clientID)
-	h.drainPendingInstruction(ctx, client, msg.FromUserID)
-}
-
-func (h *Handler) startActivity(userID, summary string) string {
-	if h.activities == nil {
-		return ""
-	}
-	projectID := ""
-	if h.projects != nil {
-		projectID = h.projects.Current(userID).ID
-	}
-	id, err := h.activities.StartForProject(userID, projectID, summary)
-	if err != nil {
-		log.Printf("[activity] failed to start task record: %v", err)
-		return ""
-	}
-	return id
-}
-
-func (h *Handler) finishActivity(userID, id string, status ActivityStatus) {
-	if h.activities == nil || id == "" {
+func (h *Handler) sendFrozenTaskText(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, taskID, clientID string) {
+	if h.tasks == nil {
 		return
 	}
-	if err := h.activities.Finish(userID, id, status); err != nil {
-		log.Printf("[activity] failed to finish task record: %v", err)
+	result, err := h.tasks.LoadResult(msg.FromUserID, taskID)
+	if err != nil {
+		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结结果已过期或损坏，无法取回文字。", msg.ContextToken, clientID)
+		return
 	}
+	if err := SendTextReply(ctx, client, msg.FromUserID, result.Reply, msg.ContextToken, clientID); err != nil {
+		log.Printf("[queue] failed to send manually recovered task text: %v", err)
+		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结文字发送失败。任务状态没有改写，可从任务详情再次尝试。", msg.ContextToken, NewClientID())
+	}
+}
+
+func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, taskID, clientID string) error {
+	if h.tasks == nil || h.coordinator == nil || h.projects == nil {
+		return fmt.Errorf("task queue is not initialized")
+	}
+	sourceKey, err := sourceMessageKey(client, msg)
+	if err != nil {
+		return err
+	}
+	task, err := h.tasks.Retry(msg.FromUserID, taskID, sourceKey, msg.ContextToken)
+	if err != nil {
+		reply := "任务无法重试：" + err.Error()
+		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
+			return fmt.Errorf("send retry rejection: %w", sendErr)
+		}
+		return nil
+	}
+	projectName := task.ProjectID
+	if definition, ok := h.projects.Get(task.ProjectID); ok {
+		projectName = definition.Name
+	}
+	if err := h.sendControlReply(ctx, client, msg.FromUserID, queuedTaskAcknowledgement(h.tasks, task, projectName, false), msg.ContextToken, clientID); err != nil {
+		return fmt.Errorf("confirm retried task: %w", err)
+	}
+	h.coordinator.Wake()
+	return nil
+}
+
+// enqueueCodexTask 只负责可靠入队。Codex 执行权始终由全局 Coordinator 持有。
+func (h *Handler) enqueueCodexTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) error {
+	if h.tasks == nil || h.coordinator == nil || h.projects == nil || h.sessions == nil || h.preferences == nil {
+		return fmt.Errorf("task queue is not initialized")
+	}
+	sourceKey, err := sourceMessageKey(client, msg)
+	if err != nil {
+		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, "这条微信消息没有稳定来源编号，无法安全入队。", msg.ContextToken, clientID); sendErr != nil {
+			log.Printf("[queue] failed to send invalid source notice: %v", sendErr)
+		}
+		return nil
+	}
+	if existing, exists := h.tasks.FindBySource(sourceKey); exists {
+		projectName := existing.ProjectID
+		if definition, ok := h.projects.Get(existing.ProjectID); ok {
+			projectName = definition.Name
+		}
+		reply := queuedTaskAcknowledgement(h.tasks, existing, projectName, true)
+		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+			return fmt.Errorf("confirm existing queued task: %w", err)
+		}
+		h.coordinator.Wake()
+		return nil
+	}
+	if h.lifecycle != nil {
+		h.lifecycle.BeginIngress()
+		defer h.lifecycle.EndIngress()
+	}
+	text, queuedImages, queuedFiles, err := prepareQueuedInput(ctx, text, images, files)
+	if err != nil {
+		reply := "附件接收失败：" + err.Error()
+		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
+			log.Printf("[queue] failed to send attachment rejection: %v", sendErr)
+		}
+		return nil
+	}
+	currentProject := h.projects.Current(msg.FromUserID)
+	preferences := h.preferences.Get(msg.FromUserID)
+	task, existed, err := h.tasks.Enqueue(taskqueue.EnqueueInput{
+		SourceMessageKey: sourceKey,
+		OwnerID:          msg.FromUserID,
+		ProjectID:        currentProject.ID,
+		ThreadID:         h.sessions.SnapshotThreadID(msg.FromUserID, currentProject.ID),
+		Summary:          taskActivitySummary(text, len(queuedImages), len(queuedFiles)),
+		Text:             text,
+		ContextToken:     msg.ContextToken,
+		ResponseMode:     preferences.ResponseMode,
+		VisualStyle:      preferences.Style,
+		Images:           queuedImages,
+		Files:            queuedFiles,
+	})
+	if err != nil {
+		// 写盘失败必须向上返回，监控器不能推进微信同步游标。
+		return fmt.Errorf("persist WeChat task: %w", err)
+	}
+	reply := queuedTaskAcknowledgement(h.tasks, task, currentProject.Name, existed)
+	if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+		// 确认失败也不推进游标；同一来源键重投只会返回已有任务。
+		return fmt.Errorf("confirm queued task: %w", err)
+	}
+	h.coordinator.Wake()
+	return nil
+}
+
+func sourceMessageKey(client *ilink.Client, msg ilink.WeixinMessage) (string, error) {
+	account := strings.TrimSpace(client.BotID())
+	if account == "" {
+		account = strings.TrimSpace(msg.ToUserID)
+	}
+	if account == "" {
+		account = strings.TrimSpace(client.OwnerUserID())
+	}
+	if account == "" {
+		return "", fmt.Errorf("message account is missing")
+	}
+	digest := sha256.Sum256([]byte(account))
+	switch {
+	case msg.MessageID != 0:
+		return fmt.Sprintf("%x:message:%d", digest[:12], msg.MessageID), nil
+	case msg.Seq != 0:
+		return fmt.Sprintf("%x:seq:%d", digest[:12], msg.Seq), nil
+	default:
+		return "", fmt.Errorf("message id and sequence are missing")
+	}
+}
+
+func queuedTaskAcknowledgement(store *taskqueue.Store, task taskqueue.Task, projectName string, existed bool) string {
+	state := "已可靠加入队列"
+	if existed {
+		state = "这条消息已经入队，不会重复执行"
+	}
+	positionText := "等待协调器领取"
+	if position, ok := store.QueuePosition(task.OwnerID, task.ID); ok {
+		positionText = fmt.Sprintf("当前排位：%d", position)
+	} else if task.State == taskqueue.StateRunning || task.State == taskqueue.StateDelivering {
+		positionText = "当前状态：" + task.Stage
+	} else if task.State.Terminal() {
+		positionText = "当前状态：" + task.Stage
+	}
+	return strings.Join([]string{
+		"任务已接收",
+		state,
+		"项目：" + projectName,
+		positionText,
+		"摘要：" + task.Summary,
+	}, "\n")
 }
 
 func taskActivitySummary(text string, imageCount, fileCount int) string {
@@ -377,30 +450,61 @@ func taskActivitySummary(text string, imageCount, fileCount int) string {
 }
 
 func sanitizeActivitySummary(summary string) string {
-	summary = activityURLPattern.ReplaceAllString(summary, "[链接]")
-	summary = activityWindowsPathPattern.ReplaceAllString(summary, "[本机路径]")
-	summary = activityUnixPathPattern.ReplaceAllString(summary, "[本机路径]")
+	summary = taskSummaryURLPattern.ReplaceAllString(summary, "[链接]")
+	summary = taskSummaryWindowsPathPattern.ReplaceAllString(summary, "[本机路径]")
+	summary = taskSummaryUnixPathPattern.ReplaceAllString(summary, "[本机路径]")
 	return strings.Join(strings.Fields(summary), " ")
 }
 
 // sendReplyWithMedia 发送最终文字、远程图片和本次 turn 的专属交付物。
-func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, reply, artifactDir, clientID string) {
-	imageURLs := ExtractImageURLs(reply)
+func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, reply, artifactDir, clientID string) deliveryReport {
 	artifacts, collectErr := collectArtifacts(artifactDir)
-	var sentPaths []string
 	failed := append([]string(nil), artifacts.Skipped...)
 	if collectErr != nil {
 		failed = append(failed, collectErr.Error())
 	}
-	for _, attachmentPath := range artifacts.Paths {
+	return h.deliverReplyPlan(ctx, client, msg, reply, artifacts.Paths, failed, ExtractImageURLs(reply), clientID, h.currentProjectID(msg.FromUserID), h.currentResponseMode(msg.FromUserID), h.currentVisualStyle(msg.FromUserID), "")
+}
+
+func (h *Handler) sendReplyWithMediaForTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, task taskqueue.Task, result taskqueue.Result, clientID string) deliveryReport {
+	projectName := task.ProjectID
+	if h.projects != nil {
+		if definition, ok := h.projects.Get(task.ProjectID); ok {
+			projectName = definition.Name
+		}
+	}
+	paths := make([]string, 0, len(result.Artifacts))
+	for _, artifact := range result.Artifacts {
+		paths = append(paths, filepath.Join(h.tasks.Root(), task.ID, artifact.Path))
+	}
+	return h.deliverReplyPlan(ctx, client, msg, result.Reply, paths, nil, result.ImageURLs, clientID, task.ProjectID, task.ResponseMode, task.VisualStyle, projectName)
+}
+
+type deliveryReport struct {
+	Outcome   taskqueue.DeliveryOutcome
+	MediaSent int
+	TextSent  bool
+	Failure   string
+}
+
+func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, reply string, artifactPaths, initialFailures, imageURLs []string, clientID, projectID string, mode preference.ResponseMode, style visual.Style, projectName string) deliveryReport {
+	report := deliveryReport{Outcome: taskqueue.DeliverySucceeded}
+	var sentPaths []string
+	failed := append([]string(nil), initialFailures...)
+	failedDelivery := len(failed) > 0
+	mayBeVisible := false
+	for _, attachmentPath := range artifactPaths {
 		if err := SendMediaFromPath(ctx, client, msg.FromUserID, attachmentPath, msg.ContextToken); err != nil {
 			log.Printf("[handler] failed to send attachment to %s: %v", ilink.LogLabel(msg.FromUserID), err)
 			failed = append(failed, filepath.Base(attachmentPath)+"（上传失败）")
+			failedDelivery = true
+			mayBeVisible = mayBeVisible || outboundMayBeVisible(err) || report.MediaSent > 0
 			continue
 		}
 		sentPaths = append(sentPaths, attachmentPath)
+		report.MediaSent++
 		if h.library != nil {
-			if _, recordErr := h.library.RecordDelivery(msg.FromUserID, h.currentProjectID(msg.FromUserID), attachmentPath); recordErr != nil {
+			if _, recordErr := h.library.RecordDelivery(msg.FromUserID, projectID, attachmentPath); recordErr != nil {
 				log.Printf("[library] failed to archive delivery: %v", recordErr)
 			}
 		}
@@ -409,43 +513,80 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 	reply = appendArtifactSummary(reply, sentPaths, failed)
 
 	delivered := false
-	switch h.currentResponseMode(msg.FromUserID) {
+	var deliveryErr error
+	switch mode {
 	case preference.ResponseVoice:
-		voiceDelivered, voiceErr := h.sendVoiceCodexReply(ctx, client, msg.FromUserID, reply, msg.ContextToken)
+		voiceDelivered, voiceErr := h.sendVoiceCodexReplySnapshot(ctx, client, msg.FromUserID, reply, msg.ContextToken, style, projectName)
 		delivered = voiceDelivered
 		if voiceErr != nil {
 			log.Printf("[voice] failed to send Codex voice response to %s: %v", ilink.LogLabel(msg.FromUserID), voiceErr)
+			if delivered {
+				deliveryErr = voiceErr
+			}
 		}
 		if !delivered {
-			delivered, voiceErr = h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true)
+			delivered, voiceErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true, style)
 			if voiceErr != nil {
 				log.Printf("[visual] failed to send voice fallback reading cards to %s: %v", ilink.LogLabel(msg.FromUserID), voiceErr)
+				if delivered {
+					deliveryErr = voiceErr
+				}
 			}
 		}
 	case preference.ResponseReading:
 		var visualErr error
-		delivered, visualErr = h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true)
+		delivered, visualErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true, style)
 		if visualErr != nil {
 			log.Printf("[visual] failed to send forced reading reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
+			if delivered {
+				deliveryErr = visualErr
+			}
 		}
 	default:
 		var visualErr error
-		delivered, visualErr = h.sendVisualReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, false)
+		delivered, visualErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, false, style)
 		if visualErr != nil {
 			log.Printf("[visual] failed to send long reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
+			if delivered {
+				deliveryErr = visualErr
+			}
 		}
+	}
+	if deliveryErr != nil {
+		failedDelivery = true
+		mayBeVisible = true
 	}
 	if !delivered {
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send reply to %s: %v", ilink.LogLabel(msg.FromUserID), err)
+			failedDelivery = true
+			mayBeVisible = mayBeVisible || outboundMayBeVisible(err) || report.MediaSent > 0
+		} else {
+			report.TextSent = true
 		}
+	} else {
+		report.MediaSent++
 	}
 
 	for _, imgURL := range imageURLs {
 		if err := SendMediaFromURL(ctx, client, msg.FromUserID, imgURL, msg.ContextToken); err != nil {
 			log.Printf("[handler] failed to send image to %s: %v", ilink.LogLabel(msg.FromUserID), err)
+			failedDelivery = true
+			mayBeVisible = mayBeVisible || outboundMayBeVisible(err) || report.MediaSent > 0 || report.TextSent
+		} else {
+			report.MediaSent++
 		}
 	}
+	if failedDelivery {
+		if mayBeVisible || report.MediaSent > 0 || report.TextSent {
+			report.Outcome = taskqueue.DeliveryAmbiguous
+			report.Failure = taskqueue.ReasonDeliveryAmbiguous
+		} else {
+			report.Outcome = taskqueue.DeliveryExplicitFailure
+			report.Failure = taskqueue.ReasonDeliveryFailed
+		}
+	}
+	return report
 }
 
 func (h *Handler) currentProjectID(userID string) string {
@@ -453,107 +594,6 @@ func (h *Handler) currentProjectID(userID string) string {
 		return ""
 	}
 	return h.projects.Current(userID).ID
-}
-
-// chatWithCodex 在归属明确的活动线程里执行一次 Codex turn。
-func (h *Handler) chatWithCodex(ctx context.Context, userID string, request codex.ChatRequest, onProgress codex.ProgressHandler) (string, error) {
-	if h.codex == nil {
-		return "", fmt.Errorf("codex is not initialized")
-	}
-	threadAgent, ok := h.codex.(codex.ThreadClient)
-	if !ok {
-		return "", fmt.Errorf("codex thread runtime is invalid")
-	}
-	if h.sessions == nil {
-		return "", fmt.Errorf("session manager is not initialized")
-	}
-	projectID := "injected-runtime"
-	if h.projects != nil {
-		currentProject := h.projects.Current(userID)
-		projectID = currentProject.ID
-		// 工作目录只来自受信任项目清单，杜绝微信消息注入任意本机路径。
-		h.codex.SetCwd(currentProject.Root)
-	}
-	info := h.codex.Info()
-	log.Printf("[handler] dispatching to codex (%s, project=%s) for %s", info, projectID, ilink.LogLabel(userID))
-
-	start := time.Now()
-	thread, err := h.sessions.EnsureActive(ctx, userID, threadAgent, suggestedSessionName(request))
-	if err != nil {
-		return "", err
-	}
-	if active, exists := h.activeTasks.Load(userID); exists && h.activities != nil {
-		if attachErr := h.activities.AttachSession(userID, active.(*activeTask).activityID(), thread.ID); attachErr != nil {
-			log.Printf("[activity] failed to attach session: %v", attachErr)
-		}
-	}
-	var reply string
-	if progressCodex, supportsProgress := h.codex.(codex.ProgressClient); supportsProgress {
-		reply, err = progressCodex.ChatThreadWithProgress(ctx, thread.ID, request, onProgress)
-	} else {
-		reply, err = threadAgent.ChatThread(ctx, thread.ID, request)
-	}
-	if usageProvider, ok := h.codex.(codex.UsageProvider); ok && h.activities != nil {
-		if usage, exists := usageProvider.Usage(thread.ID); exists {
-			if active, running := h.activeTasks.Load(userID); running {
-				if usageErr := h.activities.AttachUsage(userID, active.(*activeTask).activityID(), usage.Last); usageErr != nil {
-					log.Printf("[activity] failed to attach token usage: %v", usageErr)
-				}
-			}
-		}
-	}
-	if touchErr := h.sessions.Touch(userID, thread.ID, time.Now().Unix()); touchErr != nil {
-		log.Printf("[handler] failed to persist session recency (thread=%s): %v", thread.ID, touchErr)
-	}
-	elapsed := time.Since(start)
-
-	if err != nil {
-		log.Printf("[handler] codex error (%s, elapsed=%s): %v", info, elapsed, err)
-		return "", err
-	}
-
-	log.Printf("[handler] codex replied (%s, elapsed=%s, chars=%d)", info, elapsed, len([]rune(reply)))
-	return reply, nil
-}
-
-func (h *Handler) queuePendingInstruction(userID, text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return "下一条指令不能为空。"
-	}
-	if _, exists := h.pendingInstructions.Load(userID); exists {
-		return "已经暂存了一条后续指令。发送“清除暂存”后可以重新设置。"
-	}
-	h.pendingInstructions.Store(userID, text)
-	return "已暂存下一条指令。当前任务结束后会自动继续执行。\n摘要：" + normalizeSessionLine(text, 72)
-}
-
-func (h *Handler) clearPendingInstruction(userID string) string {
-	if _, exists := h.pendingInstructions.LoadAndDelete(userID); !exists {
-		return "当前没有暂存的后续指令。"
-	}
-	return "已清除暂存指令。"
-}
-
-func (h *Handler) drainPendingInstruction(ctx context.Context, client *ilink.Client, userID string) {
-	if h.remoteLock != nil && h.remoteLock.IsLocked(userID) {
-		h.pendingInstructions.Delete(userID)
-		return
-	}
-	if h.hasActiveTask(userID) {
-		return
-	}
-	value, exists := h.pendingInstructions.LoadAndDelete(userID)
-	if !exists {
-		return
-	}
-	contextToken := ""
-	if stored, ok := h.contextTokens.Load(userID); ok {
-		contextToken, _ = stored.(string)
-	}
-	text := value.(string)
-	_ = SendTextReply(ctx, client, userID, "开始执行已暂存指令："+normalizeSessionLine(text, 48), contextToken, NewClientID())
-	h.sendToCodex(ctx, client, ilink.WeixinMessage{FromUserID: userID, ContextToken: contextToken}, text, nil, nil, NewClientID())
 }
 
 func suggestedSessionName(request codex.ChatRequest) string {
@@ -578,23 +618,6 @@ func suggestedSessionName(request codex.ChatRequest) string {
 	return ""
 }
 
-func (h *Handler) prepareTaskInput(reporter *progressReporter, text string, images []*ilink.ImageItem, files []*ilink.FileItem) (codex.ChatRequest, func(), error) {
-	if len(images) > 0 || len(files) > 0 {
-		reporter.Report(codex.ProgressEvent{Kind: codex.ProgressActivity, Text: "正在接收微信附件"})
-	}
-	request, cleanup, err := prepareCodexInput(reporter.task.context(), text, images, files, "")
-	if err != nil {
-		return codex.ChatRequest{}, cleanup, err
-	}
-	if len(request.LocalImages) > 0 && isImageAnnotationIntent(text) {
-		request.Text = strings.TrimSpace(request.Text + "\n\n[WeClaw 图片批注模式]\n请先理解图片和用户意图，再生成一张带有清晰、克制、移动端可读批注的 PNG。必须把最终图片写入本次 WeClaw 交付目录并回传；不得覆盖入站原图。")
-	}
-	if len(request.LocalImages) > 0 || len(request.LocalFiles) > 0 {
-		reporter.Report(codex.ProgressEvent{Kind: codex.ProgressActivity, Text: "附件已接收，正在交给 Codex 分析"})
-	}
-	return request, cleanup, nil
-}
-
 func isImageAnnotationIntent(text string) bool {
 	normalized := normalizeControlPhrase(text)
 	for _, marker := range []string{"批注图片", "标注图片", "批注这张图", "标注这张图", "在图上标注"} {
@@ -605,48 +628,27 @@ func isImageAnnotationIntent(text string) bool {
 	return false
 }
 
-func (h *Handler) beginTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage) (*progressReporter, bool) {
-	task := newActiveTask(ctx)
-	actual, loaded := h.activeTasks.LoadOrStore(msg.FromUserID, task)
-	if loaded {
-		task.finish()
-		h.sendActiveTaskStatus(ctx, client, msg, actual.(*activeTask))
-		return nil, false
-	}
-	return newProgressReporter(task.context(), client, msg.FromUserID, msg.ContextToken, h.progress, task), true
-}
-
-func (h *Handler) sendActiveTaskStatus(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, task *activeTask) {
-	if err := h.sendControlReply(ctx, client, msg.FromUserID, task.busySummary(), msg.ContextToken, NewClientID()); err != nil {
-		log.Printf("[handler] failed to send active task status to %s: %v", ilink.LogLabel(msg.FromUserID), err)
-	}
-}
-
-func (h *Handler) finishTask(userID string, reporter *progressReporter) bool {
-	deliver := reporter.task.finish()
-	reporter.Close()
-	h.activeTasks.CompareAndDelete(userID, reporter.task)
-	return deliver
-}
-
 func (h *Handler) cancelActiveTask(userID string) string {
-	value, ok := h.activeTasks.Load(userID)
-	if !ok {
+	if h.coordinator == nil || !h.hasActiveTask(userID) {
 		return "当前没有正在执行的任务。"
 	}
-	task := value.(*activeTask)
-	if !task.requestCancel() {
-		if task.cancelRequested() {
-			return "当前任务正在取消，请稍候。"
-		}
-		return "当前没有正在执行的任务。"
+	if !h.coordinator.Cancel(userID) {
+		return "当前任务正在取消或已进入发送阶段，请稍候。"
 	}
-	return fmt.Sprintf("已请求取消当前任务。\n已运行：%s", formatElapsed(time.Since(task.started)))
+	return "已请求取消当前任务。任务会保留明确的取消记录，不会发送迟到结果。"
 }
 
 func (h *Handler) buildTaskStatus(userID string) string {
-	if value, ok := h.activeTasks.Load(userID); ok {
-		return value.(*activeTask).statusSummary()
+	if h.tasks != nil {
+		for _, task := range h.tasks.List(userID) {
+			if task.State == taskqueue.StateRunning || task.State == taskqueue.StateDelivering {
+				return strings.Join([]string{
+					"任务状态：" + taskStateText(task.State),
+					"当前阶段：" + task.Stage,
+					"摘要：" + task.Summary,
+				}, "\n")
+			}
+		}
 	}
 	return "任务状态：空闲\n" + h.buildStatus()
 }

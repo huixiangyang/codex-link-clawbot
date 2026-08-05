@@ -30,7 +30,6 @@ const (
 	controlNewSessionName
 	controlRenameSession
 	controlSessionSearch
-	controlPendingInstruction
 )
 
 type controlAction string
@@ -59,14 +58,20 @@ const (
 	actionCancelTask          controlAction = "cancel_task"
 	actionActivityPage        controlAction = "activity_page"
 	actionActivityDetail      controlAction = "activity_detail"
+	actionTaskMoveFront       controlAction = "task_move_front"
+	actionTaskDelete          controlAction = "task_delete"
+	actionTaskRetry           controlAction = "task_retry"
+	actionTaskFrozenText      controlAction = "task_frozen_text"
+	actionQueuePause          controlAction = "queue_pause"
+	actionQueueResume         controlAction = "queue_resume"
+	actionConfirmQueueClear   controlAction = "confirm_queue_clear"
+	actionQueueClear          controlAction = "queue_clear"
 	actionRuntimeInfo         controlAction = "runtime_info"
 	actionMore                controlAction = "more"
 	actionProjectCenter       controlAction = "project_center"
 	actionSelectProject       controlAction = "select_project"
 	actionProjectQuickTasks   controlAction = "project_quick_tasks"
 	actionRunQuickTask        controlAction = "run_quick_task"
-	actionPromptPending       controlAction = "prompt_pending"
-	actionClearPending        controlAction = "clear_pending"
 	actionLibraryCenter       controlAction = "library_center"
 	actionLibraryPage         controlAction = "library_page"
 	actionLibraryDetail       controlAction = "library_detail"
@@ -117,7 +122,7 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	}
 
 	if isOneOf(text, "取消", "取消任务", "停止", "停止任务", "停下", "停一下") {
-		if _, running := h.activeTasks.Load(userID); running {
+		if h.hasActiveTask(userID) {
 			h.controlStates.Delete(userID)
 			return h.cancelActiveTask(userID), true
 		}
@@ -145,14 +150,17 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	if isOneOf(text, "状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了") {
 		return h.openTaskStatus(userID), true
 	}
-	if isOneOf(text, "暂存下一条指令", "暂存指令", "下一条指令") {
-		return h.promptPendingInstruction(userID), true
-	}
-	if isOneOf(text, "清除暂存", "取消暂存", "删除暂存指令") {
-		return h.clearPendingInstruction(userID), true
-	}
-	if isOneOf(text, "任务记录", "最近任务", "任务历史", "历史任务") {
+	if isOneOf(text, "任务队列", "排队任务", "任务中心") {
 		return h.openActivities(userID, 1), true
+	}
+	if isOneOf(text, "暂停队列", "暂停任务队列", "停止排队任务") {
+		return h.setQueuePaused(userID, true), true
+	}
+	if isOneOf(text, "继续队列", "恢复队列", "继续任务队列") {
+		return h.setQueuePaused(userID, false), true
+	}
+	if isOneOf(text, "清空队列", "删除排队任务") {
+		return h.confirmClearQueue(userID), true
 	}
 	if isOneOf(text, "素材箱", "素材中心", "收藏链接", "交付记录", "交付中心") {
 		return h.openLibraryCenter(userID), true
@@ -188,9 +196,6 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		return h.openProjectQuickTasks(userID), true
 	}
 	if argument, matched := intentArgument(text, []string{"切换项目", "切到项目", "进入项目"}); matched {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
 		argument = cleanIntentArgument(argument)
 		if argument == "" {
 			return h.openProjectCenter(userID), true
@@ -348,15 +353,6 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return "这个操作已经处理。发送 / 重新打开菜单。", true
 		}
 		return h.openSessionBrowser(ctx, userID, false, text), true
-	case controlPendingInstruction:
-		if text == "0" {
-			h.controlStates.CompareAndDelete(userID, state)
-			return h.openTaskStatus(userID), true
-		}
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "这个操作已经处理。发送 / 重新打开菜单。", true
-		}
-		return h.queuePendingInstruction(userID, text), true
 	default:
 		h.controlStates.Delete(userID)
 		return "", false
@@ -435,6 +431,22 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.openActivities(userID, option.Page)
 	case actionActivityDetail:
 		return h.openActivityDetail(userID, option.Value, option.Page)
+	case actionTaskMoveFront:
+		return h.moveTaskToFront(userID, option.Value, option.Page)
+	case actionTaskDelete:
+		return h.deleteTask(userID, option.Value, option.Page)
+	case actionTaskRetry:
+		return h.requestTaskRetry(userID, option.Value)
+	case actionTaskFrozenText:
+		return h.requestFrozenTaskText(userID, option.Value)
+	case actionQueuePause:
+		return h.setQueuePaused(userID, true)
+	case actionQueueResume:
+		return h.setQueuePaused(userID, false)
+	case actionConfirmQueueClear:
+		return h.confirmClearQueue(userID)
+	case actionQueueClear:
+		return h.clearQueue(userID)
 	case actionRuntimeInfo:
 		return h.openRuntimeInfo(userID)
 	case actionMore:
@@ -442,18 +454,11 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 	case actionProjectCenter:
 		return h.openProjectCenter(userID)
 	case actionSelectProject:
-		if h.hasActiveTask(userID) {
-			return mutationBusyText()
-		}
 		return h.selectProject(userID, option.Value)
 	case actionProjectQuickTasks:
 		return h.openProjectQuickTasks(userID)
 	case actionRunQuickTask:
 		return h.runProjectQuickTask(userID, option.Value)
-	case actionPromptPending:
-		return h.promptPendingInstruction(userID)
-	case actionClearPending:
-		return h.clearPendingInstruction(userID)
 	case actionLibraryCenter:
 		return h.openLibraryCenter(userID)
 	case actionLibraryPage:
@@ -497,7 +502,7 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		}
 	}
 	taskState := "空闲"
-	_, running := h.activeTasks.Load(userID)
+	running := h.hasActiveTask(userID)
 	if running {
 		taskState = "运行中"
 	}
@@ -506,14 +511,14 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 	if running {
 		options = append(options,
 			controlOption{Label: "任务状态", Action: actionTaskStatus},
-			controlOption{Label: "暂存下一条指令", Action: actionPromptPending},
+			controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1},
 			controlOption{Label: "当前会话", Action: actionCurrentSession},
 		)
 	} else {
 		options = append(options,
 			controlOption{Label: "项目", Action: actionProjectCenter},
 			controlOption{Label: "会话", Action: actionSessionMenu},
-			controlOption{Label: "最近任务", Action: actionActivityPage, Page: 1},
+			controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1},
 		)
 	}
 	options = append(options, controlOption{Label: "更多功能", Action: actionMore})
@@ -530,8 +535,9 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		"状态：" + taskState,
 		"回答：" + h.currentResponseMode(userID).Definition().Name,
 	}
-	if h.activities != nil {
-		lines = append(lines, fmt.Sprintf("记录：%d 条", len(h.activities.List(userID))))
+	if h.tasks != nil {
+		status := h.tasks.Status(userID)
+		lines = append(lines, fmt.Sprintf("队列：%d 项等待", status.Queued))
 	}
 	if len(statuses) > 0 {
 		lines = append(lines, fmt.Sprintf("自动化：%d 项", len(statuses)))
@@ -546,31 +552,16 @@ func (h *Handler) openTaskStatus(userID string) string {
 	options := []controlOption{{Label: "刷新状态", Action: actionTaskStatus}}
 	if h.hasActiveTask(userID) {
 		options = append(options,
-			controlOption{Label: "暂存下一条指令", Action: actionPromptPending},
+			controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1},
 			controlOption{Label: "取消当前任务", Action: actionConfirmCancelTask},
 		)
 	} else {
 		options = append(options, controlOption{Label: "运行中心", Action: actionRuntimeInfo})
 	}
-	options = append(options, controlOption{Label: "任务记录", Action: actionActivityPage, Page: 1})
+	options = append(options, controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1})
 	prompt := h.buildTaskStatus(userID) + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
 	return prompt + "\n\n回复数字操作，0 返回。"
-}
-
-func (h *Handler) promptPendingInstruction(userID string) string {
-	if !h.hasActiveTask(userID) {
-		return "当前没有正在执行的任务，直接发送内容即可开始。"
-	}
-	if value, exists := h.pendingInstructions.Load(userID); exists {
-		options := []controlOption{{Label: "清除暂存指令", Action: actionClearPending}}
-		prompt := "已暂存下一条指令\n\n摘要：" + normalizeSessionLine(value.(string), 72) + "\n\n" + renderControlOptions(options)
-		h.storeChoice(userID, prompt, options, actionTaskStatus)
-		return prompt + "\n\n回复数字操作，0 返回。"
-	}
-	prompt := "暂存下一条指令\n\n发送要在当前任务结束后自动执行的文字指令，回复 0 返回。"
-	h.storeInput(userID, controlPendingInstruction, prompt, actionTaskStatus)
-	return prompt
 }
 
 func (h *Handler) confirmCancelTask(userID string) string {
@@ -998,6 +989,10 @@ func (h *Handler) confirmArchiveSession(ctx context.Context, userID string, sour
 }
 
 func (h *Handler) archiveSession(ctx context.Context, userID, threadID string) string {
+	return h.withRuntimeMutation(func() string { return h.archiveSessionUnlocked(ctx, userID, threadID) })
+}
+
+func (h *Handler) archiveSessionUnlocked(ctx context.Context, userID, threadID string) string {
 	threadAgent, err := h.sessionContext()
 	if err != nil {
 		return err.Error()
@@ -1058,39 +1053,59 @@ func (h *Handler) promptRenameSession(userID string) string {
 }
 
 func (h *Handler) createSession(ctx context.Context, userID, name string) string {
-	threadAgent, err := h.sessionContext()
-	if err != nil {
-		return err.Error()
-	}
-	thread, err := h.sessions.New(ctx, userID, threadAgent, strings.TrimSpace(name))
-	if err != nil {
-		return formatSessionError(err)
-	}
-	return h.sessionSuccess(userID, "已创建并切换到新会话。", thread)
+	return h.withRuntimeMutation(func() string {
+		threadAgent, err := h.sessionContext()
+		if err != nil {
+			return err.Error()
+		}
+		if h.projects != nil {
+			h.codex.SetCwd(h.projects.Current(userID).Root)
+		}
+		thread, err := h.sessions.New(ctx, userID, threadAgent, strings.TrimSpace(name))
+		if err != nil {
+			return formatSessionError(err)
+		}
+		return h.sessionSuccess(userID, "已创建并切换到新会话。", thread)
+	})
 }
 
 func (h *Handler) useSession(ctx context.Context, userID, threadID string) string {
-	threadAgent, err := h.sessionContext()
-	if err != nil {
-		return err.Error()
-	}
-	thread, err := h.sessions.Use(ctx, userID, threadAgent, threadID)
-	if err != nil {
-		return formatSessionError(err)
-	}
-	return h.sessionSuccess(userID, "已切换会话。", thread)
+	return h.withRuntimeMutation(func() string {
+		threadAgent, err := h.sessionContext()
+		if err != nil {
+			return err.Error()
+		}
+		thread, err := h.sessions.Use(ctx, userID, threadAgent, threadID)
+		if err != nil {
+			return formatSessionError(err)
+		}
+		return h.sessionSuccess(userID, "已切换会话。", thread)
+	})
 }
 
 func (h *Handler) renameSession(ctx context.Context, userID, name string) string {
-	threadAgent, err := h.sessionContext()
-	if err != nil {
-		return err.Error()
+	return h.withRuntimeMutation(func() string {
+		threadAgent, err := h.sessionContext()
+		if err != nil {
+			return err.Error()
+		}
+		thread, err := h.sessions.Rename(ctx, userID, threadAgent, strings.TrimSpace(name))
+		if err != nil {
+			return formatSessionError(err)
+		}
+		return h.sessionSuccess(userID, "会话已重命名。", thread)
+	})
+}
+
+func (h *Handler) withRuntimeMutation(action func() string) string {
+	if h.coordinator == nil {
+		return action()
 	}
-	thread, err := h.sessions.Rename(ctx, userID, threadAgent, strings.TrimSpace(name))
-	if err != nil {
-		return formatSessionError(err)
+	result := ""
+	if !h.coordinator.TryRuntimeControl(func() { result = action() }) {
+		return "Codex 正在执行另一项任务，会话修改暂不可用。项目切换和新任务排队不受影响。"
 	}
-	return h.sessionSuccess(userID, "会话已重命名。", thread)
+	return result
 }
 
 func (h *Handler) confirmArchiveCurrent(ctx context.Context, userID string) string {
@@ -1109,6 +1124,10 @@ func (h *Handler) confirmArchiveCurrent(ctx context.Context, userID string) stri
 }
 
 func (h *Handler) archiveCurrentSession(ctx context.Context, userID string) string {
+	return h.withRuntimeMutation(func() string { return h.archiveCurrentSessionUnlocked(ctx, userID) })
+}
+
+func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID string) string {
 	threadAgent, err := h.sessionContext()
 	if err != nil {
 		return err.Error()
@@ -1141,6 +1160,10 @@ func (h *Handler) archiveCurrentSession(ctx context.Context, userID string) stri
 }
 
 func (h *Handler) restoreSession(ctx context.Context, userID, threadID string) string {
+	return h.withRuntimeMutation(func() string { return h.restoreSessionUnlocked(ctx, userID, threadID) })
+}
+
+func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID string) string {
 	threadAgent, err := h.sessionContext()
 	if err != nil {
 		return err.Error()
@@ -1208,8 +1231,11 @@ func (h *Handler) loadControlState(userID string) (*controlState, bool) {
 }
 
 func (h *Handler) hasActiveTask(userID string) bool {
-	_, ok := h.activeTasks.Load(userID)
-	return ok
+	if h.tasks == nil {
+		return false
+	}
+	status := h.tasks.Status(userID)
+	return status.Running > 0 || status.Delivering > 0
 }
 
 func renderControlOptions(options []controlOption) string {

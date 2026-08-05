@@ -98,6 +98,12 @@ func TestStoreSerialFIFORespectsPauseMoveAndLifecycle(t *testing.T) {
 	if _, ok, err := store.ClaimNext(nil); err != nil || ok {
 		t.Fatalf("second active claim ok=%v err=%v", ok, err)
 	}
+	if _, err := store.BeginDelivery("owner-b", second.ID); err == nil {
+		t.Fatal("delivery began without a frozen result")
+	}
+	if _, err := store.FreezeResult("owner-b", second.ID, FreezeResultInput{Reply: "完成"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.BeginDelivery("owner-b", second.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +119,9 @@ func TestStoreSerialFIFORespectsPauseMoveAndLifecycle(t *testing.T) {
 	if _, err := store.MoveToFront("owner-a", third.ID); err != nil {
 		t.Fatal(err)
 	}
+	if position, ok := store.QueuePosition("owner-a", third.ID); !ok || position != 1 {
+		t.Fatalf("moved queue position=%d ok=%v", position, ok)
+	}
 	claimed, ok, err = store.ClaimNext(nil)
 	if err != nil || !ok || claimed.ID != third.ID {
 		t.Fatalf("moved claim = %#v ok=%v err=%v", claimed, ok, err)
@@ -120,6 +129,11 @@ func TestStoreSerialFIFORespectsPauseMoveAndLifecycle(t *testing.T) {
 	if err := store.AttachThread("owner-a", third.ID, "thread-fixed"); err != nil {
 		t.Fatal(err)
 	}
+	outbox, err := store.PrepareOutbox("owner-a", third.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMode(t, outbox, 0o700)
 	if err := store.UpdateStage("owner-a", third.ID, "正在运行测试"); err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +180,9 @@ func TestStoreRecoversRunningAndDeliveryWithoutAutomaticRetry(t *testing.T) {
 				t.Fatalf("claim ok=%v err=%v", ok, err)
 			}
 			if test.delivering {
+				if _, err := store.FreezeResult("owner", task.ID, FreezeResultInput{Reply: "待发送"}); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := store.BeginDelivery("owner", task.ID); err != nil {
 					t.Fatal(err)
 				}
@@ -365,6 +382,88 @@ func TestStoreCleansExpiredPayloadWhileRunning(t *testing.T) {
 	}
 	if _, err := store.LoadRequest("owner", task.ID); err == nil {
 		t.Fatal("expired payload remained readable")
+	}
+}
+
+func TestStoreRetryCreatesNewTaskAndDeleteRemovesTerminalRecord(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := testEnqueueInput("source:original", "owner", "project")
+	input.Files = []InputAttachment{{Name: "notes.md", ContentType: "text/plain", Data: []byte("retained")}}
+	original := mustEnqueue(t, store, input)
+	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
+		t.Fatalf("claim original: claimed=%v err=%v", claimed, err)
+	}
+	if _, err := store.Finish("owner", original.ID, StateFailed, ReasonCodexFailed); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := store.Retry("owner", original.ID, "source:retry", "new-context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ID == original.ID || retried.RetryOf != original.ID || retried.State != StateQueued {
+		t.Fatalf("retried task = %#v", retried)
+	}
+	loaded, err := store.LoadRequest("owner", retried.ID)
+	if err != nil || loaded.ContextToken != "new-context" || len(loaded.Files) != 1 {
+		t.Fatalf("retried request = %#v err=%v", loaded, err)
+	}
+	if err := store.Delete("owner", original.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.Find("owner", original.ID); ok {
+		t.Fatal("deleted terminal task still exists")
+	}
+}
+
+func TestStoreFreezesResultAndPersistsDeliveryReceipt(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := mustEnqueue(t, store, testEnqueueInput("source:delivery", "owner", "project"))
+	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
+		t.Fatalf("claim task: claimed=%v err=%v", claimed, err)
+	}
+	outbox, err := store.PrepareOutbox("owner", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(outbox, "report.md")
+	if err := os.WriteFile(artifactPath, []byte("delivery"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.FreezeResult("owner", task.ID, FreezeResultInput{
+		Reply: "完整回答", ArtifactPaths: []string{artifactPath}, ImageURLs: []string{"https://example.com/chart.png"},
+	})
+	if err != nil || len(result.Artifacts) != 1 || result.Receipt.Outcome != DeliveryPending {
+		t.Fatalf("frozen result = %#v err=%v", result, err)
+	}
+	assertMode(t, filepath.Join(store.Root(), task.ID, "result.json"), 0o600)
+	if _, err := store.BeginDelivery("owner", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	receipt := DeliveryReceipt{
+		Outcome: DeliveryAmbiguous, AttemptedAt: time.Now().Unix(), MediaSent: 1,
+		FailureCode: ReasonDeliveryAmbiguous,
+	}
+	if receipt.AttemptedAt < result.FrozenAt {
+		receipt.AttemptedAt = result.FrozenAt
+	}
+	if err := store.RecordDelivery("owner", task.ID, receipt); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.LoadResult("owner", task.ID)
+	if err != nil || loaded.Receipt != receipt || loaded.Artifacts[0].SHA256 == "" {
+		t.Fatalf("loaded result = %#v err=%v", loaded, err)
+	}
+	if _, err := store.Finish("owner", task.ID, StateInterrupted, ReasonDeliveryAmbiguous); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadResult("owner", task.ID); err != nil {
+		t.Fatalf("interrupted delivery result should remain: %v", err)
 	}
 }
 

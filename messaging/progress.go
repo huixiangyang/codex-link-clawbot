@@ -29,113 +29,6 @@ func DefaultProgressConfig() ProgressConfig {
 	}
 }
 
-type activeTask struct {
-	started  time.Time
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.RWMutex
-	status   string
-	stopping bool
-	finished bool
-	activity string
-}
-
-func (t *activeTask) setActivity(id string) {
-	t.mu.Lock()
-	t.activity = id
-	t.mu.Unlock()
-}
-
-func (t *activeTask) activityID() string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.activity
-}
-
-func newActiveTask(parent context.Context) *activeTask {
-	ctx, cancel := context.WithCancel(parent)
-	return &activeTask{
-		started: time.Now(),
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  "任务已接收，正在分析",
-	}
-}
-
-func (t *activeTask) setStatus(status string) {
-	status = strings.TrimSpace(status)
-	if status == "" {
-		return
-	}
-	t.mu.Lock()
-	if t.stopping || t.finished {
-		t.mu.Unlock()
-		return
-	}
-	t.status = status
-	t.mu.Unlock()
-}
-
-func (t *activeTask) context() context.Context {
-	return t.ctx
-}
-
-func (t *activeTask) requestCancel() bool {
-	t.mu.Lock()
-	if t.stopping || t.finished {
-		t.mu.Unlock()
-		return false
-	}
-	t.stopping = true
-	t.status = "正在取消任务"
-	cancel := t.cancel
-	t.mu.Unlock()
-
-	cancel()
-	return true
-}
-
-func (t *activeTask) cancelRequested() bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.stopping
-}
-
-// finish 原子地结束任务，并返回最终结果是否仍允许发送。
-// 取消先拿到锁时结果必须丢弃；完成先拿到锁时后续取消不再被接受。
-func (t *activeTask) finish() bool {
-	t.mu.Lock()
-	if t.finished {
-		t.mu.Unlock()
-		return false
-	}
-	t.finished = true
-	deliver := !t.stopping
-	cancel := t.cancel
-	t.mu.Unlock()
-	cancel()
-	return deliver
-}
-
-func (t *activeTask) statusSummary() string {
-	t.mu.RLock()
-	status := t.status
-	stopping := t.stopping
-	t.mu.RUnlock()
-	taskState := "运行中"
-	if stopping {
-		taskState = "正在取消"
-	}
-	return fmt.Sprintf("任务状态：%s\n已运行：%s\n当前阶段：%s", taskState, formatElapsed(time.Since(t.started)), status)
-}
-
-func (t *activeTask) busySummary() string {
-	t.mu.RLock()
-	status := t.status
-	t.mu.RUnlock()
-	return fmt.Sprintf("上一项任务仍在执行，已运行 %s。\n当前状态：%s\n本条消息未交给 Codex；发送“状态”查看进度，发送“取消”停止任务。", formatElapsed(time.Since(t.started)), status)
-}
-
 type progressReporter struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -144,12 +37,12 @@ type progressReporter struct {
 	userID       string
 	contextToken string
 	config       ProgressConfig
-	task         *activeTask
+	setStatus    func(string)
 	events       chan codex.ProgressEvent
 	closeOnce    sync.Once
 }
 
-func newProgressReporter(ctx context.Context, client *ilink.Client, userID, contextToken string, config ProgressConfig, task *activeTask) *progressReporter {
+func newProgressReporter(ctx context.Context, client *ilink.Client, userID, contextToken string, config ProgressConfig, setStatus func(string)) *progressReporter {
 	reporterCtx, cancel := context.WithCancel(ctx)
 	r := &progressReporter{
 		ctx:          reporterCtx,
@@ -159,7 +52,7 @@ func newProgressReporter(ctx context.Context, client *ilink.Client, userID, cont
 		userID:       userID,
 		contextToken: contextToken,
 		config:       config,
-		task:         task,
+		setStatus:    setStatus,
 		events:       make(chan codex.ProgressEvent, 32),
 	}
 	go r.run()
@@ -211,7 +104,9 @@ func (r *progressReporter) run() {
 				}
 				latest = status
 				latestKind = event.Kind
-				r.task.setStatus(status)
+				if r.setStatus != nil {
+					r.setStatus(status)
+				}
 			}
 		case <-messageTimer.C:
 			if message, ok := unsentProgress(latest, sentMessages); ok {

@@ -2,39 +2,45 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 )
 
+var (
+	restartService string
+	restartAPI     string
+	restartTimeout time.Duration
+)
+
 func init() {
+	restartCmd.Flags().StringVar(&restartService, "service", defaultServiceName, "systemd user service name")
+	restartCmd.Flags().StringVar(&restartAPI, "api", defaultAPIBaseURL, "loopback runtime API origin")
+	restartCmd.Flags().DurationVar(&restartTimeout, "timeout", 10*time.Minute, "maximum drain and readiness wait")
 	rootCmd.AddCommand(restartCmd)
 }
 
 var restartCmd = &cobra.Command{
 	Use:   "restart",
-	Short: "Restart the background weclaw process",
+	Short: "Drain and restart the systemd user service",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Stop if running
-		pid, err := readPid()
-		if err == nil && processExists(pid) {
-			fmt.Printf("Stopping weclaw (pid=%d)...\n", pid)
-			if p, err := os.FindProcess(pid); err == nil {
-				p.Signal(syscall.SIGTERM)
-			}
-			for i := 0; i < 20; i++ {
-				if !processExists(pid) {
-					break
-				}
-				time.Sleep(500 * time.Millisecond)
-			}
-			os.Remove(pidFile())
+		ctx := cmd.Context()
+		draining, err := requestAdmin(ctx, restartAPI, "drain")
+		if err != nil {
+			return fmt.Errorf("request service drain: %w", err)
 		}
-
-		// Start
-		fmt.Println("Starting weclaw...")
-		return runDaemon()
+		if _, err := waitForDrain(ctx, restartAPI, restartTimeout); err != nil {
+			_, _ = requestAdmin(ctx, restartAPI, "resume")
+			return err
+		}
+		if err := runSystemctl(ctx, restartService, "restart"); err != nil {
+			_, _ = requestAdmin(ctx, restartAPI, "resume")
+			return err
+		}
+		if _, err := waitForReady(ctx, restartAPI, draining.Version, restartTimeout); err != nil {
+			return err
+		}
+		fmt.Printf("WeClaw %s restarted and ready.\n", draining.Version)
+		return nil
 	},
 }

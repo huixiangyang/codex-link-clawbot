@@ -2,12 +2,29 @@ package messaging
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
 	"github.com/google/uuid"
 	"github.com/huixiangyang/weclaw/ilink"
 )
+
+type textSendError struct {
+	MayBeVisible bool
+	Err          error
+}
+
+func (err *textSendError) Error() string { return err.Err.Error() }
+func (err *textSendError) Unwrap() error { return err.Err }
+
+func outboundMayBeVisible(err error) bool {
+	if mediaBatchMayBeVisible(err) {
+		return true
+	}
+	var textErr *textSendError
+	return errors.As(err, &textErr) && textErr.MayBeVisible
+}
 
 // NewClientID generates a new unique client ID for message correlation.
 func NewClientID() string {
@@ -67,11 +84,11 @@ func SendTextReply(ctx context.Context, client *ilink.Client, toUserID, text, co
 
 	resp, err := client.SendMessage(ctx, req)
 	if err != nil {
-		return fmt.Errorf("send message: %w", err)
+		return &textSendError{MayBeVisible: true, Err: fmt.Errorf("send message: %w", err)}
 	}
 
 	if resp.Ret != 0 {
-		return fmt.Errorf("send message failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)
+		return &textSendError{Err: fmt.Errorf("send message failed: ret=%d errmsg=%s", resp.Ret, resp.ErrMsg)}
 	}
 
 	log.Printf("[sender] sent text reply to %s (chars=%d)", ilink.LogLabel(toUserID), len([]rune(plainText)))

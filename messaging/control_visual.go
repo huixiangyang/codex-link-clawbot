@@ -78,7 +78,8 @@ func controlCardFromText(reply string) visual.Card {
 	case first == "WeClaw":
 		card.Title = first
 	case first == "运行中心", first == "项目中心", first == "更多功能", first == "自动化中心",
-		first == "素材与交付", first == "链接素材", first == "交付记录", first == "快捷任务":
+		first == "素材与交付", first == "链接素材", first == "交付记录", first == "快捷任务",
+		first == "任务中心", first == "任务详情":
 		card.Title = first
 	case first == "视觉风格", first == "视觉风格已切换":
 		card.Title = first
@@ -154,7 +155,7 @@ func controlCardVariant(text string) visual.Variant {
 	switch {
 	case strings.HasPrefix(text, "WeClaw"):
 		return visual.VariantHome
-	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消"):
+	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消") || strings.HasPrefix(text, "准备清空"):
 		return visual.VariantWarning
 	case strings.HasPrefix(text, "运行中心") || strings.HasPrefix(text, "项目中心") ||
 		strings.HasPrefix(text, "自动化") || strings.HasPrefix(text, "素材与交付"):
@@ -167,7 +168,7 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantSuccess
 	case strings.HasPrefix(text, "回答方式"):
 		return visual.VariantSystem
-	case strings.HasPrefix(text, "任务记录") || strings.HasPrefix(text, "任务详情"):
+	case strings.HasPrefix(text, "任务中心") || strings.HasPrefix(text, "任务详情"):
 		return visual.VariantProgress
 	case strings.HasPrefix(text, "会话中心") || strings.HasPrefix(text, "当前会话\n") ||
 		strings.HasPrefix(text, "会话列表") || strings.HasPrefix(text, "会话详情") ||

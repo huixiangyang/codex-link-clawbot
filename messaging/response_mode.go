@@ -23,6 +23,14 @@ func (h *Handler) currentResponseMode(userID string) preference.ResponseMode {
 }
 
 func (h *Handler) sendVoiceCodexReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken string) (bool, error) {
+	projectName := "未配置项目"
+	if h.projects != nil {
+		projectName = h.projects.Current(userID).Name
+	}
+	return h.sendVoiceCodexReplySnapshot(ctx, client, userID, reply, contextToken, h.currentVisualStyle(userID), projectName)
+}
+
+func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink.Client, userID, reply, contextToken string, style visual.Style, projectName string) (bool, error) {
 	if h.voice == nil || h.visual == nil {
 		return false, fmt.Errorf("语音回答当前不可用")
 	}
@@ -53,7 +61,7 @@ func (h *Handler) sendVoiceCodexReply(ctx context.Context, client *ilink.Client,
 	defer cleanup()
 	var payloads []outboundMediaPayload
 	if summarized {
-		documentArtifacts, _, renderErr := h.renderVisualDocuments(ctx, userID, reply)
+		documentArtifacts, _, renderErr := h.renderVisualDocumentsWithStyle(ctx, reply, style)
 		if renderErr != nil {
 			return false, fmt.Errorf("渲染语音模式完整阅读卡: %w", renderErr)
 		}
@@ -67,9 +75,8 @@ func (h *Handler) sendVoiceCodexReply(ctx context.Context, client *ilink.Client,
 		}
 	}
 
-	projectName := "未配置项目"
-	if h.projects != nil {
-		projectName = h.projects.Current(userID).Name
+	if strings.TrimSpace(projectName) == "" {
+		projectName = "未配置项目"
 	}
 	footer := "配套 MP3 音频文件随后发送"
 	if summarized {
@@ -77,7 +84,7 @@ func (h *Handler) sendVoiceCodexReply(ctx context.Context, client *ilink.Client,
 	}
 	card := visual.Card{
 		Variant: visual.VariantSystem,
-		Style:   h.currentVisualStyle(userID),
+		Style:   style,
 		Title:   "语音回答",
 		Facts: []visual.Fact{
 			{Label: "当前项目", Value: projectName},

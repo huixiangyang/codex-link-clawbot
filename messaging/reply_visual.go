@@ -35,6 +35,10 @@ func (h *Handler) SetVisualReplyConfig(enabled bool, minRunes int) {
 }
 
 func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string, force bool) (bool, error) {
+	return h.sendVisualReplyWithStyle(ctx, client, userID, reply, contextToken, clientID, force, h.currentVisualStyle(userID))
+}
+
+func (h *Handler) sendVisualReplyWithStyle(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string, force bool, style visual.Style) (bool, error) {
 	// 显式阅读模式不受“自适应长回复”开关约束，只要求渲染能力可用。
 	if h.visual == nil || (!force && !h.visualReplyEnabled) {
 		return false, nil
@@ -43,7 +47,7 @@ func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, use
 	if (!force && runeCount < h.visualReplyMinRunes) || runeCount > visualReplyMaxRunes {
 		return false, nil
 	}
-	artifacts, documents, err := h.renderVisualDocuments(ctx, userID, reply)
+	artifacts, documents, err := h.renderVisualDocumentsWithStyle(ctx, reply, style)
 	if err != nil {
 		return false, err
 	}
@@ -58,7 +62,7 @@ func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, use
 	for index, artifact := range artifacts {
 		if err := SendMediaFromPath(ctx, client, userID, artifact.Path, contextToken); err != nil {
 			document := documents[index]
-			return false, fmt.Errorf("send page %d/%d: %w", document.PageNumber, document.TotalPages, err)
+			return index > 0 || outboundMayBeVisible(err), fmt.Errorf("send page %d/%d: %w", document.PageNumber, document.TotalPages, err)
 		}
 	}
 
@@ -72,6 +76,10 @@ func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, use
 }
 
 func (h *Handler) renderVisualDocuments(ctx context.Context, userID, reply string) ([]*visual.Artifact, []visual.Document, error) {
+	return h.renderVisualDocumentsWithStyle(ctx, reply, h.currentVisualStyle(userID))
+}
+
+func (h *Handler) renderVisualDocumentsWithStyle(ctx context.Context, reply string, style visual.Style) ([]*visual.Artifact, []visual.Document, error) {
 	renderer, ok := h.visual.(documentVisualRenderer)
 	if !ok {
 		return nil, nil, fmt.Errorf("document renderer is unavailable")
@@ -89,7 +97,7 @@ func (h *Handler) renderVisualDocuments(ctx context.Context, userID, reply strin
 		}
 	}
 	for index := range documents {
-		documents[index].Style = h.currentVisualStyle(userID)
+		documents[index].Style = style
 		artifact, err := renderer.RenderDocument(ctx, documents[index])
 		if err != nil {
 			cleanup()

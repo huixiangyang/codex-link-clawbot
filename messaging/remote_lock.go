@@ -151,13 +151,22 @@ func (h *Handler) lockRemote(userID string) string {
 	if h.remoteLock == nil || !h.remoteLock.Enabled() {
 		return "远程锁定未配置。请先在 security.remote_lock_code 设置解锁码并重启服务。"
 	}
-	if active, exists := h.activeTasks.Load(userID); exists {
-		active.(*activeTask).requestCancel()
-	}
-	h.pendingInstructions.Delete(userID)
 	h.controlStates.Delete(userID)
+	queueWasPaused := false
+	if h.tasks != nil {
+		queueWasPaused = h.tasks.Status(userID).Paused
+		if err := h.tasks.SetPaused(userID, true); err != nil {
+			return fmt.Sprintf("远程锁定失败：无法暂停任务队列：%v", err)
+		}
+	}
 	if err := h.remoteLock.Lock(userID); err != nil {
+		if h.tasks != nil && !queueWasPaused {
+			_ = h.tasks.SetPaused(userID, false)
+		}
 		return fmt.Sprintf("远程锁定失败：%v", err)
+	}
+	if h.coordinator != nil {
+		h.coordinator.Cancel(userID)
 	}
 	return "WeClaw 已远程锁定。后续消息和附件不会进入 Codex。发送“解锁 解锁码”恢复。"
 }
@@ -172,5 +181,5 @@ func (h *Handler) handleLockedInput(userID, text string) string {
 	if err := h.remoteLock.Unlock(userID, code); err != nil {
 		return "解锁失败：解锁码不正确。"
 	}
-	return "WeClaw 已解锁。发送 / 打开操作菜单，或直接发送内容。"
+	return "WeClaw 已解锁。任务队列仍保持暂停；发送“继续队列”后才会恢复执行。"
 }

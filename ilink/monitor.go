@@ -1,12 +1,16 @@
 package ilink
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -19,20 +23,30 @@ const (
 )
 
 // MessageHandler is called for each received message.
-type MessageHandler func(ctx context.Context, client *Client, msg WeixinMessage)
+type MessageHandler func(ctx context.Context, client *Client, msg WeixinMessage) error
+
+type MonitorObserver interface {
+	SetRunning(bool)
+	SetHealthy(bool)
+	SetBatchPending(bool)
+}
 
 // Monitor manages the long-poll loop for receiving messages.
 type Monitor struct {
 	client        *Client
 	handler       MessageHandler
+	observer      MonitorObserver
 	getUpdatesBuf string
+	pendingCursor string
+	consumed      map[string]bool
 	bufPath       string
 	failures      int
 	lastActivity  time.Time
+	messageHold   func() bool
 }
 
 // NewMonitor creates a new long-poll monitor.
-func NewMonitor(client *Client, handler MessageHandler) (*Monitor, error) {
+func NewMonitor(client *Client, handler MessageHandler, observer MonitorObserver) (*Monitor, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -43,17 +57,30 @@ func NewMonitor(client *Client, handler MessageHandler) (*Monitor, error) {
 	m := &Monitor{
 		client:       client,
 		handler:      handler,
+		observer:     observer,
 		bufPath:      bufPath,
+		consumed:     make(map[string]bool),
 		lastActivity: time.Now(),
 	}
-	m.loadBuf()
+	if err := m.loadBuf(); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+// SetMessageHold 让部署探测进程只验证长轮询连通性，不消费消息或推进游标。
+func (m *Monitor) SetMessageHold(hold func() bool) {
+	m.messageHold = hold
 }
 
 // Run starts the long-poll loop. It blocks until ctx is cancelled.
 // Automatically recovers from errors with exponential backoff.
 func (m *Monitor) Run(ctx context.Context) error {
 	log.Println("[monitor] starting long-poll loop")
+	if m.observer != nil {
+		m.observer.SetRunning(true)
+		defer m.observer.SetRunning(false)
+	}
 
 	for {
 		select {
@@ -65,6 +92,9 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 		resp, err := m.client.GetUpdates(ctx, m.getUpdatesBuf)
 		if err != nil {
+			if m.observer != nil {
+				m.observer.SetHealthy(false)
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -83,16 +113,19 @@ func (m *Monitor) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Reset failure counter on any successful response
-		m.failures = 0
 		m.lastActivity = time.Now()
+		if m.observer != nil {
+			m.observer.SetHealthy(true)
+			m.observer.SetBatchPending(len(resp.Msgs) > 0 || m.pendingCursor != "")
+		}
 
 		// Session expired — reset sync buf and reconnect silently
 		if resp.ErrCode == errCodeSessionExpired {
 			if m.getUpdatesBuf != "" {
 				log.Printf("[monitor] session expired, resetting sync buf")
-				m.getUpdatesBuf = ""
-				m.saveBuf()
+				if err := m.saveBuf(""); err != nil {
+					return fmt.Errorf("reset expired sync cursor: %w", err)
+				}
 			} else {
 				// Sync buf already empty but still getting session expired:
 				// the bot token itself has expired. The user needs to re-login.
@@ -112,17 +145,77 @@ func (m *Monitor) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Update buf for next poll
-		if resp.GetUpdatesBuf != "" {
-			m.getUpdatesBuf = resp.GetUpdatesBuf
-			m.saveBuf()
+		if m.messageHold != nil && m.messageHold() {
+			// 保持服务端游标不变；部署提交或正常重启后，同一批消息仍会重新投递。
+			m.failures = 0
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			continue
 		}
 
-		// Process messages concurrently — don't block the poll loop
-		for _, msg := range resp.Msgs {
-			go m.handler(ctx, m.client, msg)
+		// 同步处理整批消息；任何可重试错误都必须保留旧游标，让微信重新投递。
+		if err := m.processBatch(ctx, resp.Msgs, resp.GetUpdatesBuf); err != nil {
+			m.failures++
+			backoff := m.calcBackoff()
+			log.Printf("[monitor] message batch not committed (backoff=%s): %v", backoff, err)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			continue
+		}
+		if m.observer != nil {
+			m.observer.SetBatchPending(false)
+		}
+		m.failures = 0
+	}
+}
+
+func (m *Monitor) processBatch(ctx context.Context, messages []WeixinMessage, nextCursor string) error {
+	if m.pendingCursor != "" && m.pendingCursor != nextCursor {
+		return fmt.Errorf("pending sync batch cursor changed")
+	}
+	if m.pendingCursor == "" && nextCursor != "" {
+		m.pendingCursor = nextCursor
+	}
+	for _, msg := range messages {
+		messageKey := monitorMessageKey(msg)
+		if messageKey != "" && m.consumed[messageKey] {
+			continue
+		}
+		if err := m.handler(ctx, m.client, msg); err != nil {
+			return err
+		}
+		if messageKey != "" && m.pendingCursor != "" {
+			m.consumed[messageKey] = true
+			if err := m.saveState(syncData{
+				Version: syncVersion, GetUpdatesBuf: m.getUpdatesBuf,
+				PendingCursor: m.pendingCursor, Consumed: sortedConsumed(m.consumed),
+			}); err != nil {
+				return fmt.Errorf("persist partial sync receipt: %w", err)
+			}
 		}
 	}
+	if m.pendingCursor != "" {
+		if err := m.saveBuf(nextCursor); err != nil {
+			return fmt.Errorf("persist committed sync cursor: %w", err)
+		}
+	}
+	return nil
+}
+
+func monitorMessageKey(msg WeixinMessage) string {
+	if msg.MessageID != 0 {
+		return fmt.Sprintf("message:%d", msg.MessageID)
+	}
+	if msg.Seq != 0 {
+		return fmt.Sprintf("seq:%d", msg.Seq)
+	}
+	return ""
 }
 
 // calcBackoff returns an exponential backoff duration capped at maxBackoff.
@@ -138,31 +231,142 @@ func (m *Monitor) calcBackoff() time.Duration {
 }
 
 type syncData struct {
-	GetUpdatesBuf string `json:"get_updates_buf"`
+	Version       int      `json:"version"`
+	GetUpdatesBuf string   `json:"get_updates_buf"`
+	PendingCursor string   `json:"pending_cursor,omitempty"`
+	Consumed      []string `json:"consumed,omitempty"`
 }
 
-func (m *Monitor) loadBuf() {
+const syncVersion = 1
+
+func (m *Monitor) loadBuf() error {
 	data, err := os.ReadFile(m.bufPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return
+		return fmt.Errorf("read sync cursor: %w", err)
+	}
+	if err := os.Chmod(m.bufPath, 0o600); err != nil {
+		return fmt.Errorf("protect sync cursor: %w", err)
 	}
 	var s syncData
-	if json.Unmarshal(data, &s) == nil && s.GetUpdatesBuf != "" {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&s); err != nil {
+		return fmt.Errorf("decode sync cursor: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("decode sync cursor: trailing data")
+	}
+	if err := validateSyncData(s); err != nil {
+		return err
+	}
+	for _, key := range s.Consumed {
+		if key == "" || m.consumed[key] {
+			return fmt.Errorf("invalid sync cursor receipt")
+		}
+		m.consumed[key] = true
+	}
+	m.pendingCursor = s.PendingCursor
+	if s.GetUpdatesBuf != "" {
 		m.getUpdatesBuf = s.GetUpdatesBuf
 		log.Printf("[monitor] loaded sync buf from %s", m.bufPath)
 	}
+	return nil
 }
 
-func (m *Monitor) saveBuf() {
+func (m *Monitor) saveBuf(next string) error {
+	return m.saveState(syncData{Version: syncVersion, GetUpdatesBuf: next})
+}
+
+func (m *Monitor) saveState(state syncData) error {
+	if err := validateSyncData(state); err != nil {
+		return err
+	}
 	dir := filepath.Dir(m.bufPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		log.Printf("[monitor] failed to create buf dir: %v", err)
-		return
+		return err
 	}
-	data, _ := json.Marshal(syncData{GetUpdatesBuf: m.getUpdatesBuf})
-	if err := os.WriteFile(m.bufPath, data, 0o600); err != nil {
-		log.Printf("[monitor] failed to save buf: %v", err)
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
 	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(dir, ".sync-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	closeWithError := func(cause error) error {
+		if closeErr := temporary.Close(); cause == nil {
+			return closeErr
+		}
+		return cause
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		return closeWithError(err)
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		return closeWithError(err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return closeWithError(err)
+	}
+	if err := closeWithError(nil); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, m.bufPath); err != nil {
+		return err
+	}
+	if err := os.Chmod(m.bufPath, 0o600); err != nil {
+		return err
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	m.getUpdatesBuf = state.GetUpdatesBuf
+	m.pendingCursor = state.PendingCursor
+	m.consumed = make(map[string]bool, len(state.Consumed))
+	for _, key := range state.Consumed {
+		m.consumed[key] = true
+	}
+	return nil
+}
+
+func validateSyncData(state syncData) error {
+	if state.Version != syncVersion || state.PendingCursor == "" && len(state.Consumed) > 0 || len(state.Consumed) > 512 {
+		return fmt.Errorf("invalid sync cursor schema")
+	}
+	seen := make(map[string]bool, len(state.Consumed))
+	for _, key := range state.Consumed {
+		if key == "" || seen[key] {
+			return fmt.Errorf("invalid sync cursor receipt")
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+func sortedConsumed(consumed map[string]bool) []string {
+	keys := make([]string, 0, len(consumed))
+	for key := range consumed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // FormatMessageSummary returns a short description of a message for logging.

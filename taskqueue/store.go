@@ -156,6 +156,12 @@ func (store *Store) Find(ownerID, taskID string) (Task, bool) {
 	return store.findTaskLocked(strings.TrimSpace(ownerID), strings.TrimSpace(taskID))
 }
 
+func (store *Store) FindBySource(sourceMessageKey string) (Task, bool) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	return store.findBySourceLocked(strings.TrimSpace(sourceMessageKey))
+}
+
 func (store *Store) List(ownerID string) []Task {
 	store.mu.RLock()
 	owner := store.state.Owners[strings.TrimSpace(ownerID)]
@@ -189,6 +195,61 @@ func (store *Store) Status(ownerID string) OwnerStatus {
 		}
 	}
 	return status
+}
+
+func (store *Store) Owners() []string {
+	store.mu.RLock()
+	owners := make([]string, 0, len(store.state.Owners))
+	for ownerID := range store.state.Owners {
+		owners = append(owners, ownerID)
+	}
+	store.mu.RUnlock()
+	sort.Strings(owners)
+	return owners
+}
+
+func (store *Store) QueueStatus() QueueStatus {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	var status QueueStatus
+	for _, owner := range store.state.Owners {
+		for _, task := range owner.Tasks {
+			switch task.State {
+			case StateQueued:
+				status.Queued++
+			case StateRunning:
+				status.Running++
+			case StateDelivering:
+				status.Delivering++
+			}
+		}
+	}
+	return status
+}
+
+func (store *Store) QueuePosition(ownerID, taskID string) (int, bool) {
+	store.mu.RLock()
+	var queued []Task
+	for _, owner := range store.state.Owners {
+		for _, task := range owner.Tasks {
+			if task.State == StateQueued {
+				queued = append(queued, task)
+			}
+		}
+	}
+	store.mu.RUnlock()
+	sort.SliceStable(queued, func(left, right int) bool {
+		if queued[left].Order == queued[right].Order {
+			return queued[left].ID < queued[right].ID
+		}
+		return queued[left].Order < queued[right].Order
+	})
+	for index, task := range queued {
+		if task.OwnerID == strings.TrimSpace(ownerID) && task.ID == strings.TrimSpace(taskID) {
+			return index + 1, true
+		}
+	}
+	return 0, false
 }
 
 func (store *Store) TotalPayloadBytes() int64 {

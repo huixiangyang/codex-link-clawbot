@@ -153,6 +153,12 @@ type OwnerStatus struct {
 	Cancelled   int
 }
 
+type QueueStatus struct {
+	Queued     int
+	Running    int
+	Delivering int
+}
+
 var (
 	taskIDPattern   = regexp.MustCompile(`^task-[a-f0-9]{32}$`)
 	safeIDPattern   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)

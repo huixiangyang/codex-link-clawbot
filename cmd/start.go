@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,20 +20,23 @@ import (
 	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/reporting"
+	"github.com/huixiangyang/weclaw/runtimecontrol"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/taskqueue"
 	"github.com/huixiangyang/weclaw/visual"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
 
 var (
-	foregroundFlag bool
-	apiAddrFlag    string
+	apiAddrFlag       string
+	startDrainingFlag bool
 )
 
 func init() {
-	startCmd.Flags().BoolVarP(&foregroundFlag, "foreground", "f", false, "Run in foreground (default is background)")
 	startCmd.Flags().StringVar(&apiAddrFlag, "api-addr", "", "API server listen address (default 127.0.0.1:18011)")
+	startCmd.Flags().BoolVar(&startDrainingFlag, "draining", false, "start without claiming queued tasks")
+	_ = startCmd.Flags().MarkHidden("draining")
 	rootCmd.AddCommand(startCmd)
 }
 
@@ -45,27 +47,6 @@ var startCmd = &cobra.Command{
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
-	if !foregroundFlag {
-		// Check if login is needed — if so, do it in foreground first, then daemon
-		accounts, _ := ilink.LoadAllCredentials()
-		if len(accounts) == 0 {
-			fmt.Println("No WeChat accounts found, starting login...")
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			_, err := doLogin(ctx)
-			cancel()
-			if err != nil {
-				return fmt.Errorf("login failed: %w", err)
-			}
-		}
-		return runDaemon()
-	}
-
-	cleanupPID, err := registerForegroundPID()
-	if err != nil {
-		return err
-	}
-	defer cleanupPID()
-
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -133,11 +114,26 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize session manager: %w", err)
 	}
 	handler.SetSessionManager(sessionManager)
-	activityStore, err := messaging.NewActivityStore("")
+	taskStore, err := taskqueue.NewStore("")
 	if err != nil {
-		return fmt.Errorf("initialize task history: %w", err)
+		return fmt.Errorf("initialize persistent task queue: %w", err)
 	}
-	handler.SetActivityStore(activityStore)
+	coordinator, err := messaging.NewCoordinator(handler, taskStore)
+	if err != nil {
+		return fmt.Errorf("initialize task coordinator: %w", err)
+	}
+	handler.SetTaskQueue(taskStore, coordinator)
+	var deploymentMessageHold atomic.Bool
+	deploymentMessageHold.Store(startDrainingFlag)
+	runtimeDrainer := &startupRuntimeDrainer{coordinator: coordinator, messageHold: &deploymentMessageHold}
+	runtimeController := runtimecontrol.New(Version, taskStore, runtimeDrainer)
+	runtimeController.SetCodexReady(true)
+	if startDrainingFlag {
+		// 部署验收期间禁止新版本提前领取旧队列，确认健康后再由部署事务恢复。
+		runtimeController.Drain()
+	}
+	handler.SetRuntimeLifecycle(runtimeController)
+	defer runtimeController.SetStopping()
 	libraryStore, err := messaging.NewLibraryStore("")
 	if err != nil {
 		return fmt.Errorf("initialize material and delivery library: %w", err)
@@ -196,7 +192,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Start HTTP API server for sending messages
 	var clients []*ilink.Client
 	for _, c := range accounts {
-		clients = append(clients, ilink.NewClient(c))
+		client := ilink.NewClient(c)
+		clients = append(clients, client)
+		coordinator.RegisterClient(client)
 	}
 	// Resolve API addr: flag > env/config > default
 	apiAddr := cfg.APIAddr // already includes env override from loadEnv
@@ -204,7 +202,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		apiAddr = apiAddrFlag
 	}
 	handler.SetBridgeInfo(Version, apiAddr)
-	apiServer := api.NewServer(clients, apiAddr)
+	apiServer := api.NewServer(clients, apiAddr, runtimeController)
 	apiErr := make(chan error, 1)
 	go func() {
 		apiErr <- apiServer.Run(ctx)
@@ -229,17 +227,26 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetAutomationProvider(reportScheduler)
 	go reportScheduler.Run(ctx)
+	coordinatorErr := make(chan error, 1)
+	go func() {
+		coordinatorErr <- coordinator.Run(ctx)
+	}()
 
 	// Codex 就绪后才启动消息轮询。
 	log.Printf("Starting message bridge for %d account(s)...", len(accounts))
+	monitorProbes := make([]ilink.MonitorObserver, 0, len(accounts))
+	for range accounts {
+		monitorProbes = append(monitorProbes, runtimeController.NewMonitorProbe())
+	}
+	runtimeController.SetReady()
 
 	var wg sync.WaitGroup
-	for _, creds := range accounts {
+	for index, creds := range accounts {
 		wg.Add(1)
-		go func(c *ilink.Credentials) {
+		go func(c *ilink.Credentials, monitorProbe ilink.MonitorObserver) {
 			defer wg.Done()
-			runMonitorWithRestart(ctx, c, handler)
-		}(creds)
+			runMonitorWithRestart(ctx, c, handler, monitorProbe, &deploymentMessageHold)
+		}(creds, monitorProbes[index])
 	}
 
 	monitorsDone := make(chan struct{})
@@ -261,6 +268,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("codex app-server exited: %w", exitErr)
 		}
 		return fmt.Errorf("codex app-server exited unexpectedly")
+	case err := <-coordinatorErr:
+		if ctx.Err() != nil {
+			<-monitorsDone
+			return nil
+		}
+		return fmt.Errorf("task coordinator stopped: %w", err)
 	case <-ctx.Done():
 		<-monitorsDone
 		return nil
@@ -268,7 +281,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 }
 
 // runMonitorWithRestart runs a monitor with automatic restart on failure.
-func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handler *messaging.Handler) {
+func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handler *messaging.Handler, observer ilink.MonitorObserver, messageHold *atomic.Bool) {
 	const maxRestartDelay = 30 * time.Second
 	restartDelay := 3 * time.Second
 
@@ -276,10 +289,13 @@ func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handle
 		log.Printf("[%s] Starting monitor...", ilink.LogLabel(creds.ILinkBotID))
 
 		client := ilink.NewClient(creds)
-		monitor, err := ilink.NewMonitor(client, handler.HandleMessage)
+		monitor, err := ilink.NewMonitor(client, handler.HandleMessage, observer)
 		if err != nil {
 			log.Printf("[%s] Failed to create monitor: %v", ilink.LogLabel(creds.ILinkBotID), err)
 		} else {
+			if messageHold != nil {
+				monitor.SetMessageHold(messageHold.Load)
+			}
 			err = monitor.Run(ctx)
 		}
 
@@ -300,6 +316,20 @@ func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handle
 		if restartDelay > maxRestartDelay {
 			restartDelay = maxRestartDelay
 		}
+	}
+}
+
+type startupRuntimeDrainer struct {
+	coordinator *messaging.Coordinator
+	messageHold *atomic.Bool
+}
+
+func (drainer *startupRuntimeDrainer) SetDraining(draining bool) {
+	if drainer.coordinator != nil {
+		drainer.coordinator.SetDraining(draining)
+	}
+	if !draining && drainer.messageHold != nil {
+		drainer.messageHold.Store(false)
 	}
 }
 
@@ -352,126 +382,4 @@ func doLogin(ctx context.Context) (*ilink.Credentials, error) {
 	fmt.Printf("\nLogin successful! Credentials saved to %s\n", dir)
 	fmt.Printf("Bot ID: %s\n\n", creds.ILinkBotID)
 	return creds, nil
-}
-
-// --- Daemon mode ---
-
-func weclawDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".weclaw")
-}
-
-func pidFile() string {
-	return filepath.Join(weclawDir(), "weclaw.pid")
-}
-
-func logFile() string {
-	return filepath.Join(weclawDir(), "weclaw.log")
-}
-
-// registerForegroundPID 让 systemd 前台模式也拥有准确的状态文件。
-// 清理时核对 PID，避免旧进程误删新实例写入的状态。
-func registerForegroundPID() (func(), error) {
-	if err := os.MkdirAll(weclawDir(), 0o700); err != nil {
-		return nil, fmt.Errorf("create weclaw dir: %w", err)
-	}
-	pid := os.Getpid()
-	pidText := fmt.Sprintf("%d", pid)
-	if err := os.WriteFile(pidFile(), []byte(pidText), 0o600); err != nil {
-		return nil, fmt.Errorf("write pid file: %w", err)
-	}
-
-	return func() {
-		data, err := os.ReadFile(pidFile())
-		if err == nil && string(data) == pidText {
-			_ = os.Remove(pidFile())
-		}
-	}, nil
-}
-
-// runDaemon spawns weclaw start (without --daemon) as a background process.
-func runDaemon() error {
-	// Kill any existing weclaw processes before starting a new one
-	stopAllWeclaw()
-
-	// Ensure log directory exists
-	if err := os.MkdirAll(weclawDir(), 0o700); err != nil {
-		return fmt.Errorf("create weclaw dir: %w", err)
-	}
-
-	// Open log file
-	lf, err := os.OpenFile(logFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-
-	// Re-exec ourselves without --daemon
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("find executable: %w", err)
-	}
-
-	cmd := exec.Command(exe, "start", "-f")
-	cmd.Stdout = lf
-	cmd.Stderr = lf
-	setSysProcAttr(cmd)
-
-	if err := cmd.Start(); err != nil {
-		lf.Close()
-		return fmt.Errorf("start daemon: %w", err)
-	}
-
-	// Save PID
-	pid := cmd.Process.Pid
-	os.WriteFile(pidFile(), []byte(fmt.Sprintf("%d", pid)), 0o600)
-
-	// Detach — don't wait
-	cmd.Process.Release()
-	lf.Close()
-
-	fmt.Printf("weclaw started in background (pid=%d)\n", pid)
-	fmt.Printf("Log: %s\n", logFile())
-	fmt.Printf("Stop: weclaw stop\n")
-	return nil
-}
-
-func readPid() (int, error) {
-	data, err := os.ReadFile(pidFile())
-	if err != nil {
-		return 0, err
-	}
-	var pid int
-	if _, err := fmt.Sscanf(string(data), "%d", &pid); err != nil {
-		return 0, err
-	}
-	return pid, nil
-}
-
-func processExists(pid int) bool {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 checks if process exists without killing it
-	return p.Signal(syscall.Signal(0)) == nil
-}
-
-// stopAllWeclaw kills all running weclaw processes (by PID file and by process scan).
-func stopAllWeclaw() {
-	// 1. Kill by PID file
-	if pid, err := readPid(); err == nil && processExists(pid) {
-		if p, err := os.FindProcess(pid); err == nil {
-			_ = p.Signal(syscall.SIGTERM)
-		}
-	}
-	os.Remove(pidFile())
-
-	// 2. Kill any remaining weclaw processes by scanning
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-	// Use pkill to kill all processes matching the executable path
-	_ = exec.Command("pkill", "-f", exe+" start").Run()
-	time.Sleep(500 * time.Millisecond)
 }

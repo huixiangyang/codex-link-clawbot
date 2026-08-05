@@ -57,14 +57,19 @@ func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	handler := NewHandler(capture)
 	attachTestSessionManager(t, handler)
 	handler.SetProgressConfig(ProgressConfig{Enabled: false})
+	store, stop := attachTestTaskQueue(t, handler, client, "user-1")
+	defer stop()
 
-	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+	if err := handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 2, FromUserID: "user-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish, ContextToken: "context-1",
 		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeFile, FileItem: &ilink.FileItem{
 			URL: server.URL + "/build.log", FileName: "build.log", Len: "28",
 		}}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminalTask(t, store, "user-1")
 
 	if capture.request.Text != defaultFilePrompt || len(capture.request.LocalFiles) != 1 {
 		t.Fatalf("agent request = %#v", capture.request)
@@ -127,25 +132,30 @@ func TestHandleMessageAutomaticallyReturnsTurnArtifacts(t *testing.T) {
 	handler := NewHandler(ag)
 	attachTestSessionManager(t, handler)
 	handler.SetProgressConfig(ProgressConfig{Enabled: false})
-	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+	store, stop := attachTestTaskQueue(t, handler, client, "user-1")
+	defer stop()
+	if err := handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 3, FromUserID: "user-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish,
 		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "生成补丁"}}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminalTask(t, store, "user-1")
 
 	if len(encryptedUpload) == 0 {
 		t.Fatal("artifact was not uploaded")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(sent) != 2 {
-		t.Fatalf("sent messages = %d, want file and text", len(sent))
+	if len(sent) != 3 {
+		t.Fatalf("sent messages = %d, want queue confirmation, file and text", len(sent))
 	}
-	if item := sent[0].Msg.ItemList[0]; item.FileItem == nil || item.FileItem.FileName != "changes.patch" {
-		t.Fatalf("first message is not patch attachment: %#v", item)
+	if item := sent[1].Msg.ItemList[0]; item.FileItem == nil || item.FileItem.FileName != "changes.patch" {
+		t.Fatalf("second message is not patch attachment: %#v", item)
 	}
-	if item := sent[1].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "已发送附件：changes.patch") {
-		t.Fatalf("second message missing artifact summary: %#v", item)
+	if item := sent[2].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "已发送附件：changes.patch") {
+		t.Fatalf("third message missing artifact summary: %#v", item)
 	}
 	if _, err := os.Stat(ag.artifactDir); !os.IsNotExist(err) {
 		t.Fatalf("artifact directory was not cleaned: %v", err)

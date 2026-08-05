@@ -193,16 +193,16 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 		projectName = h.projects.Current(userID).Name
 	}
 	parts := []string{"WeClaw 工作简报。当前项目：" + projectName + "。"}
-	if h.activities == nil || len(h.activities.List(userID)) == 0 {
-		parts = append(parts, "目前还没有任务记录。")
+	if h.tasks == nil || len(h.tasks.List(userID)) == 0 {
+		parts = append(parts, "目前还没有已完成任务。")
 	} else {
-		records := h.activities.List(userID)
-		if len(records) > 3 {
-			records = records[:3]
+		tasks := h.tasks.List(userID)
+		if len(tasks) > 3 {
+			tasks = tasks[:3]
 		}
-		parts = append(parts, fmt.Sprintf("最近有 %d 项任务。", len(records)))
-		for index, record := range records {
-			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, record.Summary, formatActivityStatus(record.Status)))
+		parts = append(parts, fmt.Sprintf("最近有 %d 项任务。", len(tasks)))
+		for index, task := range tasks {
+			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, task.Summary, taskStateText(task.State)))
 		}
 	}
 	script := strings.Join(parts, "")

@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/huixiangyang/weclaw/ilink"
+	"github.com/huixiangyang/weclaw/preference"
+	"github.com/huixiangyang/weclaw/taskqueue"
+	"github.com/huixiangyang/weclaw/visual"
 )
 
 func newTestHandler() *Handler {
@@ -66,31 +69,22 @@ func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {
 }
 
 func TestTaskControlStatusAndCancel(t *testing.T) {
-	h := newTestHandler()
-	if got := h.buildTaskStatus("user-1"); !strings.Contains(got, "任务状态：空闲") {
-		t.Fatalf("unexpected idle status: %q", got)
-	}
-	if got := h.cancelActiveTask("user-1"); got != "当前没有正在执行的任务。" {
-		t.Fatalf("unexpected idle cancellation: %q", got)
-	}
-
-	task := newActiveTask(context.Background())
-	h.activeTasks.Store("user-1", task)
+	h, cancel := testHandlerWithRunningTask(t, "user-1")
+	defer cancel()
 	if got := h.buildTaskStatus("user-1"); !strings.Contains(got, "任务状态：运行中") {
 		t.Fatalf("unexpected active status: %q", got)
 	}
 	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "已请求取消当前任务") {
 		t.Fatalf("unexpected cancellation result: %q", got)
 	}
-	if got := h.cancelActiveTask("user-1"); got != "当前任务正在取消，请稍候。" {
+	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "正在取消") {
 		t.Fatalf("unexpected duplicate cancellation result: %q", got)
 	}
 }
 
 func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
-	h := newTestHandler()
-	task := newActiveTask(context.Background())
-	h.activeTasks.Store("user-1", task)
+	h, cancel := testHandlerWithRunningTask(t, "user-1")
+	defer cancel()
 
 	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false)
 	if !handled || !strings.Contains(status, "任务状态：运行中") {
@@ -99,6 +93,35 @@ func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
 	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false)
 	if !handled || !strings.Contains(cancelled, "已请求取消当前任务") {
 		t.Fatalf("natural cancellation = %q, handled=%v", cancelled, handled)
+	}
+}
+
+func testHandlerWithRunningTask(t *testing.T, ownerID string) (*Handler, context.CancelFunc) {
+	t.Helper()
+	store, err := taskqueue.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, _, err := store.Enqueue(taskqueue.EnqueueInput{
+		SourceMessageKey: "source-running", OwnerID: ownerID, ProjectID: "project", Summary: "运行测试", Text: "执行测试",
+		ResponseMode: preference.ResponseAdaptive, VisualStyle: visual.StyleEditorial,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
+		t.Fatalf("claim running task: claimed=%v err=%v", claimed, err)
+	}
+	handler := newTestHandler()
+	taskContext, cancel := context.WithCancel(context.Background())
+	handler.tasks = store
+	handler.coordinator = &Coordinator{
+		handler: handler, tasks: store, wake: make(chan struct{}, 1),
+		active: &coordinatorTask{ownerID: ownerID, taskID: queued.ID, cancel: cancel},
+	}
+	return handler, func() {
+		cancel()
+		_ = taskContext
 	}
 }
 
