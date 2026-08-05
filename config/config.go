@@ -43,7 +43,27 @@ func (c SecurityConfig) validate() error {
 }
 
 type VoiceConfig struct {
-	Enabled     bool   `json:"enabled"`
+	Enabled   bool                  `json:"enabled"`
+	Providers []VoiceProviderConfig `json:"providers,omitempty"`
+}
+
+type VoiceProviderConfig struct {
+	ID             string                    `json:"id"`
+	Type           string                    `json:"type"`
+	TimeoutSeconds int                       `json:"timeout_seconds"`
+	Piper          *PiperVoiceProviderConfig `json:"piper,omitempty"`
+	MiMo           *MiMoVoiceProviderConfig  `json:"mimo,omitempty"`
+}
+
+type PiperVoiceProviderConfig struct {
+	Command       string  `json:"command"`
+	Model         string  `json:"model"`
+	ModelConfig   string  `json:"model_config"`
+	FFmpegCommand string  `json:"ffmpeg_command"`
+	LengthScale   float64 `json:"length_scale"`
+}
+
+type MiMoVoiceProviderConfig struct {
 	BaseURL     string `json:"base_url"`
 	APIKey      string `json:"api_key,omitempty"`
 	Model       string `json:"model"`
@@ -51,39 +71,90 @@ type VoiceConfig struct {
 	StylePrompt string `json:"style_prompt,omitempty"`
 }
 
-func defaultVoiceConfig() VoiceConfig {
-	return VoiceConfig{
-		BaseURL:     "https://api.xiaomimimo.com/v1",
-		Model:       "mimo-v2.5-tts",
-		Voice:       "茉莉",
-		StylePrompt: "用自然、克制、清晰的语气播报，语速稍慢，重点明确。",
-	}
-}
-
 func (c VoiceConfig) validate() error {
 	if !c.Enabled {
 		return nil
 	}
+	if len(c.Providers) == 0 || len(c.Providers) > 4 {
+		return fmt.Errorf("voice.providers must contain between 1 and 4 providers")
+	}
+	ids := make(map[string]struct{}, len(c.Providers))
+	for index, provider := range c.Providers {
+		prefix := fmt.Sprintf("voice.providers[%d]", index)
+		if !projectIDPattern.MatchString(provider.ID) {
+			return fmt.Errorf("%s.id is invalid", prefix)
+		}
+		if _, exists := ids[provider.ID]; exists {
+			return fmt.Errorf("voice provider id %q is duplicated", provider.ID)
+		}
+		ids[provider.ID] = struct{}{}
+		if provider.TimeoutSeconds < 5 || provider.TimeoutSeconds > 180 {
+			return fmt.Errorf("%s.timeout_seconds must be between 5 and 180", prefix)
+		}
+		switch provider.Type {
+		case "piper":
+			if provider.Piper == nil || provider.MiMo != nil {
+				return fmt.Errorf("%s must contain only piper configuration", prefix)
+			}
+			if err := provider.Piper.validate(prefix + ".piper"); err != nil {
+				return err
+			}
+		case "mimo":
+			if provider.MiMo == nil || provider.Piper != nil {
+				return fmt.Errorf("%s must contain only mimo configuration", prefix)
+			}
+			if err := provider.MiMo.validate(prefix + ".mimo"); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s.type must be piper or mimo", prefix)
+		}
+	}
+	return nil
+}
+
+func (c PiperVoiceProviderConfig) validate(prefix string) error {
+	paths := []struct {
+		field string
+		path  string
+	}{
+		{field: "command", path: c.Command},
+		{field: "model", path: c.Model},
+		{field: "model_config", path: c.ModelConfig},
+		{field: "ffmpeg_command", path: c.FFmpegCommand},
+	}
+	for _, item := range paths {
+		if !filepath.IsAbs(item.path) || filepath.Clean(item.path) != item.path {
+			return fmt.Errorf("%s.%s must be a clean absolute path", prefix, item.field)
+		}
+	}
+	if c.LengthScale < 0.5 || c.LengthScale > 2 {
+		return fmt.Errorf("%s.length_scale must be between 0.5 and 2", prefix)
+	}
+	return nil
+}
+
+func (c MiMoVoiceProviderConfig) validate(prefix string) error {
 	baseURL, err := url.Parse(strings.TrimSpace(c.BaseURL))
 	if err != nil || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
-		return fmt.Errorf("voice.base_url must be an absolute MiMo API URL without credentials, query, or fragment")
+		return fmt.Errorf("%s.base_url must be an absolute MiMo API URL without credentials, query, or fragment", prefix)
 	}
 	if baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && isLoopbackHost(baseURL.Hostname())) {
-		return fmt.Errorf("voice.base_url must use HTTPS except for a loopback test endpoint")
+		return fmt.Errorf("%s.base_url must use HTTPS except for a loopback test endpoint", prefix)
 	}
 	if strings.TrimSpace(c.APIKey) == "" || strings.ContainsAny(c.APIKey, "\r\n") {
-		return fmt.Errorf("voice.api_key is required and must be a single line")
+		return fmt.Errorf("%s.api_key is required and must be a single line", prefix)
 	}
 	if c.Model != "mimo-v2.5-tts" {
-		return fmt.Errorf("voice.model must be mimo-v2.5-tts")
+		return fmt.Errorf("%s.model must be mimo-v2.5-tts", prefix)
 	}
 	switch c.Voice {
 	case "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean":
 	default:
-		return fmt.Errorf("voice.voice is not a supported MiMo preset voice")
+		return fmt.Errorf("%s.voice is not a supported MiMo preset voice", prefix)
 	}
 	if len([]rune(c.StylePrompt)) > 500 {
-		return fmt.Errorf("voice.style_prompt must contain at most 500 characters")
+		return fmt.Errorf("%s.style_prompt must contain at most 500 characters", prefix)
 	}
 	return nil
 }
@@ -361,7 +432,6 @@ func DefaultConfig() *Config {
 		Projects: defaultProjects(),
 		Codex:    defaultCodexConfig(),
 		Visual:   defaultVisualConfig(),
-		Voice:    defaultVoiceConfig(),
 	}
 }
 
@@ -446,7 +516,11 @@ func loadEnv(cfg *Config) {
 		cfg.Visual.BrowserCommand = v
 	}
 	if v := os.Getenv("WECLAW_MIMO_API_KEY"); v != "" {
-		cfg.Voice.APIKey = v
+		for index := range cfg.Voice.Providers {
+			if cfg.Voice.Providers[index].Type == "mimo" && cfg.Voice.Providers[index].MiMo != nil {
+				cfg.Voice.Providers[index].MiMo.APIKey = v
+			}
+		}
 	}
 }
 

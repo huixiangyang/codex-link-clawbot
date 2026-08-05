@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -147,14 +148,36 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetRemoteLock(remoteLock)
 	if cfg.Voice.Enabled {
-		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(messaging.VoiceBriefingConfig{
-			BaseURL:     cfg.Voice.BaseURL,
-			APIKey:      cfg.Voice.APIKey,
-			Model:       cfg.Voice.Model,
-			Voice:       cfg.Voice.Voice,
-			StylePrompt: cfg.Voice.StylePrompt,
-		}))
-		log.Printf("MiMo voice briefing enabled (model=%s, voice=%s)", cfg.Voice.Model, cfg.Voice.Voice)
+		providers := make([]messaging.VoiceProviderEntry, 0, len(cfg.Voice.Providers))
+		providerIDs := make([]string, 0, len(cfg.Voice.Providers))
+		for _, providerConfig := range cfg.Voice.Providers {
+			var provider messaging.VoiceProvider
+			switch providerConfig.Type {
+			case "piper":
+				provider = messaging.NewPiperVoiceProvider(providerConfig.ID, messaging.PiperVoiceProviderConfig{
+					Command:       providerConfig.Piper.Command,
+					Model:         providerConfig.Piper.Model,
+					ModelConfig:   providerConfig.Piper.ModelConfig,
+					FFmpegCommand: providerConfig.Piper.FFmpegCommand,
+					LengthScale:   providerConfig.Piper.LengthScale,
+				})
+			case "mimo":
+				provider = messaging.NewMiMoVoiceProvider(providerConfig.ID, messaging.MiMoVoiceProviderConfig{
+					BaseURL:     providerConfig.MiMo.BaseURL,
+					APIKey:      providerConfig.MiMo.APIKey,
+					Model:       providerConfig.MiMo.Model,
+					Voice:       providerConfig.MiMo.Voice,
+					StylePrompt: providerConfig.MiMo.StylePrompt,
+				})
+			}
+			providers = append(providers, messaging.VoiceProviderEntry{
+				Provider: provider,
+				Timeout:  time.Duration(providerConfig.TimeoutSeconds) * time.Second,
+			})
+			providerIDs = append(providerIDs, providerConfig.ID)
+		}
+		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(providers))
+		log.Printf("Voice briefing enabled (providers=%s)", strings.Join(providerIDs, ","))
 	}
 
 	handler.SetProgressConfig(messaging.ProgressConfig{

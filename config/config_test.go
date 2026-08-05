@@ -51,7 +51,7 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
 		t.Fatalf("unexpected default visual config: %#v", cfg.Visual)
 	}
-	if cfg.Voice.Enabled || cfg.Voice.BaseURL != "https://api.xiaomimimo.com/v1" || cfg.Voice.Model != "mimo-v2.5-tts" || cfg.Voice.Voice != "茉莉" {
+	if cfg.Voice.Enabled || len(cfg.Voice.Providers) != 0 {
 		t.Fatalf("unexpected default voice config: %#v", cfg.Voice)
 	}
 }
@@ -64,6 +64,10 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	t.Setenv("WECLAW_MIMO_API_KEY", "mimo-test-key")
 
 	cfg := DefaultConfig()
+	cfg.Voice.Providers = []VoiceProviderConfig{{
+		ID: "mimo", Type: "mimo", TimeoutSeconds: 90,
+		MiMo: &MiMoVoiceProviderConfig{BaseURL: "https://api.xiaomimimo.com/v1", Model: "mimo-v2.5-tts", Voice: "茉莉"},
+	}}
 	loadEnv(cfg)
 	if cfg.APIAddr != "127.0.0.1:18011" {
 		t.Fatalf("APIAddr = %q, want %q", cfg.APIAddr, "127.0.0.1:18011")
@@ -74,7 +78,7 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	if cfg.Visual.BrowserCommand != "/opt/chromium" {
 		t.Fatalf("visual browser override = %q", cfg.Visual.BrowserCommand)
 	}
-	if cfg.Voice.APIKey != "mimo-test-key" {
+	if cfg.Voice.Providers[0].MiMo.APIKey != "mimo-test-key" {
 		t.Fatalf("MiMo API key override was not applied")
 	}
 }
@@ -224,42 +228,56 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 	}
 	cfg.Security.RemoteLockCode = "secure-code"
 	cfg.Voice.Enabled = true
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.api_key") {
-		t.Fatalf("missing API key error = %v", err)
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.providers") {
+		t.Fatalf("missing providers error = %v", err)
 	}
-	cfg.Voice.APIKey = "test-key"
-	cfg.Voice.BaseURL = "http://example.com/v1"
+	cfg.Voice.Providers = []VoiceProviderConfig{{
+		ID: "mimo", Type: "mimo", TimeoutSeconds: 90,
+		MiMo: &MiMoVoiceProviderConfig{BaseURL: "http://example.com/v1", APIKey: "test-key", Model: "mimo-v2.5-tts", Voice: "茉莉"},
+	}}
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("insecure base URL error = %v", err)
 	}
-	cfg.Voice.BaseURL = "https://api.xiaomimimo.com/v1"
-	cfg.Voice.Model = "mimo-v2.5-tts-voiceclone"
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.model") {
+	mimo := cfg.Voice.Providers[0].MiMo
+	mimo.BaseURL = "https://api.xiaomimimo.com/v1"
+	mimo.Model = "mimo-v2.5-tts-voiceclone"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), ".model") {
 		t.Fatalf("unsupported model error = %v", err)
 	}
-	cfg.Voice.Model = "mimo-v2.5-tts"
-	cfg.Voice.Voice = "unknown"
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.voice") {
+	mimo.Model = "mimo-v2.5-tts"
+	mimo.Voice = "unknown"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), ".voice") {
 		t.Fatalf("unsupported voice error = %v", err)
 	}
-	cfg.Voice.Voice = "茉莉"
+	mimo.Voice = "茉莉"
+	cfg.Voice.Providers = append([]VoiceProviderConfig{{
+		ID: "local", Type: "piper", TimeoutSeconds: 30,
+		Piper: &PiperVoiceProviderConfig{
+			Command: "/opt/piper/bin/piper", Model: "/opt/piper/voice.onnx", ModelConfig: "/opt/piper/voice.onnx.json",
+			FFmpegCommand: "/usr/bin/ffmpeg", LengthScale: 1,
+		},
+	}}, cfg.Voice.Providers...)
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("valid security and voice config: %v", err)
 	}
+	cfg.Voice.Providers[1].ID = "local"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("duplicate provider error = %v", err)
+	}
 }
 
-func TestLoadRejectsRemovedVoiceCommand(t *testing.T) {
+func TestLoadRejectsRemovedSingleProviderVoiceSchema(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".weclaw", "config.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"},"voice":{"enabled":true,"command":"/usr/local/bin/tts"}}`)
+	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"},"voice":{"enabled":true,"base_url":"https://api.xiaomimimo.com/v1","api_key":"test","model":"mimo-v2.5-tts","voice":"茉莉"}}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("Load() error = %v, want removed voice.command rejection", err)
+		t.Fatalf("Load() error = %v, want removed single-provider voice schema rejection", err)
 	}
 }

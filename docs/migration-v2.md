@@ -7,7 +7,7 @@ v2 不兼容旧运行状态，升级必须停服并一次性迁移；运行时�
 - 删除 `codex.cwd` 与 `WECLAW_CODEX_CWD`。
 - 新增至少一个 `projects` 项；原工作目录成为项目 `root`。
 - `scheduled_reports` 删除。原日报改为绑定 `project_id` 的 `automations`，并显式设置 `checks` 与 `notify_on`。
-- 可选配置 `security.remote_lock_code` 和 MiMo TTS `voice`；旧 `voice.command` 已删除，必须改为 `base_url`、`api_key`、`model`、`voice` 与可选 `style_prompt`。
+- 可选配置 `security.remote_lock_code` 和 `voice.providers` 有序 TTS 提供商链。旧的扁平 MiMo 字段与 `voice.command` 均已删除；每个提供商必须声明唯一 `id`、`type`、独立超时以及对应的 `piper` 或 `mimo` 配置。
 
 ## 状态文件
 

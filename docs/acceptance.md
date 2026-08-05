@@ -34,8 +34,11 @@
 
 1. 配置解锁码后发送“远程锁定”，活动任务应取消、暂存应清除，后续文字/图片/文件均不得进入 Codex。
 2. 错误解锁码不得改变状态；`解锁 正确码` 后恢复。
-3. 配置 MiMo TTS 后发送“语音简报”，应由 `/chat/completions` 合成并收到 `ItemTypeVoice` 的 MP3 语音消息；网关 4xx/5xx、无音频、非法 Base64、非 MP3 和超限响应都应明确回退错误文字。
-4. `voice.command` 必须作为未知字段拒绝；日志、微信错误消息和仓库均不得出现 `voice.api_key` 的值。
+3. 按“Piper → MiMo”配置后发送“语音简报”，Piper 正常时应收到 `ItemTypeVoice` 的 MP3 消息，并在结果中显示 `local`；不得请求 MiMo。
+4. 临时让 Piper 失败后再次发送，应自动调用 MiMo；MiMo 也失败时，文字结果必须同时列出 `local` 和 `mimo` 的原因。
+5. Piper 必须以参数数组直接执行，生成 WAV 后通过 FFmpeg 转为 24 kHz 单声道 MP3；正文中的 Shell 元字符不得执行。临时目录和音频必须受 `0700/0600` 保护并在结束后清理。
+6. MiMo 网关 4xx/5xx、无音频、非法 Base64、非 MP3 和超限响应都必须进入下一提供商；日志、微信错误消息和仓库不得出现 API 密钥。
+7. 旧扁平 MiMo 字段和 `voice.command` 必须作为未知字段拒绝。
 
 ## 6. 安全与部署
 

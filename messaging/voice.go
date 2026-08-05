@@ -3,11 +3,7 @@ package messaging
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -15,156 +11,68 @@ import (
 )
 
 const (
-	maxVoiceTextRunes    = 2500
-	maxVoiceBytes        = 20 << 20
-	maxMiMoResponseBytes = 29 << 20
+	maxVoiceTextRunes = 2500
+	maxVoiceBytes     = 20 << 20
 )
 
-type voiceHTTPClient interface {
-	Do(*http.Request) (*http.Response, error)
+// VoiceProvider 是所有语音提供商必须实现的最小契约，输出统一为 MP3。
+type VoiceProvider interface {
+	ID() string
+	Generate(context.Context, string) ([]byte, error)
 }
 
-// VoiceBriefingConfig 是 MiMo TTS 的最小运行契约；输出格式固定为微信可发送的 MP3。
-type VoiceBriefingConfig struct {
-	BaseURL     string
-	APIKey      string
-	Model       string
-	Voice       string
-	StylePrompt string
+// VoiceProviderEntry 按配置顺序组成回退链，每个提供商拥有独立超时。
+type VoiceProviderEntry struct {
+	Provider VoiceProvider
+	Timeout  time.Duration
 }
 
-// VoiceBriefing 直接调用 MiMo Chat Completions TTS，不执行本机脚本。
+type VoiceSynthesis struct {
+	ProviderID string
+	Audio      []byte
+}
+
 type VoiceBriefing struct {
-	config VoiceBriefingConfig
-	client voiceHTTPClient
+	providers []VoiceProviderEntry
 }
 
-func NewVoiceBriefing(config VoiceBriefingConfig) *VoiceBriefing {
-	return newVoiceBriefingWithClient(config, &http.Client{Timeout: 90 * time.Second})
+func NewVoiceBriefing(providers []VoiceProviderEntry) *VoiceBriefing {
+	return &VoiceBriefing{providers: append([]VoiceProviderEntry(nil), providers...)}
 }
 
-func newVoiceBriefingWithClient(config VoiceBriefingConfig, client voiceHTTPClient) *VoiceBriefing {
-	config.BaseURL = strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
-	config.APIKey = strings.TrimSpace(config.APIKey)
-	config.Model = strings.TrimSpace(config.Model)
-	config.Voice = strings.TrimSpace(config.Voice)
-	config.StylePrompt = strings.TrimSpace(config.StylePrompt)
-	return &VoiceBriefing{config: config, client: client}
-}
-
-type mimoTTSMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type mimoTTSRequest struct {
-	Model    string           `json:"model"`
-	Messages []mimoTTSMessage `json:"messages"`
-	Audio    struct {
-		Format string `json:"format"`
-		Voice  string `json:"voice"`
-	} `json:"audio"`
-}
-
-type mimoTTSResponse struct {
-	Choices []struct {
-		Message struct {
-			Audio *struct {
-				Data   string `json:"data"`
-				Format string `json:"format"`
-			} `json:"audio"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
-	Message string `json:"message"`
-}
-
-func (v *VoiceBriefing) Generate(ctx context.Context, text string) ([]byte, error) {
+func (v *VoiceBriefing) Generate(ctx context.Context, text string) (VoiceSynthesis, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, fmt.Errorf("MiMo TTS 文本不能为空")
+		return VoiceSynthesis{}, fmt.Errorf("语音文本不能为空")
 	}
 	if len([]rune(text)) > maxVoiceTextRunes {
-		return nil, fmt.Errorf("MiMo TTS 文本不能超过 %d 字", maxVoiceTextRunes)
+		return VoiceSynthesis{}, fmt.Errorf("语音文本不能超过 %d 字", maxVoiceTextRunes)
+	}
+	if len(v.providers) == 0 {
+		return VoiceSynthesis{}, fmt.Errorf("没有可用的语音提供商")
 	}
 
-	payload := mimoTTSRequest{Model: v.config.Model}
-	if v.config.StylePrompt != "" {
-		payload.Messages = append(payload.Messages, mimoTTSMessage{Role: "user", Content: v.config.StylePrompt})
-	}
-	// MiMo 会合成 assistant 消息中的文字，user 消息仅用于控制播报风格。
-	payload.Messages = append(payload.Messages, mimoTTSMessage{Role: "assistant", Content: text})
-	payload.Audio.Format = "mp3"
-	payload.Audio.Voice = v.config.Voice
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("编码 MiMo TTS 请求: %w", err)
-	}
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, v.config.BaseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("创建 MiMo TTS 请求: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+v.config.APIKey)
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := v.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("MiMo TTS 请求失败: %s", v.redactSecret(err.Error()))
-	}
-	defer response.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxMiMoResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("读取 MiMo TTS 响应: %w", err)
-	}
-	if len(responseBody) > maxMiMoResponseBytes {
-		return nil, fmt.Errorf("MiMo TTS 响应超过大小限制")
-	}
-
-	var completion mimoTTSResponse
-	if err := json.Unmarshal(responseBody, &completion); err != nil {
-		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-			return nil, fmt.Errorf("MiMo TTS 返回 HTTP %d", response.StatusCode)
+	failures := make([]string, 0, len(v.providers))
+	for _, entry := range v.providers {
+		if entry.Provider == nil {
+			failures = append(failures, "未知提供商：未初始化")
+			continue
 		}
-		return nil, fmt.Errorf("解析 MiMo TTS 响应: %w", err)
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		message := strings.TrimSpace(completion.Error.Message)
-		if message == "" {
-			message = strings.TrimSpace(completion.Message)
+		providerCtx, cancel := context.WithTimeout(ctx, entry.Timeout)
+		audio, err := entry.Provider.Generate(providerCtx, text)
+		cancel()
+		if err == nil && len(audio) > 0 && len(audio) <= maxVoiceBytes && isMP3(audio) {
+			return VoiceSynthesis{ProviderID: entry.Provider.ID(), Audio: audio}, nil
 		}
-		if message == "" {
-			message = http.StatusText(response.StatusCode)
+		if ctx.Err() != nil {
+			return VoiceSynthesis{}, ctx.Err()
 		}
-		return nil, fmt.Errorf("MiMo TTS 返回 HTTP %d: %s", response.StatusCode, normalizeSessionLine(v.redactSecret(message), 160))
+		if err == nil {
+			err = fmt.Errorf("返回了无效的 MP3 音频")
+		}
+		failures = append(failures, fmt.Sprintf("%s：%s", entry.Provider.ID(), normalizeSessionLine(err.Error(), 160)))
 	}
-	if len(completion.Choices) == 0 || completion.Choices[0].Message.Audio == nil {
-		return nil, fmt.Errorf("MiMo TTS 未返回音频")
-	}
-	audioPayload := completion.Choices[0].Message.Audio
-	if audioPayload.Format != "" && !strings.EqualFold(audioPayload.Format, "mp3") {
-		return nil, fmt.Errorf("MiMo TTS 返回了非 MP3 音频")
-	}
-	if base64.StdEncoding.DecodedLen(len(audioPayload.Data)) > maxVoiceBytes {
-		return nil, fmt.Errorf("MiMo TTS 音频超过大小限制")
-	}
-	audio, err := base64.StdEncoding.DecodeString(audioPayload.Data)
-	if err != nil {
-		return nil, fmt.Errorf("解码 MiMo TTS 音频: %w", err)
-	}
-	if len(audio) == 0 || len(audio) > maxVoiceBytes || !isMP3(audio) {
-		return nil, fmt.Errorf("MiMo TTS 返回了无效的 MP3 音频")
-	}
-	return audio, nil
-}
-
-func (v *VoiceBriefing) redactSecret(message string) string {
-	if v.config.APIKey == "" {
-		return message
-	}
-	return strings.ReplaceAll(message, v.config.APIKey, "[redacted]")
+	return VoiceSynthesis{}, fmt.Errorf("所有语音提供商均失败：%s", strings.Join(failures, "；"))
 }
 
 func isMP3(data []byte) bool {
@@ -204,13 +112,13 @@ func SendVoice(ctx context.Context, client *ilink.Client, userID string, data []
 
 func (h *Handler) requestVoiceBriefing(userID string) string {
 	if h.voice == nil {
-		return "语音简报未启用。需要配置 MiMo TTS。"
+		return "语音简报未启用。需要配置语音提供商。"
 	}
 	h.controlVoice.Store(userID, true)
-	return "语音简报已生成并发送。"
+	return "正在生成语音简报。"
 }
 
-func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) error {
+func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) (string, error) {
 	projectName := "未配置项目"
 	if h.projects != nil {
 		projectName = h.projects.Current(userID).Name
@@ -228,9 +136,12 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, record.Summary, formatActivityStatus(record.Status)))
 		}
 	}
-	audio, err := h.voice.Generate(ctx, strings.Join(parts, ""))
+	synthesis, err := h.voice.Generate(ctx, strings.Join(parts, ""))
 	if err != nil {
-		return err
+		return "", err
 	}
-	return SendVoice(ctx, client, userID, audio, contextToken)
+	if err := SendVoice(ctx, client, userID, synthesis.Audio, contextToken); err != nil {
+		return "", err
+	}
+	return synthesis.ProviderID, nil
 }

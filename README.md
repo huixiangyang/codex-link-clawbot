@@ -101,19 +101,42 @@ weclaw restart
   },
   "security": {"remote_lock_code": "change-this-code"},
   "voice": {
-    "enabled": false,
-    "base_url": "https://api.xiaomimimo.com/v1",
-    "api_key": "",
-    "model": "mimo-v2.5-tts",
-    "voice": "茉莉",
-    "style_prompt": "Read naturally and clearly at a slightly slower pace."
+    "enabled": true,
+    "providers": [
+      {
+        "id": "local",
+        "type": "piper",
+        "timeout_seconds": 30,
+        "piper": {
+          "command": "/opt/weclaw/piper/venv/bin/piper",
+          "model": "/opt/weclaw/piper/voices/zh_CN-huayan-medium.onnx",
+          "model_config": "/opt/weclaw/piper/voices/zh_CN-huayan-medium.onnx.json",
+          "ffmpeg_command": "/usr/bin/ffmpeg",
+          "length_scale": 1
+        }
+      },
+      {
+        "id": "mimo",
+        "type": "mimo",
+        "timeout_seconds": 90,
+        "mimo": {
+          "base_url": "https://api.xiaomimimo.com/v1",
+          "api_key": "",
+          "model": "mimo-v2.5-tts",
+          "voice": "茉莉",
+          "style_prompt": "Read naturally and clearly at a slightly slower pace."
+        }
+      }
+    ]
   }
 }
 ```
 
 `projects` is the only working-directory allowlist. Sessions and quick tasks are isolated per project, and roots must already exist. WeClaw always appends `app-server --listen stdio://` to `codex.command`; the removed `codex.cwd` field is rejected. An empty `model` preserves the user's Codex default. Automations support either `daily_at` or `every_minutes`, deterministic Git/service/health checks, and `always`, `anomaly`, `change`, or `anomaly_or_change` notification policies.
 
-Voice briefings call MiMo V2.5 TTS through `/chat/completions` and are sent as native WeChat MP3 voice messages. Enabling the feature requires an HTTPS `voice.base_url` and `voice.api_key`; the key may instead be supplied through `WECLAW_MIMO_API_KEY`. The model is deliberately fixed to `mimo-v2.5-tts`. Supported preset voices are `冰糖`, `茉莉`, `苏打`, `白桦`, `Mia`, `Chloe`, `Milo`, and `Dean`. The removed `voice.command` field is rejected.
+Voice briefings use a strict ordered chain of one to four `piper` or `mimo` providers. Each provider has its own timeout; failures automatically fall through to the next entry, and the success reply identifies the provider actually used. Piper runs fully offline with a fixed executable and ONNX model, then converts WAV to a 24 kHz mono MP3 through FFmpeg. MiMo calls `/chat/completions`; `WECLAW_MIMO_API_KEY` can inject the key into every configured MiMo provider. Removed flat `voice.base_url`, `voice.api_key`, `voice.model`, `voice.voice`, and legacy `voice.command` fields are rejected.
+
+Run `./scripts/install-piper.sh` to create an isolated Piper 1.4.1 environment and download `zh_CN-huayan-medium` under `~/.weclaw/tts/piper`. It requires `uv` and FFmpeg, does not modify the system Python, and prints the four absolute paths required by the provider configuration. WeClaw does not redistribute voice models; operators must review each model card and dataset license. The upstream model card currently marks the example Huayan dataset license as unknown.
 
 Visual controls are enabled by default and include five complete template systems: `刊物` uses paper, Chinese serif typography, and restrained red; `构筑` uses flat mineral surfaces and architectural order; `黑标` uses high-contrast black and white with champagne metal accents; `可爱` uses cream paper, rounded forms, and soft color blocks; `简洁` uses generous whitespace, hairlines, and pure information hierarchy. Each has an independent control-card and reading-card layout rather than a color swap. Send `视觉风格`, or use the main menu, to preview and switch. The choice is isolated per WeChat owner, persisted in strict v1 `~/.weclaw/visual-styles.json`, and restored after restart.
 
