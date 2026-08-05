@@ -108,6 +108,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	defer codex.Stop()
 	handler := messaging.NewHandler(codex)
+	controlStateStore, controlStateErr := messaging.NewControlStateStore("")
+	if controlStateErr != nil {
+		return fmt.Errorf("initialize persistent control state: %w", controlStateErr)
+	}
+	handler.SetControlStateStore(controlStateStore)
 	handler.SetProjectManager(projectManager)
 	preferenceStore, preferenceErr := preference.NewStore("")
 	if preferenceErr != nil {

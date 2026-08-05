@@ -50,6 +50,13 @@ type ActionResult struct {
 	Domain   ActionDomain
 	Text     string
 	Effect   ActionEffect
+	rollback *controlReceiptRollback
+}
+
+type controlReceiptRollback struct {
+	OwnerID   string
+	SourceKey string
+	State     controlState
 }
 
 func newActionResult(actionID string, domain ActionDomain, text string) ActionResult {
@@ -68,6 +75,9 @@ func effectActionResult(actionID string, domain ActionDomain, text string, kind 
 func (result ActionResult) validate() error {
 	if strings.TrimSpace(result.ActionID) == "" || !result.Domain.valid() {
 		return fmt.Errorf("action result identity is invalid")
+	}
+	if result.rollback != nil && result.Effect.Kind != EffectEnqueuePrompt && result.Effect.Kind != EffectRetryTask {
+		return fmt.Errorf("control receipt rollback is not allowed for this effect")
 	}
 	switch result.Effect.Kind {
 	case EffectNone:
@@ -98,5 +108,11 @@ func (result ActionResult) validate() error {
 func (result ActionResult) withIdentity(actionID string, domain ActionDomain) ActionResult {
 	result.ActionID = actionID
 	result.Domain = domain
+	return result
+}
+
+func (result ActionResult) withControlRollback(ownerID, sourceKey string, state controlState) ActionResult {
+	state.Options = append([]controlOption(nil), state.Options...)
+	result.rollback = &controlReceiptRollback{OwnerID: ownerID, SourceKey: sourceKey, State: state}
 	return result
 }

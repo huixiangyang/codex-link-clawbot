@@ -120,7 +120,7 @@ func (h *Handler) sendCachedVisualReply(ctx context.Context, client *ilink.Clien
 		return false
 	}
 	// 原文取回是独立控制意图；无论缓存是否存在，都不能落入旧菜单或启动 Codex turn。
-	h.controlStates.Delete(msg.FromUserID)
+	h.deleteControlState(msg.FromUserID)
 	value, ok := h.visualReplies.Load(msg.FromUserID)
 	if !ok {
 		h.sendVisualReplyExpired(ctx, client, msg, clientID)

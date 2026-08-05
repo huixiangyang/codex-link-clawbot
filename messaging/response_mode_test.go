@@ -22,12 +22,12 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := newTestHandler()
+	handler := newTestHandler(t)
 	handler.SetPreferenceStore(store)
 	handler.SetVisualRenderer(&fakeControlVisualRenderer{})
 	handler.SetVoiceBriefing(NewVoiceBriefing("/usr/bin/ffmpeg", nil))
 
-	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "语音模式", false)
+	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "语音模式", false, nextTestControlSource())
 	if !handled {
 		t.Fatal("response mode menu was not handled")
 	}
@@ -36,7 +36,7 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 			t.Fatalf("response mode menu missing %q: %q", want, menu.Text)
 		}
 	}
-	switched, handled := handler.handleControlInput(context.Background(), "owner-1", "3", false)
+	switched, handled := handler.handleControlInput(context.Background(), "owner-1", "3", false, nextTestControlSource())
 	if !handled || !strings.Contains(switched.Text, "回答方式已切换") || !strings.Contains(switched.Text, "当前：语音") {
 		t.Fatalf("voice mode switch = %q handled=%v", switched.Text, handled)
 	}
@@ -51,7 +51,7 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 		t.Fatalf("reloaded response mode = %q", got)
 	}
 
-	direct, handled := handler.handleControlInput(context.Background(), "owner-1", "关闭语音模式", false)
+	direct, handled := handler.handleControlInput(context.Background(), "owner-1", "关闭语音模式", false, nextTestControlSource())
 	if !handled || !strings.Contains(direct.Text, "当前：自适应") || store.Get("owner-1").ResponseMode != preference.ResponseAdaptive {
 		t.Fatalf("disable voice mode = %q handled=%v", direct.Text, handled)
 	}

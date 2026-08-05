@@ -335,7 +335,7 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 	if runtime.chatThreadID != "" {
 		t.Fatalf("copyable text request unexpectedly reached Codex thread %s", runtime.chatThreadID)
 	}
-	if _, exists := handler.controlStates.Load("owner-1"); exists {
+	if _, status, err := handler.controlStates.Load("owner-1"); err != nil || status != controlStateMissing {
 		t.Fatal("copyable text retrieval should clear the previous menu state")
 	}
 	if len(sent) != renderer.documentRenderCalls+2 {
@@ -377,7 +377,7 @@ func TestExpiredCopyableTextRequestNeverStartsCodexTurn(t *testing.T) {
 	if runtime.chatThreadID != "" {
 		t.Fatalf("expired copy request unexpectedly reached Codex thread %s", runtime.chatThreadID)
 	}
-	if _, exists := handler.controlStates.Load("owner-1"); exists {
+	if _, status, err := handler.controlStates.Load("owner-1"); err != nil || status != controlStateMissing {
 		t.Fatal("expired copy request should clear the previous menu state")
 	}
 	item := sent.Msg.ItemList[0].TextItem

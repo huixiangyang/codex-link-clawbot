@@ -127,7 +127,7 @@ func (h *Handler) lockRemote(userID string) string {
 	if h.remoteLock == nil || !h.remoteLock.Enabled() {
 		return "远程锁定未配置。请先在 security.remote_lock_code 设置解锁码并重启服务。"
 	}
-	h.controlStates.Delete(userID)
+	h.deleteControlState(userID)
 	queueWasPaused := false
 	if h.tasks != nil {
 		queueWasPaused = h.tasks.Status(userID).Paused

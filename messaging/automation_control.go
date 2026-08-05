@@ -69,7 +69,9 @@ func (h *Handler) openAutomations(userID string, pageNumber int) string {
 		fmt.Sprintf("计划：%d", len(statuses)),
 		"最近下次：" + nearestAutomationRun(statuses), "", renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewAutomationCenter, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
 }
 
@@ -107,7 +109,9 @@ func (h *Handler) openAutomation(userID, id string, pageNumber int) string {
 		"", renderControlOptions(options),
 	}
 	prompt := strings.Join(lines, "\n")
-	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: actionAutomations, Page: pageNumber})
+	if !h.storeChoiceWithBack(userID, viewAutomationDetail, options, controlOption{Action: actionAutomations, Page: pageNumber}) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字操作，0 返回自动化中心。"
 }
 
@@ -124,7 +128,9 @@ func (h *Handler) runAutomation(ctx context.Context, userID, id string, pageNumb
 		{Label: "返回自动化中心", Action: actionAutomations, Page: pageNumber},
 	}
 	prompt := result + "\n\n" + renderControlOptions(options)
-	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: actionAutomation, Value: id, Page: pageNumber})
+	if !h.storeChoiceWithBack(userID, viewAutomationResult, options, controlOption{Action: actionAutomation, Value: id, Page: pageNumber}) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回。"
 }
 

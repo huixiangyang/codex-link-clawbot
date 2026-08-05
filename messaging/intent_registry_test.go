@@ -71,7 +71,7 @@ func TestIntentRegistryRejectsPhraseAndPrefixConflicts(t *testing.T) {
 func TestIntentMetadataDeclaresSafetyBoundaries(t *testing.T) {
 	registry := mustDefaultIntentRegistry()
 	sessionSelect, ok := registry.Definition(IntentSessionSelect)
-	if !ok || !sessionSelect.MutatesState || sessionSelect.AllowDuringTask || !sessionSelect.AllowDuringDrain {
+	if !ok || !sessionSelect.MutatesState || !sessionSelect.RequiresReceipt || sessionSelect.AllowDuringTask || !sessionSelect.AllowDuringDrain {
 		t.Fatalf("session select metadata = %#v", sessionSelect)
 	}
 	voice, ok := registry.Definition(IntentVoiceBriefing)
@@ -81,5 +81,23 @@ func TestIntentMetadataDeclaresSafetyBoundaries(t *testing.T) {
 	lock, ok := registry.Definition(IntentRemoteLock)
 	if !ok || !lock.MutatesState || !lock.AllowDuringTask {
 		t.Fatalf("remote lock metadata = %#v", lock)
+	}
+}
+
+func TestIntentRegistryRejectsMutationWithoutReceipt(t *testing.T) {
+	_, err := NewIntentRegistry([]IntentDefinition{{
+		ID: "system.unsafe", Domain: DomainSystem, ExactPhrases: []string{"危险操作"},
+		MutatesState: true, AuditEvent: "unsafe",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "idempotency receipt") {
+		t.Fatalf("registry error = %v", err)
+	}
+}
+
+func TestReceiptIdentityCoversEveryDeclaredIntent(t *testing.T) {
+	for _, definition := range defaultIntentDefinitions() {
+		if definition.RequiresReceipt && !validControlReceiptIdentity(string(definition.ID), definition.Domain) {
+			t.Fatalf("receipt identity missing for %s", definition.ID)
+		}
 	}
 }

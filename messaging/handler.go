@@ -31,7 +31,7 @@ type Handler struct {
 	codex               codex.Runtime
 	contextTokens       sync.Map // map[userID]contextToken
 	saveDir             string   // Linkhoard archive directory
-	controlStates       sync.Map // map[userID]*controlState — 微信数字菜单和待输入状态
+	controlStates       *ControlStateStore
 	intents             *IntentRegistry
 	progress            ProgressConfig
 	projects            *project.Manager
@@ -66,6 +66,11 @@ func (h *Handler) SetSessionManager(manager *session.Manager) {
 			return h.projects.Current(ownerID).ID
 		})
 	}
+}
+
+// SetControlStateStore 注入持久菜单 revision 存储；运行时必须显式配置。
+func (h *Handler) SetControlStateStore(store *ControlStateStore) {
+	h.controlStates = store
 }
 
 // SetProjectManager 注入项目白名单，并让会话归属跟随当前项目切换。
@@ -193,6 +198,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 
 	trimmed := strings.TrimSpace(text)
 	clientID := NewClientID()
+	controlSourceKey, _ := sourceMessageKey(client, msg)
 	if h.remoteLock != nil && h.remoteLock.IsLocked(msg.FromUserID) {
 		reply := h.handleLockedInput(msg.FromUserID, trimmed)
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
@@ -205,12 +211,20 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	}
 
 	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
-	if result, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0); handled {
+	if result, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0, controlSourceKey); handled {
 		if err := h.presentActionResult(ctx, client, msg, result, clientID); err != nil {
 			log.Printf("[handler] failed to present action result to %s: %v", userLabel, err)
 			// 入队和重试使用持久来源键，失败可以安全交给微信长轮询重投。
 			// 其他控制动作可能已经修改本地状态，投递失败不能再次执行。
 			if result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask {
+				if result.rollback != nil && h.controlStates != nil {
+					if rollbackErr := h.controlStates.RollbackConsumedReceipt(
+						result.rollback.OwnerID, result.rollback.SourceKey, result.rollback.State,
+					); rollbackErr != nil {
+						logControlStateError(msg.FromUserID, rollbackErr)
+						return fmt.Errorf("present action result: %w; restore control receipt: %v", err, rollbackErr)
+					}
+				}
 				return err
 			}
 		}

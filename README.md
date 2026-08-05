@@ -166,7 +166,7 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 ## WeChat interaction
 
-The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation. Menu state expires after ten minutes, and an expired number remains ordinary Codex input.
+The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation and process restarts. Menu revisions expire after ten minutes; expired numbers and navigation phrases are explicitly rejected and never become Codex prompts.
 
 The idle home card has only four primary actions: project, session, task center, and more. While a task is active it changes to current task, task center, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `任务中心`, `暂停队列`, `继续队列`, `回答方式`, `开启语音模式`, `阅读模式`, `自适应模式`, `自动化`, `素材箱`, `交付记录`, `语音简报` or the shorter `发语音`, `远程锁定`, `状态`, and `取消`. `发语音` creates one briefing; `开启语音模式` persists paired image-and-MP3 delivery for subsequent Codex replies. Audio delivery requires the current inbound `context_token`; out-of-conversation delivery is rejected instead of reporting a false success.
 
@@ -182,7 +182,7 @@ Owners can persist one of three response modes. `adaptive` sends short replies a
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected by the control layer and is never forwarded to Codex.
 
-Natural controls are resolved by a deterministic Intent Registry before entering one of eight domain controllers. Normalized phrase and prefix conflicts fail during registry construction; unmatched text remains a Codex prompt. Controllers return only validated `ActionResult` values, and the Presenter is the sole boundary for WeChat delivery, queueing, retry, frozen-text recovery, archived media, and voice briefings. The former cross-message side-effect maps and cross-domain routing switches are removed. Numbered menu state is still memory-only in this batch and will move directly to persistent revisions in the next v2.6 batch.
+Natural controls are resolved by a deterministic Intent Registry before entering one of eight domain controllers. Normalized phrase and prefix conflicts fail during registry construction; unmatched text remains a Codex prompt. Controllers return only validated `ActionResult` values, and the Presenter is the sole boundary for WeChat delivery, queueing, retry, frozen-text recovery, archived media, and voice briefings. The former cross-message side-effect maps and cross-domain routing switches are removed. Numbered menus and pending inputs now use strict persistent revisions; mutating or externally visible actions require a stable WeChat source receipt and use conservative at-most-once replay semantics.
 
 ## Media and proactive delivery
 
@@ -207,6 +207,7 @@ curl -X POST http://127.0.0.1:18011/api/send \
 - `~/.weclaw/session-index.json` uses strict v3 project-scoped active threads. The strict v1 task tree under `~/.weclaw/tasks/` replaces `task-history.json` and separates sanitized index metadata from private requests and frozen delivery results.
 - All domain JSON state uses the shared `statefile` transaction kernel: files are `0600`, directories are `0700`, symlinks and oversized input are rejected, and a failed directory sync restores the prior file. Runtime and offline migration hold mutually exclusive state leases.
 - Account credentials use strict v1 JSON. Offline deployment migration adds `version: 1` once; unknown fields, mismatched filenames, and damaged credentials now fail startup instead of being silently skipped.
+- `~/.weclaw/control-state.json` uses strict v1 revisions for restart-safe menus and 24-hour minimal control receipts. Display text, prompts, paths, attachment names, tokens, and context tokens are never persisted there.
 - `~/.weclaw/preferences.json` uses strict v1 JSON, atomic replacement, mode `0600`, and per-owner response-mode and style isolation.
 - Global Codex thread results are intersected with the local ownership index before display.
 - Raw terminal output, commands, diffs, and environment variables are never forwarded as progress messages.
@@ -232,6 +233,7 @@ More details:
 - [v2.6 reliable control plane and state-kernel plan](docs/v2.6-control-plane.md)
 - [v2.6 unified state-kernel implementation](docs/v2.6-state-kernel.md)
 - [v2.6 typed control routing implementation](docs/v2.6-control-routing.md)
+- [v2.6 persistent interaction and control receipts](docs/v2.6-persistent-control.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

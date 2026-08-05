@@ -112,6 +112,7 @@ func newSessionHandler(t *testing.T) (*Handler, *handlerThreadClient) {
 	t.Helper()
 	threadAgent := newHandlerThreadClient()
 	handler := NewHandler(threadAgent)
+	attachTestControlState(t, handler)
 	attachTestSessionManager(t, handler)
 	return handler, threadAgent
 }
@@ -127,7 +128,7 @@ func attachTestSessionManager(t *testing.T, handler *Handler) {
 
 func controlReply(t *testing.T, handler *Handler, ownerID, text string) string {
 	t.Helper()
-	reply, handled := handler.handleControlInput(context.Background(), ownerID, text, false)
+	reply, handled := handler.handleControlInput(context.Background(), ownerID, text, false, nextTestControlSource())
 	if !handled {
 		t.Fatalf("control input %q was not handled", text)
 	}
@@ -180,6 +181,27 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 	restored := controlReply(t, handler, "owner-1", "1")
 	if !strings.Contains(restored, "会话已恢复") {
 		t.Fatalf("restore reply = %q", restored)
+	}
+}
+
+func TestMutatingIntentReceiptPreventsDuplicateSessionCreation(t *testing.T) {
+	handler, runtime := newSessionHandler(t)
+	sourceKey := nextTestControlSource()
+	first, handled := handler.handleControlInput(context.Background(), "owner-1", "新建会话 幂等检查", false, sourceKey)
+	if !handled || !strings.Contains(first.Text, "已创建并切换") || runtime.next != 1 {
+		t.Fatalf("first session creation = %#v, handled=%v next=%d", first, handled, runtime.next)
+	}
+	duplicate, handled := handler.handleControlInput(context.Background(), "owner-1", "新建会话 幂等检查", false, sourceKey)
+	if !handled || !strings.Contains(duplicate.Text, "不会重复执行") || runtime.next != 1 {
+		t.Fatalf("duplicate session creation = %#v, handled=%v next=%d", duplicate, handled, runtime.next)
+	}
+}
+
+func TestMutatingIntentRejectsMissingStableSource(t *testing.T) {
+	handler, runtime := newSessionHandler(t)
+	result, handled := handler.handleControlInput(context.Background(), "owner-1", "新建会话 无来源", false, "")
+	if !handled || !strings.Contains(result.Text, "没有稳定来源编号") || runtime.next != 0 {
+		t.Fatalf("missing source mutation = %#v, handled=%v next=%d", result, handled, runtime.next)
 	}
 }
 
@@ -431,24 +453,26 @@ func TestSessionCompletionPrefersAnExactTitle(t *testing.T) {
 func TestControlChoiceDoesNotConsumeOrdinaryCodexText(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	_ = controlReply(t, handler, "owner-1", "/")
-	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "请检查项目测试", false); handled || reply != (ActionResult{}) {
+	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "请检查项目测试", false, nextTestControlSource()); handled || reply != (ActionResult{}) {
 		t.Fatalf("ordinary text should leave menu and reach Codex: reply=%#v handled=%v", reply, handled)
 	}
-	if _, exists := handler.controlStates.Load("owner-1"); exists {
+	if _, status, err := handler.controlStates.Load("owner-1"); err != nil || status != controlStateMissing {
 		t.Fatal("ordinary text should clear the pending menu")
 	}
 }
 
-func TestExpiredControlStateDoesNotConsumeNumber(t *testing.T) {
+func TestExpiredControlStateRejectsNumber(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	handler.controlStates.Store("owner-1", &controlState{
-		Mode: controlChoice, Prompt: "expired", ExpiresAt: time.Now().Add(-time.Second),
-		Options: []controlOption{{Label: "会话", Action: actionSessionMenu}},
-	})
-	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false); handled || reply != (ActionResult{}) {
-		t.Fatalf("expired state should not consume a number: reply=%#v handled=%v", reply, handled)
+	if _, err := handler.controlStates.Put("owner-1", controlState{
+		View: "session.center", Mode: controlChoice, ExpiresAt: time.Now().Add(-time.Second),
+		Options: []controlOption{{Action: actionSessionMenu}}, Back: controlOption{Action: actionMain},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if _, exists := handler.controlStates.Load("owner-1"); exists {
+	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, nextTestControlSource()); !handled || !strings.Contains(reply.Text, "操作已经过期") {
+		t.Fatalf("expired state result: reply=%#v handled=%v", reply, handled)
+	}
+	if _, status, err := handler.controlStates.Load("owner-1"); err != nil || status != controlStateMissing {
 		t.Fatal("expired control state was not removed")
 	}
 }

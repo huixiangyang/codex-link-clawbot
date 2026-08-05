@@ -23,7 +23,9 @@ func (h *Handler) openLibraryCenter(userID string) string {
 		"Codex 新交付物会保存私有副本，之后可从微信再次发送。",
 		"", renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMore)
+	if !h.storeChoice(userID, viewLibraryCenter, options, actionMore) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字查看，0 返回更多功能。"
 }
 
@@ -67,7 +69,9 @@ func (h *Handler) openLibraryPage(userID string, kind LibraryKind, pageNumber in
 	prompt := strings.Join([]string{
 		title, "", fmt.Sprintf("页码：%d / %d", pageNumber, totalPages), fmt.Sprintf("记录：%d", len(records)), "", renderControlOptions(options),
 	}, "\n")
-	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: actionLibraryCenter})
+	if !h.storeChoiceWithBack(userID, viewLibraryPage, options, controlOption{Action: actionLibraryCenter}) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字查看详情，0 返回素材与交付中心。"
 }
 
@@ -93,7 +97,9 @@ func (h *Handler) openLibraryDetail(userID, id string, kind LibraryKind, pageNum
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
-	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: actionLibraryPage, Query: string(kind), Page: pageNumber})
+	if !h.storeChoiceWithBack(userID, viewLibraryDetail, options, controlOption{Action: actionLibraryPage, Query: string(kind), Page: pageNumber}) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字操作，0 返回原列表。"
 }
 
@@ -107,7 +113,9 @@ func (h *Handler) resendDelivery(userID, id string, pageNumber int) ActionResult
 	}
 	options := []controlOption{{Label: "返回交付记录", Action: actionLibraryPage, Query: string(LibraryDelivery), Page: pageNumber}}
 	prompt := "交付物已再次发送\n\n名称：" + record.Title + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionLibraryCenter)
+	if !h.storeChoice(userID, viewLibraryResult, options, actionLibraryCenter) {
+		return newActionResult(string(actionResendDelivery), DomainLibrary, controlStateFailureResult().Text)
+	}
 	return effectActionResult(string(actionResendDelivery), DomainLibrary, prompt+"\n\n回复数字继续，0 返回。", EffectSendMedia, record.FilePath)
 }
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/huixiangyang/weclaw/config"
+	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/taskqueue"
@@ -34,13 +35,18 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	if stats := handler.sessions.Stats("owner-1"); stats.Active != 0 || stats.HasCurrent {
 		t.Fatalf("beta sessions leaked alpha state: %#v", stats)
 	}
-	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "快捷任务", false)
+	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "快捷任务", false, nextTestControlSource())
 	if !handled || !strings.Contains(menu.Text, "审查改动") {
 		t.Fatalf("quick task menu = %q, %v", menu.Text, handled)
 	}
-	reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false)
+	quickTaskSource := nextTestControlSource()
+	reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, quickTaskSource)
 	if !handled || reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查当前项目改动" {
 		t.Fatalf("quick task action = %#v, %v", reply, handled)
+	}
+	duplicate, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, quickTaskSource)
+	if !handled || duplicate.Effect.Kind != EffectNone || !strings.Contains(duplicate.Text, "不会重复执行") {
+		t.Fatalf("duplicate quick task action = %#v, %v", duplicate, handled)
 	}
 }
 
@@ -83,6 +89,43 @@ func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *test
 	}
 	if reply := handler.runProjectQuickTask("owner-1", "review"); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" {
 		t.Fatalf("quick task while running = %#v", reply)
+	}
+}
+
+func TestQuickTaskQueueFailureRestoresMenuRevision(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	projects, err := project.NewManager([]config.ProjectConfig{{
+		ID: "alpha", Name: "Alpha", Root: t.TempDir(),
+		QuickTasks: []config.QuickTaskConfig{{ID: "review", Name: "审查改动", Prompt: "审查当前项目改动"}},
+	}}, filepath.Join(t.TempDir(), "project-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.SetProjectManager(projects)
+	_ = controlReply(t, handler, "owner-1", "快捷任务")
+	before, status, err := handler.controlStates.Load("owner-1")
+	if err != nil || status != controlStateActive {
+		t.Fatalf("quick task menu = %#v, status=%v err=%v", before, status, err)
+	}
+	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1"})
+	message := ilink.WeixinMessage{
+		MessageID: 8801, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
+		MessageState: ilink.MessageStateFinish, ContextToken: "context",
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "1"}}},
+	}
+	if err := handler.HandleMessage(context.Background(), client, message); err == nil || !strings.Contains(err.Error(), "task queue is not initialized") {
+		t.Fatalf("HandleMessage() error = %v", err)
+	}
+	after, status, err := handler.controlStates.Load("owner-1")
+	if err != nil || status != controlStateActive || after.Revision != before.Revision {
+		t.Fatalf("restored quick task menu = %#v, status=%v err=%v", after, status, err)
+	}
+	sourceKey, err := sourceMessageKey(client, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := handler.controlStates.FindReceipt("owner-1", sourceKey); exists {
+		t.Fatal("failed quick task kept its control receipt")
 	}
 }
 

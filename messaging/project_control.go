@@ -47,7 +47,9 @@ func (h *Handler) openProjectCenter(userID string) string {
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewProjectCenter, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字切换项目，0 返回。"
 }
 
@@ -64,7 +66,9 @@ func (h *Handler) openProjectQuickTasks(userID string) string {
 		options = append(options, controlOption{Label: task.Name, Action: actionRunQuickTask, Value: task.ID})
 	}
 	prompt := "快捷任务\n\n项目：" + current.Name + "\n选择后立即交给 Codex 执行。\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionProjectCenter)
+	if !h.storeChoice(userID, viewProjectQuickTasks, options, actionProjectCenter) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字执行，0 返回项目中心。"
 }
 
@@ -78,7 +82,7 @@ func (h *Handler) runProjectQuickTask(userID, taskID string) ActionResult {
 		return newActionResult(string(actionRunQuickTask), DomainProject, "快捷任务已经变化。发送“快捷任务”刷新列表。")
 	}
 	// 菜单请求由当前微信消息继续执行，避免要求用户再复制或确认提示词。
-	h.controlStates.Delete(userID)
+	h.deleteControlState(userID)
 	return effectActionResult(string(actionRunQuickTask), DomainProject, "", EffectEnqueuePrompt, task.Prompt)
 }
 
@@ -117,7 +121,9 @@ func (h *Handler) selectProject(userID, reference string) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionProjectCenter)
+	if !h.storeChoice(userID, viewProjectResult, options, actionProjectCenter) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n下一条内容将在这个项目中执行；回复数字继续，0 返回。"
 }
 

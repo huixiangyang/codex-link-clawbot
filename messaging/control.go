@@ -15,6 +15,7 @@ import (
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/preference"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/huixiangyang/weclaw/visual"
 )
 
@@ -96,12 +97,14 @@ type controlOption struct {
 	Archived bool
 	Query    string
 	AutoUse  bool
+	Navigate controlNavigation
 }
 
 // controlState 只保存短期微信交互上下文，不承担任务或会话持久化。
 type controlState struct {
+	Revision  string
+	View      controlView
 	Mode      controlMode
-	Prompt    string
 	Options   []controlOption
 	Back      controlOption
 	ExpiresAt time.Time
@@ -114,27 +117,41 @@ type sessionMatch struct {
 
 // handleControlInput 解析菜单、数字回复和高置信度中文控制意图。
 // 返回 handled=false 时，原始消息必须原样交给 Codex，不能静默吞掉。
-func (h *Handler) handleControlInput(ctx context.Context, userID, text string, hasAttachments bool) (ActionResult, bool) {
+func (h *Handler) handleControlInput(ctx context.Context, userID, text string, hasAttachments bool, sourceKey string) (ActionResult, bool) {
 	text = strings.TrimSpace(text)
 	registry := h.intents
 	if registry == nil {
 		registry = mustDefaultIntentRegistry()
 	}
+	if h.controlStates != nil && strings.TrimSpace(sourceKey) != "" {
+		if receipt, exists := h.controlStates.FindReceipt(userID, sourceKey); exists {
+			return duplicateControlResult(receipt.ActionID, receipt.Domain), true
+		}
+	}
 	if hasAttachments {
-		h.controlStates.Delete(userID)
+		if !h.deleteControlState(userID) {
+			return controlStateFailureResult(), true
+		}
 		if resolved, ok := registry.Resolve(text); ok && resolved.Definition.AllowAttachments {
-			return h.dispatchIntent(ctx, userID, resolved), true
+			return h.dispatchIntent(ctx, userID, resolved, sourceKey), true
 		}
 		return ActionResult{}, false
 	}
 
 	if resolved, ok := registry.Resolve(text); ok &&
 		(resolved.Definition.ID == IntentCancel || resolved.Definition.ID == IntentMenu) {
-		return h.dispatchIntent(ctx, userID, resolved), true
+		return h.dispatchIntent(ctx, userID, resolved, sourceKey), true
 	}
 
-	if state, ok := h.loadControlState(userID); ok {
-		if result, handled := h.handlePendingControl(ctx, userID, text, state); handled {
+	state, status, err := h.loadControlState(userID)
+	if err != nil {
+		return controlStateFailureResult(), true
+	}
+	if status == controlStateExpired && isControlContinuation(text) {
+		return newActionResult("system.control_expired", DomainSystem, "这个操作已经过期。发送 / 重新打开菜单。"), true
+	}
+	if status == controlStateActive {
+		if result, handled := h.handlePendingControl(ctx, userID, text, state, sourceKey); handled {
 			return result, true
 		}
 	}
@@ -149,22 +166,48 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	}
 
 	if resolved, ok := registry.Resolve(text); ok {
-		return h.dispatchIntent(ctx, userID, resolved), true
+		return h.dispatchIntent(ctx, userID, resolved, sourceKey), true
 	}
 	return ActionResult{}, false
 }
 
-func (h *Handler) handlePendingControl(ctx context.Context, userID, text string, state *controlState) (ActionResult, bool) {
+func (h *Handler) handlePendingControl(ctx context.Context, userID, text string, state *controlState, sourceKey string) (ActionResult, bool) {
 	systemResult := func(text string) ActionResult {
 		return newActionResult("system.control_input", DomainSystem, text)
 	}
 	sessionResult := func(actionID, text string) ActionResult {
 		return newActionResult(actionID, DomainSession, text)
 	}
+	consume := func(actionID string, domain ActionDomain, receiptRequired bool, alreadyHandled string) (bool, ActionResult) {
+		var ok, duplicate bool
+		var err error
+		if receiptRequired {
+			if h.controlStates == nil {
+				return false, controlStateFailureResult()
+			}
+			if strings.TrimSpace(sourceKey) == "" {
+				return false, newActionResult(actionID, domain, "这条微信消息没有稳定来源编号，无法安全执行控制操作。")
+			}
+			ok, duplicate, err = h.controlStates.ConsumeAndReserve(userID, state.Revision, sourceKey, actionID, domain)
+		} else {
+			ok, err = h.consumeControlState(userID, state)
+		}
+		if err != nil {
+			logControlStateError(userID, err)
+			return false, controlStateFailureResult()
+		}
+		if duplicate {
+			return false, duplicateControlResult(actionID, domain)
+		}
+		if !ok {
+			return false, systemResult(alreadyHandled)
+		}
+		return true, ActionResult{}
+	}
 
 	if isOneOf(text, "返回", "回到菜单") {
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return systemResult("操作状态已经变化。发送 / 重新打开菜单。"), true
+		if ok, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !ok {
+			return failure, true
 		}
 		return h.executeControlAction(ctx, userID, state.Back), true
 	}
@@ -174,31 +217,38 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		choice, err := strconv.Atoi(text)
 		if err != nil {
 			if option, ok := controlNavigationOption(text, state.Options); ok {
-				if !h.controlStates.CompareAndDelete(userID, state) {
-					return systemResult("操作状态已经变化。发送 / 重新打开菜单。"), true
+				if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !consumed {
+					return failure, true
 				}
 				return h.executeControlAction(ctx, userID, option), true
 			}
 			// 非数字内容退出选择态，继续尝试自然语言；普通内容最终进入 Codex。
-			h.controlStates.CompareAndDelete(userID, state)
+			if _, consumeErr := h.consumeControlState(userID, state); consumeErr != nil {
+				return controlStateFailureResult(), true
+			}
 			return ActionResult{}, false
 		}
 		if choice == 0 {
-			if !h.controlStates.CompareAndDelete(userID, state) {
-				return systemResult("操作状态已经变化。发送 / 重新打开菜单。"), true
+			if consumed, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
 			}
 			return h.executeControlAction(ctx, userID, state.Back), true
 		}
 		if choice < 1 || choice > len(state.Options) {
-			return systemResult(state.Prompt + fmt.Sprintf("\n\n请输入 1-%d，或回复 0 返回。", len(state.Options))), true
+			return systemResult(fmt.Sprintf("请输入 1-%d，或回复 0 返回。", len(state.Options))), true
 		}
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return systemResult("这个选项已经处理。发送 / 重新打开菜单。"), true
+		option := state.Options[choice-1]
+		if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), controlActionRequiresReceipt(option.Action), "这个选项已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
 		}
-		return h.executeControlAction(ctx, userID, state.Options[choice-1]), true
+		result := h.executeControlAction(ctx, userID, option)
+		if result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask {
+			result = result.withControlRollback(userID, sourceKey, *state)
+		}
+		return result, true
 	case controlNewSessionName:
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
+		if consumed, failure := consume(string(IntentSessionNew), DomainSession, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
 		}
 		if h.hasActiveTask(userID) {
 			return sessionResult(string(IntentSessionNew), mutationBusyText()), true
@@ -209,13 +259,13 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		return sessionResult(string(IntentSessionNew), h.createSession(ctx, userID, text)), true
 	case controlRenameSession:
 		if text == "0" {
-			if !h.controlStates.CompareAndDelete(userID, state) {
-				return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
+			if consumed, failure := consume(string(IntentSessionCenter), DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
 			}
 			return sessionResult(string(IntentSessionCenter), h.openSessionMenu(ctx, userID)), true
 		}
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
+		if consumed, failure := consume(string(IntentSessionRename), DomainSession, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
 		}
 		if h.hasActiveTask(userID) {
 			return sessionResult(string(IntentSessionRename), mutationBusyText()), true
@@ -223,17 +273,19 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		return sessionResult(string(IntentSessionRename), h.renameSession(ctx, userID, text)), true
 	case controlSessionSearch:
 		if text == "0" {
-			if !h.controlStates.CompareAndDelete(userID, state) {
-				return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
+			if consumed, failure := consume(string(IntentSessionCenter), DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
 			}
 			return sessionResult(string(IntentSessionCenter), h.openSessionMenu(ctx, userID)), true
 		}
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return systemResult("这个操作已经处理。发送 / 重新打开菜单。"), true
+		if consumed, failure := consume(string(IntentSessionSearch), DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
 		}
 		return sessionResult(string(IntentSessionSearch), h.openSessionBrowser(ctx, userID, false, text)), true
 	default:
-		h.controlStates.Delete(userID)
+		if !h.deleteControlState(userID) {
+			return controlStateFailureResult(), true
+		}
 		return ActionResult{}, false
 	}
 }
@@ -290,7 +342,9 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
-	h.storeChoice(userID, prompt, options, actionExit)
+	if !h.storeChoice(userID, viewSystemMain, options, actionExit) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字即可，0 退出。"
 }
 
@@ -306,7 +360,9 @@ func (h *Handler) openTaskStatus(userID string) string {
 	}
 	options = append(options, controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1})
 	prompt := h.buildTaskStatus(userID) + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewTaskStatus, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字操作，0 返回。"
 }
 
@@ -316,7 +372,9 @@ func (h *Handler) confirmCancelTask(userID string) string {
 	}
 	options := []controlOption{{Label: "确认取消任务", Action: actionCancelTask}}
 	prompt := "准备取消当前任务\n\n取消后，本次迟到的进度和最终结果都不会发送。\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionTaskStatus)
+	if !h.storeChoice(userID, viewTaskCancelConfirm, options, actionTaskStatus) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复 1 确认，0 返回任务状态。"
 }
 
@@ -326,7 +384,9 @@ func (h *Handler) openRuntimeInfo(userID string) string {
 		{Label: "刷新运行中心", Action: actionRuntimeInfo},
 	}
 	prompt := h.buildStatus() + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewSystemRuntime, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字操作，0 返回。"
 }
 
@@ -345,7 +405,9 @@ func (h *Handler) openMoreMenu(userID string) string {
 	}
 	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
 	prompt := "更多功能\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewSystemMore, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字操作，0 返回。"
 }
 
@@ -358,7 +420,9 @@ func (h *Handler) openGuide(userID string) string {
 		options = append(options, controlOption{Label: "偏好设置", Action: actionResponseModes})
 	}
 	prompt := "使用说明\n\n" + controlGuide() + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewSystemGuide, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回。"
 }
 
@@ -397,7 +461,9 @@ func (h *Handler) openResponseModes(userID string) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewPreferenceResponse, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字切换，0 返回。"
 }
 
@@ -428,7 +494,9 @@ func (h *Handler) setResponseMode(userID string, mode preference.ResponseMode) s
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewPreferenceResponse, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回。"
 }
 
@@ -452,7 +520,9 @@ func (h *Handler) openVisualStyles(userID string) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionResponseModes)
+	if !h.storeChoice(userID, viewPreferenceVisual, options, actionResponseModes) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字切换并查看效果，0 返回。"
 }
 
@@ -481,7 +551,9 @@ func (h *Handler) setVisualStyle(userID string, style visual.Style) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionResponseModes)
+	if !h.storeChoice(userID, viewPreferenceVisual, options, actionResponseModes) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n当前卡片就是新风格预览；回复数字继续，0 返回。"
 }
 
@@ -514,7 +586,9 @@ func (h *Handler) openSessionMenu(ctx context.Context, userID string) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewSessionCenter, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字即可，0 返回。"
 }
 
@@ -531,7 +605,9 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 				{Label: "恢复已归档会话", Action: actionPickArchivedSession},
 			}
 			prompt := "当前没有会话。发送普通内容会自动创建，也可以现在管理。\n\n" + renderControlOptions(options)
-			h.storeChoice(userID, prompt, options, actionSessionMenu)
+			if !h.storeChoice(userID, viewSessionCurrent, options, actionSessionMenu) {
+				return controlStateFailureResult().Text
+			}
 			return prompt + "\n\n回复数字即可，0 返回。"
 		}
 		return formatSessionError(err)
@@ -542,7 +618,9 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 		{Label: "归档当前会话", Action: actionConfirmArchive},
 	}
 	prompt := formatSessionDetail("当前会话", current) + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionCurrent, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字管理，0 返回。"
 }
 
@@ -651,13 +729,17 @@ func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, arch
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionList, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字，或直接说“下一页”“上一页”；0 返回。"
 }
 
 func (h *Handler) promptSessionSearch(userID string) string {
 	prompt := "搜索会话\n\n发送名称、短编号或记得的连续字符，回复 0 返回。"
-	h.storeInput(userID, controlSessionSearch, prompt, actionSessionMenu)
+	if !h.storeInput(userID, viewSessionSearchInput, controlSessionSearch, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt
 }
 
@@ -708,7 +790,9 @@ func (h *Handler) sessionDetail(ctx context.Context, userID string, source contr
 		title = "归档会话详情"
 	}
 	prompt := formatSessionDetail(title, detail) + "\n\n" + renderControlOptions(options)
-	h.storeChoiceWithBack(userID, prompt, options, back)
+	if !h.storeChoiceWithBack(userID, viewSessionDetail, options, back) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字管理，0 返回原列表。"
 }
 
@@ -730,7 +814,9 @@ func (h *Handler) confirmArchiveSession(ctx context.Context, userID string, sour
 	}
 	options := []controlOption{{Label: "确认归档这个会话", Action: actionArchiveItem, Value: detail.Info.ID}}
 	prompt := "准备归档会话：" + threadTitle(detail.Info) + "\n\n归档后可从“恢复已归档会话”找回。\n\n" + renderControlOptions(options)
-	h.storeChoiceWithBack(userID, prompt, options, back)
+	if !h.storeChoiceWithBack(userID, viewSessionArchive, options, back) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复 1 确认，0 返回会话详情。"
 }
 
@@ -757,7 +843,9 @@ func (h *Handler) archiveSessionUnlocked(ctx context.Context, userID, threadID s
 		{Label: "恢复已归档会话", Action: actionPickArchivedSession},
 	}
 	prompt := "会话已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回会话中心。"
 }
 
@@ -788,13 +876,17 @@ func paginateManagedThreads(items []session.ManagedThread, pageNumber, pageSize 
 
 func (h *Handler) promptNewSessionName(userID string) string {
 	prompt := "新建会话\n\n发送会话名称；回复 0 或“跳过”可创建未命名会话。"
-	h.storeInput(userID, controlNewSessionName, prompt, actionSessionMenu)
+	if !h.storeInput(userID, viewSessionNewInput, controlNewSessionName, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt
 }
 
 func (h *Handler) promptRenameSession(userID string) string {
 	prompt := "重命名会话\n\n发送新的会话名称，回复 0 返回。"
-	h.storeInput(userID, controlRenameSession, prompt, actionSessionMenu)
+	if !h.storeInput(userID, viewSessionRenameInput, controlRenameSession, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt
 }
 
@@ -865,7 +957,9 @@ func (h *Handler) confirmArchiveCurrent(ctx context.Context, userID string) stri
 	}
 	options := []controlOption{{Label: "确认归档", Action: actionArchiveCurrent}}
 	prompt := "准备归档会话：" + threadTitle(current.Info) + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionArchive, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复 1 确认，0 返回。"
 }
 
@@ -888,7 +982,9 @@ func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID stri
 			{Label: "恢复已归档会话", Action: actionPickArchivedSession},
 		}
 		prompt := "会话已归档。\n当前：未创建\n\n下一条普通消息会自动创建新会话。\n\n" + renderControlOptions(options)
-		h.storeChoice(userID, prompt, options, actionSessionMenu)
+		if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
+			return controlStateFailureResult().Text
+		}
 		return prompt + "\n\n回复数字继续，0 返回会话中心。"
 	}
 	currentName := session.ShortCode(nextActive)
@@ -901,7 +997,9 @@ func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID stri
 		{Label: "会话中心", Action: actionSessionMenu},
 	}
 	prompt := "会话已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回会话中心。"
 }
 
@@ -930,7 +1028,9 @@ func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID s
 	}
 	options = append(options, controlOption{Label: "会话中心", Action: actionSessionMenu})
 	prompt := "会话已恢复。\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回会话中心。"
 }
 
@@ -941,39 +1041,93 @@ func (h *Handler) sessionSuccess(userID, headline string, thread codex.ThreadInf
 		{Label: "会话中心", Action: actionSessionMenu},
 	}
 	prompt := headline + "\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionSessionMenu)
+	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，或直接发送内容开始对话；0 返回会话中心。"
 }
 
-func (h *Handler) storeChoice(userID, prompt string, options []controlOption, back controlAction) {
-	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: back})
+func (h *Handler) storeChoice(userID string, view controlView, options []controlOption, back controlAction) bool {
+	return h.storeChoiceWithBack(userID, view, options, controlOption{Action: back})
 }
 
 // storeChoiceWithBack 为分页详情保留完整返回位置，避免移动端反复翻页。
-func (h *Handler) storeChoiceWithBack(userID, prompt string, options []controlOption, back controlOption) {
-	h.controlStates.Store(userID, &controlState{
-		Mode: controlChoice, Prompt: prompt, Options: append([]controlOption(nil), options...),
+func (h *Handler) storeChoiceWithBack(userID string, view controlView, options []controlOption, back controlOption) bool {
+	if h.controlStates == nil {
+		log.Printf("[control] persistent state store is unavailable for %s", ilink.LogLabel(userID))
+		return false
+	}
+	state := controlState{
+		View: view,
+		Mode: controlChoice, Options: append([]controlOption(nil), options...),
 		Back: back, ExpiresAt: time.Now().Add(controlStateTTL),
-	})
+	}
+	if _, err := h.controlStates.Put(userID, state); err != nil {
+		logControlStateError(userID, err)
+		return false
+	}
+	return true
 }
 
-func (h *Handler) storeInput(userID string, mode controlMode, prompt string, back controlAction) {
-	h.controlStates.Store(userID, &controlState{
-		Mode: mode, Prompt: prompt, Back: controlOption{Action: back}, ExpiresAt: time.Now().Add(controlStateTTL),
-	})
+func (h *Handler) storeInput(userID string, view controlView, mode controlMode, back controlAction) bool {
+	if h.controlStates == nil {
+		log.Printf("[control] persistent state store is unavailable for %s", ilink.LogLabel(userID))
+		return false
+	}
+	state := controlState{
+		View: view,
+		Mode: mode, Back: controlOption{Action: back}, ExpiresAt: time.Now().Add(controlStateTTL),
+	}
+	if _, err := h.controlStates.Put(userID, state); err != nil {
+		logControlStateError(userID, err)
+		return false
+	}
+	return true
 }
 
-func (h *Handler) loadControlState(userID string) (*controlState, bool) {
-	value, ok := h.controlStates.Load(userID)
-	if !ok {
-		return nil, false
+func (h *Handler) loadControlState(userID string) (*controlState, controlStateStatus, error) {
+	if h.controlStates == nil {
+		return nil, controlStateMissing, nil
 	}
-	state, ok := value.(*controlState)
-	if !ok || time.Now().After(state.ExpiresAt) {
-		h.controlStates.CompareAndDelete(userID, value)
-		return nil, false
+	return h.controlStates.Load(userID)
+}
+
+func (h *Handler) consumeControlState(userID string, state *controlState) (bool, error) {
+	if h.controlStates == nil || state == nil {
+		return false, nil
 	}
-	return state, true
+	deleted, err := h.controlStates.CompareAndDelete(userID, state.Revision)
+	if err != nil {
+		logControlStateError(userID, err)
+	}
+	return deleted, err
+}
+
+func (h *Handler) deleteControlState(userID string) bool {
+	if h.controlStates == nil {
+		return true
+	}
+	if err := h.controlStates.Delete(userID); err != nil {
+		logControlStateError(userID, err)
+		return false
+	}
+	return true
+}
+
+func logControlStateError(userID string, err error) {
+	log.Printf("[control] persistent state failed category=%s for %s", statefile.ErrorCategory(err), ilink.LogLabel(userID))
+}
+
+func controlStateFailureResult() ActionResult {
+	return newActionResult("system.control_unavailable", DomainSystem, "操作状态暂不可用。请稍后重新发送 /。")
+}
+
+func isControlContinuation(text string) bool {
+	text = strings.TrimSpace(text)
+	if _, err := strconv.Atoi(text); err == nil {
+		return true
+	}
+	return isOneOf(text, "返回", "回到菜单", "下一页", "下页", "往后", "后面", "上一页", "上页", "往前", "前面")
 }
 
 func (h *Handler) hasActiveTask(userID string) bool {
@@ -1002,10 +1156,10 @@ func controlNavigationOption(text string, options []controlOption) (controlOptio
 		if option.Action != actionSessionPage && option.Action != actionAutomations && option.Action != actionActivityPage {
 			continue
 		}
-		if forward && strings.HasPrefix(option.Label, "下一页") {
+		if forward && option.Navigate == navigationNext {
 			return option, true
 		}
-		if backward && strings.HasPrefix(option.Label, "上一页") {
+		if backward && option.Navigate == navigationPrevious {
 			return option, true
 		}
 	}

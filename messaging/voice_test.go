@@ -129,9 +129,10 @@ func TestVoiceBriefingReportsEveryProviderFailure(t *testing.T) {
 
 func TestVoiceBriefingAcceptsNaturalPhrases(t *testing.T) {
 	handler := NewHandler(nil)
+	attachTestControlState(t, handler)
 	handler.SetVoiceBriefing(NewVoiceBriefing("/usr/bin/ffmpeg", nil))
 	for _, phrase := range []string{"语音简报", "发语音", "发个语音", "来段语音", "播报一下", "读给我听"} {
-		reply, handled := handler.handleControlInput(context.Background(), "owner-1", phrase, false)
+		reply, handled := handler.handleControlInput(context.Background(), "owner-1", phrase, false, nextTestControlSource())
 		if !handled || !strings.Contains(reply.Text, "正在生成") || reply.Effect.Kind != EffectVoiceBriefing {
 			t.Fatalf("phrase %q: handled=%v reply=%#v", phrase, handled, reply)
 		}
@@ -306,6 +307,7 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 
 	renderer := &fakeControlVisualRenderer{path: cardPath}
 	handler := NewHandler(nil)
+	attachTestControlState(t, handler)
 	handler.SetVisualRenderer(renderer)
 	handler.SetVoiceBriefing(NewVoiceBriefing(ffmpeg, []VoiceProviderEntry{{
 		Provider: &stubVoiceProvider{id: "local", audio: validTestMP3()}, Timeout: time.Second,

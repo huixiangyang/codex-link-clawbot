@@ -58,6 +58,19 @@ func controlActionDomain(action controlAction) ActionDomain {
 	}
 }
 
+func controlActionRequiresReceipt(action controlAction) bool {
+	switch action {
+	case actionUseSession, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
+		actionCancelTask, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
+		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionQueueClear,
+		actionSelectProject, actionRunQuickTask, actionResendDelivery, actionRemoteLock,
+		actionVoiceBriefing, actionRunAutomation, actionSetVisualStyle, actionSetResponseMode:
+		return true
+	default:
+		return false
+	}
+}
+
 func controlTextResult(action controlAction, domain ActionDomain, text string) ActionResult {
 	return newActionResult(string(action), domain, text)
 }

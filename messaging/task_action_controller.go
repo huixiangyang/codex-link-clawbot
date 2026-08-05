@@ -40,12 +40,20 @@ func (h *Handler) dispatchTaskIntent(userID string, resolved ResolvedIntent) Act
 	switch resolved.Definition.ID {
 	case IntentCancel:
 		if h.hasActiveTask(userID) {
-			h.controlStates.Delete(userID)
+			h.deleteControlState(userID)
 			text = h.cancelActiveTask(userID)
-		} else if _, exists := h.controlStates.LoadAndDelete(userID); exists {
-			text = "已退出当前操作。直接发送内容即可交给 Codex。"
 		} else {
-			text = "当前没有正在执行的任务。发送 / 可以打开操作菜单。"
+			_, status, err := h.loadControlState(userID)
+			switch {
+			case err != nil:
+				text = controlStateFailureResult().Text
+			case status == controlStateActive && h.deleteControlState(userID):
+				text = "已退出当前操作。直接发送内容即可交给 Codex。"
+			case status == controlStateActive:
+				text = controlStateFailureResult().Text
+			default:
+				text = "当前没有正在执行的任务。发送 / 可以打开操作菜单。"
+			}
 		}
 	case IntentTaskStatus:
 		text = h.openTaskStatus(userID)

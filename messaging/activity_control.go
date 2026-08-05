@@ -69,7 +69,9 @@ func (h *Handler) openActivities(userID string, pageNumber int) string {
 		"",
 		renderControlOptions(options),
 	}, "\n")
-	h.storeChoice(userID, prompt, options, actionMain)
+	if !h.storeChoice(userID, viewTaskCenter, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
 }
 
@@ -137,7 +139,9 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 		prompt += fmt.Sprintf("\n用量：输入 %d · 输出 %d · 合计 %d tokens", task.InputTokens, task.OutputTokens, task.TotalTokens)
 	}
 	prompt += "\n\n" + renderControlOptions(options)
-	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: actionActivityPage, Page: pageNumber})
+	if !h.storeChoiceWithBack(userID, viewTaskDetail, options, controlOption{Action: actionActivityPage, Page: pageNumber}) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复数字继续，0 返回原列表。"
 }
 
@@ -247,7 +251,9 @@ func (h *Handler) confirmClearQueue(userID string) string {
 	}
 	options := []controlOption{{Label: "确认清空等待任务", Action: actionQueueClear}}
 	prompt := "准备清空队列\n\n只会删除当前绑定者的等待任务；执行中任务和其他绑定者不受影响。\n\n" + renderControlOptions(options)
-	h.storeChoice(userID, prompt, options, actionActivityPage)
+	if !h.storeChoice(userID, viewTaskClearConfirm, options, actionActivityPage) {
+		return controlStateFailureResult().Text
+	}
 	return prompt + "\n\n回复 1 确认，0 返回任务中心。"
 }
 

@@ -2,7 +2,9 @@ package messaging
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,8 +14,26 @@ import (
 	"github.com/huixiangyang/weclaw/visual"
 )
 
-func newTestHandler() *Handler {
-	return NewHandler(nil)
+var testControlSourceCounter atomic.Uint64
+
+func nextTestControlSource() string {
+	return fmt.Sprintf("test:message:%d", testControlSourceCounter.Add(1))
+}
+
+func newTestHandler(t *testing.T) *Handler {
+	t.Helper()
+	handler := NewHandler(nil)
+	attachTestControlState(t, handler)
+	return handler
+}
+
+func attachTestControlState(t *testing.T, handler *Handler) {
+	t.Helper()
+	store, err := NewControlStateStore(t.TempDir() + "/control-state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.SetControlStateStore(store)
 }
 
 func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
@@ -86,11 +106,11 @@ func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
 	h, cancel := testHandlerWithRunningTask(t, "user-1")
 	defer cancel()
 
-	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false)
+	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false, nextTestControlSource())
 	if !handled || !strings.Contains(status.Text, "任务状态：运行中") {
 		t.Fatalf("natural status = %q, handled=%v", status.Text, handled)
 	}
-	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false)
+	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false, nextTestControlSource())
 	if !handled || !strings.Contains(cancelled.Text, "已请求取消当前任务") {
 		t.Fatalf("natural cancellation = %q, handled=%v", cancelled.Text, handled)
 	}
@@ -112,7 +132,7 @@ func testHandlerWithRunningTask(t *testing.T, ownerID string) (*Handler, context
 	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
 		t.Fatalf("claim running task: claimed=%v err=%v", claimed, err)
 	}
-	handler := newTestHandler()
+	handler := newTestHandler(t)
 	taskContext, cancel := context.WithCancel(context.Background())
 	handler.tasks = store
 	handler.coordinator = &Coordinator{

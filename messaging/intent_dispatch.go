@@ -5,11 +5,17 @@ import (
 	"strings"
 )
 
-func (h *Handler) dispatchIntent(ctx context.Context, userID string, resolved ResolvedIntent) ActionResult {
+func (h *Handler) dispatchIntent(ctx context.Context, userID string, resolved ResolvedIntent, sourceKey string) ActionResult {
 	definition := resolved.Definition
 	argument := cleanIntentArgument(resolved.Argument)
 	if h.intentMutationBlocked(userID, resolved, argument) {
 		return intentTextResult(resolved, mutationBusyText())
+	}
+	if intentRequiresReceipt(resolved, argument) {
+		reserved, result := h.reserveControlReceipt(userID, sourceKey, string(definition.ID), definition.Domain)
+		if !reserved {
+			return result
+		}
 	}
 	switch definition.Domain {
 	case DomainTask:
@@ -29,6 +35,40 @@ func (h *Handler) dispatchIntent(ctx context.Context, userID string, resolved Re
 	default:
 		return h.dispatchSystemIntent(ctx, userID, resolved)
 	}
+}
+
+func intentRequiresReceipt(resolved ResolvedIntent, argument string) bool {
+	if !resolved.Definition.RequiresReceipt {
+		return false
+	}
+	switch resolved.Definition.ID {
+	case IntentProjectSelect, IntentSessionSelect, IntentSessionRestore, IntentVisualStyle:
+		return strings.TrimSpace(argument) != ""
+	default:
+		return true
+	}
+}
+
+func (h *Handler) reserveControlReceipt(userID, sourceKey, actionID string, domain ActionDomain) (bool, ActionResult) {
+	if h.controlStates == nil {
+		return false, controlStateFailureResult()
+	}
+	if strings.TrimSpace(sourceKey) == "" {
+		return false, newActionResult(actionID, domain, "这条微信消息没有稳定来源编号，无法安全执行控制操作。")
+	}
+	reserved, err := h.controlStates.ReserveReceipt(userID, sourceKey, actionID, domain)
+	if err != nil {
+		logControlStateError(userID, err)
+		return false, controlStateFailureResult().withIdentity(actionID, domain)
+	}
+	if !reserved {
+		return false, duplicateControlResult(actionID, domain)
+	}
+	return true, ActionResult{}
+}
+
+func duplicateControlResult(actionID string, domain ActionDomain) ActionResult {
+	return newActionResult(actionID, domain, "这条操作已经处理，不会重复执行。发送 / 查看当前状态。")
 }
 
 func intentTextResult(resolved ResolvedIntent, text string) ActionResult {

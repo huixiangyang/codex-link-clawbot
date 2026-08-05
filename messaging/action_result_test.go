@@ -26,6 +26,7 @@ func TestActionResultValidationRejectsAmbiguousOutput(t *testing.T) {
 		{name: "empty effect value", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "")},
 		{name: "media without receipt", result: effectActionResult("library.resend", DomainLibrary, "", EffectSendMedia, "/tmp/result.png")},
 		{name: "voice with hidden value", result: effectActionResult("automation.voice", DomainAutomation, "生成中", EffectVoiceBriefing, "unexpected")},
+		{name: "rollback on text", result: ActionResult{ActionID: "system.menu", Domain: DomainSystem, Text: "菜单", rollback: &controlReceiptRollback{}}},
 	}
 	for _, item := range tests {
 		t.Run(item.name, func(t *testing.T) {
@@ -72,7 +73,7 @@ func TestPresenterIsTheOnlyTextDeliveryBoundary(t *testing.T) {
 
 func TestAttachmentIntentRequiresExplicitPermission(t *testing.T) {
 	handler := NewHandler(nil)
-	if result, handled := handler.handleControlInput(context.Background(), "owner-1", "/", true); handled || result != (ActionResult{}) {
+	if result, handled := handler.handleControlInput(context.Background(), "owner-1", "/", true, nextTestControlSource()); handled || result != (ActionResult{}) {
 		t.Fatalf("default attachment intent = %#v, handled=%v", result, handled)
 	}
 
@@ -86,7 +87,7 @@ func TestAttachmentIntentRequiresExplicitPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler.intents = registry
-	result, handled := handler.handleControlInput(context.Background(), "owner-1", "/", true)
+	result, handled := handler.handleControlInput(context.Background(), "owner-1", "/", true, nextTestControlSource())
 	if !handled || result.ActionID != string(IntentMenu) {
 		t.Fatalf("allowed attachment intent = %#v, handled=%v", result, handled)
 	}
