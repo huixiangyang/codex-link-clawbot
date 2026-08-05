@@ -30,6 +30,9 @@ type Codex struct {
 	nextID        atomic.Int64
 	loadedThreads map[string]bool // 当前 app-server 进程已加载的显式线程
 	threadStatus  map[string]ThreadStatus
+	threadUsage   map[string]ThreadUsage
+	rateLimits    RateLimits
+	hasRateLimits bool
 	done          chan struct{}
 	doneOnce      sync.Once
 	exitErr       error
@@ -117,6 +120,7 @@ func NewCodex(cfg CodexConfig) *Codex {
 		env:           cfg.Env,
 		loadedThreads: make(map[string]bool),
 		threadStatus:  make(map[string]ThreadStatus),
+		threadUsage:   make(map[string]ThreadUsage),
 		pending:       make(map[int64]chan *rpcResponse),
 		turnCh:        make(map[string]chan *codexTurnEvent),
 		done:          make(chan struct{}),
@@ -781,8 +785,12 @@ func (a *Codex) readLoop() {
 			a.handleCodexTurnEvent(msg.Method, msg.Params)
 		case "thread/status/changed":
 			a.handleThreadStatusChanged(msg.Params)
+		case "thread/tokenUsage/updated":
+			a.handleThreadTokenUsageUpdated(msg.Params)
+		case "account/rateLimits/updated":
+			a.handleRateLimitsUpdated(msg.Params)
 		case "thread/started", "thread/archived", "thread/unarchived", "thread/closed",
-			"thread/name/updated", "thread/tokenUsage/updated", "account/rateLimits/updated",
+			"thread/name/updated",
 			"serverRequest/resolved":
 			// 已知但无需转发到微信的稳定事件。
 
@@ -797,6 +805,47 @@ func (a *Codex) readLoop() {
 		log.Printf("[codex] read loop error: %v", err)
 	}
 	log.Println("[codex] read loop ended")
+}
+
+func (a *Codex) handleThreadTokenUsageUpdated(params json.RawMessage) {
+	var update struct {
+		ThreadID   string      `json:"threadId"`
+		TokenUsage ThreadUsage `json:"tokenUsage"`
+	}
+	if err := json.Unmarshal(params, &update); err != nil || update.ThreadID == "" {
+		log.Printf("[codex] failed to parse thread/tokenUsage/updated: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.threadUsage[update.ThreadID] = update.TokenUsage
+	a.mu.Unlock()
+}
+
+func (a *Codex) handleRateLimitsUpdated(params json.RawMessage) {
+	var update struct {
+		RateLimits RateLimits `json:"rateLimits"`
+	}
+	if err := json.Unmarshal(params, &update); err != nil {
+		log.Printf("[codex] failed to parse account/rateLimits/updated: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.rateLimits = update.RateLimits
+	a.hasRateLimits = true
+	a.mu.Unlock()
+}
+
+func (a *Codex) Usage(threadID string) (ThreadUsage, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	usage, ok := a.threadUsage[threadID]
+	return usage, ok
+}
+
+func (a *Codex) RateLimits() (RateLimits, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.rateLimits, a.hasRateLimits
 }
 
 func (a *Codex) handleThreadStatusChanged(params json.RawMessage) {

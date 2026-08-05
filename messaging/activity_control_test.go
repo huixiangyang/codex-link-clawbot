@@ -40,7 +40,7 @@ func TestActivityManagementPaginatesAndPreservesDetailPage(t *testing.T) {
 	handler.SetActivityStore(store)
 
 	main := controlReply(t, handler, "owner-1", "/")
-	if !strings.Contains(main, "3  任务记录") {
+	if !strings.Contains(main, "3  最近任务") {
 		t.Fatalf("main activity entry = %q", main)
 	}
 	first := controlReply(t, handler, "owner-1", "任务记录")

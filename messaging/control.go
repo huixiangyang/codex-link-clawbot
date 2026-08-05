@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,8 +28,8 @@ const (
 	controlChoice controlMode = iota + 1
 	controlNewSessionName
 	controlRenameSession
-	controlWorkingDirectory
 	controlSessionSearch
+	controlPendingInstruction
 )
 
 type controlAction string
@@ -61,9 +59,22 @@ const (
 	actionActivityPage        controlAction = "activity_page"
 	actionActivityDetail      controlAction = "activity_detail"
 	actionRuntimeInfo         controlAction = "runtime_info"
-	actionPromptWorkingDir    controlAction = "prompt_working_dir"
-	actionScheduledReports    controlAction = "scheduled_reports"
-	actionScheduledReport     controlAction = "scheduled_report"
+	actionMore                controlAction = "more"
+	actionProjectCenter       controlAction = "project_center"
+	actionSelectProject       controlAction = "select_project"
+	actionProjectQuickTasks   controlAction = "project_quick_tasks"
+	actionRunQuickTask        controlAction = "run_quick_task"
+	actionPromptPending       controlAction = "prompt_pending"
+	actionClearPending        controlAction = "clear_pending"
+	actionLibraryCenter       controlAction = "library_center"
+	actionLibraryPage         controlAction = "library_page"
+	actionLibraryDetail       controlAction = "library_detail"
+	actionResendDelivery      controlAction = "resend_delivery"
+	actionRemoteLock          controlAction = "remote_lock"
+	actionVoiceBriefing       controlAction = "voice_briefing"
+	actionAutomations         controlAction = "automations"
+	actionAutomation          controlAction = "automation"
+	actionRunAutomation       controlAction = "run_automation"
 	actionVisualStyles        controlAction = "visual_styles"
 	actionSetVisualStyle      controlAction = "set_visual_style"
 	actionGuide               controlAction = "guide"
@@ -131,11 +142,42 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	if isOneOf(text, "状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了") {
 		return h.openTaskStatus(userID), true
 	}
+	if isOneOf(text, "暂存下一条指令", "暂存指令", "下一条指令") {
+		return h.promptPendingInstruction(userID), true
+	}
+	if isOneOf(text, "清除暂存", "取消暂存", "删除暂存指令") {
+		return h.clearPendingInstruction(userID), true
+	}
 	if isOneOf(text, "任务记录", "最近任务", "任务历史", "历史任务") {
 		return h.openActivities(userID, 1), true
 	}
+	if isOneOf(text, "素材箱", "素材中心", "收藏链接", "交付记录", "交付中心") {
+		return h.openLibraryCenter(userID), true
+	}
+	if isOneOf(text, "远程锁定", "锁定 WeClaw", "锁定WeClaw", "锁定服务") {
+		return h.lockRemote(userID), true
+	}
+	if isOneOf(text, "语音简报", "播放简报", "工作简报") {
+		return h.requestVoiceBriefing(userID), true
+	}
 	if isOneOf(text, "运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息") {
 		return h.openRuntimeInfo(userID), true
+	}
+	if isOneOf(text, "项目", "项目中心", "项目列表", "查看项目", "当前项目") {
+		return h.openProjectCenter(userID), true
+	}
+	if isOneOf(text, "快捷任务", "项目快捷任务", "快速任务") {
+		return h.openProjectQuickTasks(userID), true
+	}
+	if argument, matched := intentArgument(text, []string{"切换项目", "切到项目", "进入项目"}); matched {
+		if h.hasActiveTask(userID) {
+			return mutationBusyText(), true
+		}
+		argument = cleanIntentArgument(argument)
+		if argument == "" {
+			return h.openProjectCenter(userID), true
+		}
+		return h.selectProject(userID, argument), true
 	}
 	if isOneOf(text, "帮助", "怎么用", "使用说明") {
 		return h.openGuide(userID), true
@@ -154,8 +196,8 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		}
 		return h.setVisualStyle(userID, style), true
 	}
-	if isOneOf(text, "定时巡检", "巡检状态", "定时报告", "报告计划") {
-		return h.openScheduledReports(userID, 1), true
+	if isOneOf(text, "自动化", "自动化中心", "自动检查", "检查计划") {
+		return h.openAutomations(userID, 1), true
 	}
 	if isOneOf(text, "会话", "查看会话", "看看会话", "会话菜单") {
 		return h.openSessionMenu(ctx, userID), true
@@ -174,9 +216,6 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	}
 	if isOneOf(text, "已归档会话", "恢复会话", "找回会话") {
 		return h.openSessionPicker(ctx, userID, true, ""), true
-	}
-	if isOneOf(text, "工作目录", "当前目录", "当前工作目录") {
-		return h.openWorkingDirectoryInput(userID), true
 	}
 
 	if argument, matched := intentArgument(text, []string{"新建会话", "创建会话", "开一个新会话", "开个新会话"}); matched {
@@ -217,17 +256,6 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		}
 		return h.openSessionPicker(ctx, userID, true, cleanIntentArgument(argument)), true
 	}
-	if argument, matched := intentArgument(text, []string{"切换工作目录", "工作目录改为", "把工作目录改为"}); matched {
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		argument = cleanIntentArgument(argument)
-		if argument == "" {
-			return h.openWorkingDirectoryInput(userID), true
-		}
-		return h.changeWorkingDirectory(argument), true
-	}
-
 	return "", false
 }
 
@@ -291,20 +319,6 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return mutationBusyText(), true
 		}
 		return h.renameSession(ctx, userID, text), true
-	case controlWorkingDirectory:
-		if text == "0" {
-			if !h.controlStates.CompareAndDelete(userID, state) {
-				return "这个操作已经处理。发送 / 重新打开菜单。", true
-			}
-			return h.openMainMenu(ctx, userID), true
-		}
-		if !h.controlStates.CompareAndDelete(userID, state) {
-			return "这个操作已经处理。发送 / 重新打开菜单。", true
-		}
-		if h.hasActiveTask(userID) {
-			return mutationBusyText(), true
-		}
-		return h.changeWorkingDirectory(text), true
 	case controlSessionSearch:
 		if text == "0" {
 			if !h.controlStates.CompareAndDelete(userID, state) {
@@ -316,6 +330,15 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return "这个操作已经处理。发送 / 重新打开菜单。", true
 		}
 		return h.openSessionBrowser(ctx, userID, false, text), true
+	case controlPendingInstruction:
+		if text == "0" {
+			h.controlStates.CompareAndDelete(userID, state)
+			return h.openTaskStatus(userID), true
+		}
+		if !h.controlStates.CompareAndDelete(userID, state) {
+			return "这个操作已经处理。发送 / 重新打开菜单。", true
+		}
+		return h.queuePendingInstruction(userID, text), true
 	default:
 		h.controlStates.Delete(userID)
 		return "", false
@@ -396,12 +419,41 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.openActivityDetail(userID, option.Value, option.Page)
 	case actionRuntimeInfo:
 		return h.openRuntimeInfo(userID)
-	case actionPromptWorkingDir:
-		return h.openWorkingDirectoryInput(userID)
-	case actionScheduledReports:
-		return h.openScheduledReports(userID, option.Page)
-	case actionScheduledReport:
-		return h.openScheduledReport(userID, option.Value, option.Page)
+	case actionMore:
+		return h.openMoreMenu(userID)
+	case actionProjectCenter:
+		return h.openProjectCenter(userID)
+	case actionSelectProject:
+		if h.hasActiveTask(userID) {
+			return mutationBusyText()
+		}
+		return h.selectProject(userID, option.Value)
+	case actionProjectQuickTasks:
+		return h.openProjectQuickTasks(userID)
+	case actionRunQuickTask:
+		return h.runProjectQuickTask(userID, option.Value)
+	case actionPromptPending:
+		return h.promptPendingInstruction(userID)
+	case actionClearPending:
+		return h.clearPendingInstruction(userID)
+	case actionLibraryCenter:
+		return h.openLibraryCenter(userID)
+	case actionLibraryPage:
+		return h.openLibraryPage(userID, LibraryKind(option.Query), option.Page)
+	case actionLibraryDetail:
+		return h.openLibraryDetail(userID, option.Value, LibraryKind(option.Query), option.Page)
+	case actionResendDelivery:
+		return h.resendDelivery(userID, option.Value, option.Page)
+	case actionRemoteLock:
+		return h.lockRemote(userID)
+	case actionVoiceBriefing:
+		return h.requestVoiceBriefing(userID)
+	case actionAutomations:
+		return h.openAutomations(userID, option.Page)
+	case actionAutomation:
+		return h.openAutomation(userID, option.Value, option.Page)
+	case actionRunAutomation:
+		return h.runAutomation(ctx, userID, option.Value, option.Page)
 	case actionVisualStyles:
 		return h.openVisualStyles(userID)
 	case actionSetVisualStyle:
@@ -423,28 +475,35 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		}
 	}
 	taskState := "空闲"
-	if _, running := h.activeTasks.Load(userID); running {
+	_, running := h.activeTasks.Load(userID)
+	if running {
 		taskState = "运行中"
 	}
-	statuses := h.scheduledReportStatuses(userID)
-	options := []controlOption{
-		{Label: "会话", Action: actionSessionMenu},
-		{Label: "任务状态", Action: actionTaskStatus},
-		{Label: "任务记录", Action: actionActivityPage, Page: 1},
-		{Label: "运行中心", Action: actionRuntimeInfo},
-		{Label: "工作目录", Action: actionPromptWorkingDir},
+	statuses := h.automationStatuses(userID)
+	var options []controlOption
+	if running {
+		options = append(options,
+			controlOption{Label: "任务状态", Action: actionTaskStatus},
+			controlOption{Label: "暂存下一条指令", Action: actionPromptPending},
+			controlOption{Label: "当前会话", Action: actionCurrentSession},
+		)
+	} else {
+		options = append(options,
+			controlOption{Label: "项目", Action: actionProjectCenter},
+			controlOption{Label: "会话", Action: actionSessionMenu},
+			controlOption{Label: "最近任务", Action: actionActivityPage, Page: 1},
+		)
 	}
-	if len(statuses) > 0 {
-		options = append(options, controlOption{Label: "定时巡检", Action: actionScheduledReports, Page: 1})
+	options = append(options, controlOption{Label: "更多功能", Action: actionMore})
+	projectName := "未配置"
+	if h.projects != nil {
+		projectName = h.projects.Current(userID).Name
 	}
-	if h.visual != nil && h.visualStyles != nil {
-		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
-	}
-	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
 	lines := []string{
 		"WeClaw",
 		"",
 		"版本：" + h.bridgeVersion,
+		"项目：" + projectName,
 		"会话：" + currentName,
 		"状态：" + taskState,
 	}
@@ -452,7 +511,7 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 		lines = append(lines, fmt.Sprintf("记录：%d 条", len(h.activities.List(userID))))
 	}
 	if len(statuses) > 0 {
-		lines = append(lines, fmt.Sprintf("巡检：%d 项", len(statuses)))
+		lines = append(lines, fmt.Sprintf("自动化：%d 项", len(statuses)))
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
@@ -463,7 +522,10 @@ func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
 func (h *Handler) openTaskStatus(userID string) string {
 	options := []controlOption{{Label: "刷新状态", Action: actionTaskStatus}}
 	if h.hasActiveTask(userID) {
-		options = append(options, controlOption{Label: "取消当前任务", Action: actionConfirmCancelTask})
+		options = append(options,
+			controlOption{Label: "暂存下一条指令", Action: actionPromptPending},
+			controlOption{Label: "取消当前任务", Action: actionConfirmCancelTask},
+		)
 	} else {
 		options = append(options, controlOption{Label: "运行中心", Action: actionRuntimeInfo})
 	}
@@ -471,6 +533,21 @@ func (h *Handler) openTaskStatus(userID string) string {
 	prompt := h.buildTaskStatus(userID) + "\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
 	return prompt + "\n\n回复数字操作，0 返回。"
+}
+
+func (h *Handler) promptPendingInstruction(userID string) string {
+	if !h.hasActiveTask(userID) {
+		return "当前没有正在执行的任务，直接发送内容即可开始。"
+	}
+	if value, exists := h.pendingInstructions.Load(userID); exists {
+		options := []controlOption{{Label: "清除暂存指令", Action: actionClearPending}}
+		prompt := "已暂存下一条指令\n\n摘要：" + normalizeSessionLine(value.(string), 72) + "\n\n" + renderControlOptions(options)
+		h.storeChoice(userID, prompt, options, actionTaskStatus)
+		return prompt + "\n\n回复数字操作，0 返回。"
+	}
+	prompt := "暂存下一条指令\n\n发送要在当前任务结束后自动执行的文字指令，回复 0 返回。"
+	h.storeInput(userID, controlPendingInstruction, prompt, actionTaskStatus)
+	return prompt
 }
 
 func (h *Handler) confirmCancelTask(userID string) string {
@@ -485,10 +562,29 @@ func (h *Handler) confirmCancelTask(userID string) string {
 
 func (h *Handler) openRuntimeInfo(userID string) string {
 	options := []controlOption{
-		{Label: "工作目录", Action: actionPromptWorkingDir},
+		{Label: "项目中心", Action: actionProjectCenter},
 		{Label: "刷新运行中心", Action: actionRuntimeInfo},
 	}
 	prompt := h.buildStatus() + "\n\n" + renderControlOptions(options)
+	h.storeChoice(userID, prompt, options, actionMain)
+	return prompt + "\n\n回复数字操作，0 返回。"
+}
+
+func (h *Handler) openMoreMenu(userID string) string {
+	options := []controlOption{
+		{Label: "运行中心", Action: actionRuntimeInfo},
+		{Label: "自动化中心", Action: actionAutomations, Page: 1},
+		{Label: "素材与交付", Action: actionLibraryCenter},
+		{Label: "远程锁定", Action: actionRemoteLock},
+	}
+	if h.visual != nil && h.visualStyles != nil {
+		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
+	}
+	if h.voice != nil {
+		options = append(options, controlOption{Label: "语音简报", Action: actionVoiceBriefing})
+	}
+	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
+	prompt := "更多功能\n\n" + renderControlOptions(options)
 	h.storeChoice(userID, prompt, options, actionMain)
 	return prompt + "\n\n回复数字操作，0 返回。"
 }
@@ -987,51 +1083,6 @@ func (h *Handler) sessionSuccess(userID, headline string, thread codex.ThreadInf
 	return prompt + "\n\n回复数字继续，或直接发送内容开始对话；0 返回会话中心。"
 }
 
-func (h *Handler) openWorkingDirectoryInput(userID string) string {
-	if h.codex == nil {
-		return "Codex 当前不可用。"
-	}
-	current := h.codex.Info().Cwd
-	if h.hasActiveTask(userID) {
-		return "当前工作目录：" + current + "\n任务运行期间不能修改工作目录。"
-	}
-	prompt := "工作目录\n\n当前：" + current + "\n\n发送新的绝对路径，回复 0 返回。"
-	h.storeInput(userID, controlWorkingDirectory, prompt, actionMain)
-	return prompt
-}
-
-func (h *Handler) changeWorkingDirectory(value string) string {
-	if h.codex == nil {
-		return "Codex 当前不可用。"
-	}
-	value = strings.TrimSpace(value)
-	if value == "~" || strings.HasPrefix(value, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Sprintf("无法解析主目录：%v", err)
-		}
-		if value == "~" {
-			value = home
-		} else {
-			value = filepath.Join(home, value[2:])
-		}
-	}
-	if !filepath.IsAbs(value) {
-		return "工作目录必须是绝对路径，或使用 ~/ 开头的路径。"
-	}
-	value = filepath.Clean(value)
-	info, err := os.Stat(value)
-	if err != nil {
-		return "目录不存在：" + value
-	}
-	if !info.IsDir() {
-		return "不是目录：" + value
-	}
-	h.codex.SetCwd(value)
-	log.Printf("[handler] updated codex cwd: %s", value)
-	return "工作目录已切换：" + value
-}
-
 func (h *Handler) storeChoice(userID, prompt string, options []controlOption, back controlAction) {
 	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: back})
 }
@@ -1083,7 +1134,7 @@ func controlNavigationOption(text string, options []controlOption) (controlOptio
 		return controlOption{}, false
 	}
 	for _, option := range options {
-		if option.Action != actionSessionPage && option.Action != actionScheduledReports && option.Action != actionActivityPage {
+		if option.Action != actionSessionPage && option.Action != actionAutomations && option.Action != actionActivityPage {
 			continue
 		}
 		if forward && strings.HasPrefix(option.Label, "下一页") {
@@ -1102,13 +1153,13 @@ func controlGuide() string {
 		"较长回复自动整理为阅读卡片，回复“文字版”可获取可复制原文。",
 		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
 		"发送“视觉风格”可在五套完整模板间切换，选择会自动保存。",
-		"也可以直接说“新建会话”“搜索会话”“切换会话 登录”“运行中心”或“工作目录”。",
+		"也可以直接说“切换项目”“新建会话”“搜索会话”“切换会话 登录”或“运行中心”。",
 		"任务运行时发送“状态”查看进度，发送“取消”停止任务。",
 	}, "\n")
 }
 
 func mutationBusyText() string {
-	return "当前任务仍在运行，暂时不能修改会话或工作目录。发送“状态”查看进度，或发送“取消”停止任务。"
+	return "当前任务仍在运行，暂时不能切换项目或修改会话。发送“状态”查看进度，或发送“取消”停止任务。"
 }
 
 func sessionKind(archived bool) string {

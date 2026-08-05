@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/huixiangyang/weclaw/session"
 )
 
 func (h *Handler) openActivities(userID string, pageNumber int) string {
@@ -93,7 +95,17 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 		"开始：" + formatSessionTime(record.StartedAt),
 		"结束：" + finishedAt,
 		"用时：" + formatUptime(duration),
-		"",
+	}, "\n")
+	if record.ProjectID != "" {
+		prompt += "\n项目：" + record.ProjectID
+	}
+	if record.SessionID != "" {
+		prompt += "\n会话：" + session.ShortCode(record.SessionID)
+	}
+	if record.TotalTokens > 0 {
+		prompt += fmt.Sprintf("\n用量：输入 %d · 输出 %d · 合计 %d tokens", record.InputTokens, record.OutputTokens, record.TotalTokens)
+	}
+	prompt += "\n\n" + strings.Join([]string{
 		renderControlOptions(options),
 	}, "\n")
 	h.storeChoiceWithBack(userID, prompt, options, controlOption{Action: actionActivityPage, Page: pageNumber})

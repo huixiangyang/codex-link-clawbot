@@ -15,18 +15,50 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	APIAddr          string                  `json:"api_addr,omitempty"`
-	SaveDir          string                  `json:"save_dir,omitempty"` // Linkhoard archive directory
-	Progress         ProgressConfig          `json:"progress"`
-	ScheduledReports []ScheduledReportConfig `json:"scheduled_reports,omitempty"`
-	Codex            CodexConfig             `json:"codex"`
-	Visual           VisualConfig            `json:"visual"`
+	APIAddr     string             `json:"api_addr,omitempty"`
+	SaveDir     string             `json:"save_dir,omitempty"` // Linkhoard archive directory
+	Progress    ProgressConfig     `json:"progress"`
+	Projects    []ProjectConfig    `json:"projects"`
+	Automations []AutomationConfig `json:"automations,omitempty"`
+	Codex       CodexConfig        `json:"codex"`
+	Visual      VisualConfig       `json:"visual"`
+	Security    SecurityConfig     `json:"security"`
+	Voice       VoiceConfig        `json:"voice"`
+}
+
+type SecurityConfig struct {
+	RemoteLockCode string `json:"remote_lock_code,omitempty"`
+}
+
+func (c SecurityConfig) validate() error {
+	if c.RemoteLockCode == "" {
+		return nil
+	}
+	length := len([]rune(c.RemoteLockCode))
+	if length < 6 || length > 64 || strings.ContainsAny(c.RemoteLockCode, "\r\n") {
+		return fmt.Errorf("security.remote_lock_code must be a single line with 6 to 64 characters")
+	}
+	return nil
+}
+
+type VoiceConfig struct {
+	Enabled bool   `json:"enabled"`
+	Command string `json:"command,omitempty"`
+}
+
+func (c VoiceConfig) validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if !filepath.IsAbs(c.Command) {
+		return fmt.Errorf("voice.command must be an absolute executable path")
+	}
+	return nil
 }
 
 // CodexConfig 是唯一智能体运行配置。App Server 参数由程序固定，避免协议分叉。
 type CodexConfig struct {
 	Command string            `json:"command"`
-	Cwd     string            `json:"cwd"`
 	Env     map[string]string `json:"env,omitempty"`
 	Model   string            `json:"model,omitempty"`
 }
@@ -39,8 +71,100 @@ func (c CodexConfig) validate() error {
 	if strings.TrimSpace(c.Command) == "" {
 		return fmt.Errorf("codex.command is required")
 	}
-	if c.Cwd != "" && !filepath.IsAbs(c.Cwd) {
-		return fmt.Errorf("codex.cwd must be an absolute path")
+	return nil
+}
+
+// ProjectConfig 是远程工作空间的安全边界，Codex 只能在这里声明的目录间切换。
+type ProjectConfig struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Root        string            `json:"root"`
+	ServiceName string            `json:"service_name,omitempty"`
+	HealthURL   string            `json:"health_url,omitempty"`
+	QuickTasks  []QuickTaskConfig `json:"quick_tasks,omitempty"`
+}
+
+type QuickTaskConfig struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Prompt string `json:"prompt"`
+}
+
+var projectIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+func defaultProjectRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "weclaw-workspace")
+	}
+	return filepath.Join(home, ".weclaw", "workspace")
+}
+
+func defaultProjects() []ProjectConfig {
+	return []ProjectConfig{{ID: "workspace", Name: "默认项目", Root: defaultProjectRoot()}}
+}
+
+func validateProjects(projects []ProjectConfig) error {
+	if len(projects) == 0 {
+		return fmt.Errorf("projects must contain at least one project")
+	}
+	ids := make(map[string]struct{}, len(projects))
+	names := make(map[string]struct{}, len(projects))
+	for index, project := range projects {
+		prefix := fmt.Sprintf("projects[%d]", index)
+		if !projectIDPattern.MatchString(project.ID) {
+			return fmt.Errorf("%s.id is invalid", prefix)
+		}
+		if _, exists := ids[project.ID]; exists {
+			return fmt.Errorf("project id %q is duplicated", project.ID)
+		}
+		ids[project.ID] = struct{}{}
+		name := strings.TrimSpace(project.Name)
+		if name == "" {
+			return fmt.Errorf("%s.name is required", prefix)
+		}
+		if strings.ContainsAny(name, "\r\n") || len([]rune(name)) > 40 {
+			return fmt.Errorf("%s.name must be a single line with at most 40 characters", prefix)
+		}
+		if _, exists := names[name]; exists {
+			return fmt.Errorf("project name %q is duplicated", name)
+		}
+		names[name] = struct{}{}
+		if !filepath.IsAbs(project.Root) || filepath.Clean(project.Root) != project.Root {
+			return fmt.Errorf("%s.root must be a clean absolute path", prefix)
+		}
+		if project.ServiceName != "" && !serviceNamePattern.MatchString(project.ServiceName) {
+			return fmt.Errorf("%s.service_name is invalid", prefix)
+		}
+		if project.HealthURL != "" {
+			healthURL, err := url.Parse(project.HealthURL)
+			if err != nil || (healthURL.Scheme != "http" && healthURL.Scheme != "https") || healthURL.Host == "" {
+				return fmt.Errorf("%s.health_url must be an absolute HTTP URL", prefix)
+			}
+		}
+		if len(project.QuickTasks) > 6 {
+			return fmt.Errorf("%s.quick_tasks supports at most 6 entries", prefix)
+		}
+		quickIDs := make(map[string]struct{}, len(project.QuickTasks))
+		for quickIndex, quickTask := range project.QuickTasks {
+			quickPrefix := fmt.Sprintf("%s.quick_tasks[%d]", prefix, quickIndex)
+			if !projectIDPattern.MatchString(quickTask.ID) {
+				return fmt.Errorf("%s.id is invalid", quickPrefix)
+			}
+			if _, exists := quickIDs[quickTask.ID]; exists {
+				return fmt.Errorf("quick task id %q is duplicated in project %q", quickTask.ID, project.ID)
+			}
+			quickIDs[quickTask.ID] = struct{}{}
+			if strings.TrimSpace(quickTask.Name) == "" || strings.TrimSpace(quickTask.Prompt) == "" {
+				return fmt.Errorf("%s.name and prompt are required", quickPrefix)
+			}
+			if len([]rune(quickTask.Prompt)) > 4000 {
+				return fmt.Errorf("%s.prompt must contain at most 4000 characters", quickPrefix)
+			}
+			if strings.ContainsAny(quickTask.Name, "\r\n") || len([]rune(quickTask.Name)) > 24 {
+				return fmt.Errorf("%s.name must be a single line with at most 24 characters", quickPrefix)
+			}
+		}
 	}
 	return nil
 }
@@ -68,49 +192,89 @@ func (c VisualConfig) validate() error {
 	return nil
 }
 
-// ScheduledReportConfig 定义每日一次的确定性项目巡检。
-// 配置项全部显式必填，避免服务以猜测值静默运行。
-type ScheduledReportConfig struct {
-	Name                string `json:"name"`
-	DailyAt             string `json:"daily_at"`
-	Timezone            string `json:"timezone"`
-	ProjectDir          string `json:"project_dir"`
-	ServiceName         string `json:"service_name"`
-	HealthURL           string `json:"health_url"`
-	CommitLookbackHours int    `json:"commit_lookback_hours"`
-}
-
 var serviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9@_.:-]+$`)
 
-func validateScheduledReports(reports []ScheduledReportConfig) error {
-	names := make(map[string]struct{}, len(reports))
-	for index, report := range reports {
-		prefix := fmt.Sprintf("scheduled_reports[%d]", index)
-		name := strings.TrimSpace(report.Name)
-		if name == "" {
+// AutomationConfig 定义完全确定性的项目检查，不把计划任务交给模型自由执行。
+type AutomationConfig struct {
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	ProjectID           string   `json:"project_id"`
+	DailyAt             string   `json:"daily_at,omitempty"`
+	EveryMinutes        int      `json:"every_minutes,omitempty"`
+	Timezone            string   `json:"timezone"`
+	NotifyOn            string   `json:"notify_on"`
+	Checks              []string `json:"checks"`
+	CommitLookbackHours int      `json:"commit_lookback_hours"`
+}
+
+func validateAutomations(automations []AutomationConfig, projects []ProjectConfig) error {
+	projectByID := make(map[string]ProjectConfig, len(projects))
+	for _, project := range projects {
+		projectByID[project.ID] = project
+	}
+	ids := make(map[string]struct{}, len(automations))
+	for index, automation := range automations {
+		prefix := fmt.Sprintf("automations[%d]", index)
+		if !projectIDPattern.MatchString(automation.ID) {
+			return fmt.Errorf("%s.id is invalid", prefix)
+		}
+		if _, exists := ids[automation.ID]; exists {
+			return fmt.Errorf("automation id %q is duplicated", automation.ID)
+		}
+		ids[automation.ID] = struct{}{}
+		if strings.TrimSpace(automation.Name) == "" {
 			return fmt.Errorf("%s.name is required", prefix)
 		}
-		if _, exists := names[name]; exists {
-			return fmt.Errorf("scheduled report name %q is duplicated", name)
+		if strings.ContainsAny(automation.Name, "\r\n") || len([]rune(automation.Name)) > 40 {
+			return fmt.Errorf("%s.name must be a single line with at most 40 characters", prefix)
 		}
-		names[name] = struct{}{}
-		if _, err := time.Parse("15:04", report.DailyAt); err != nil {
-			return fmt.Errorf("%s.daily_at must use HH:MM", prefix)
+		project, exists := projectByID[automation.ProjectID]
+		if !exists {
+			return fmt.Errorf("%s.project_id is not configured", prefix)
 		}
-		if _, err := time.LoadLocation(report.Timezone); err != nil {
+		if (automation.DailyAt == "") == (automation.EveryMinutes == 0) {
+			return fmt.Errorf("%s must set exactly one of daily_at or every_minutes", prefix)
+		}
+		if automation.DailyAt != "" {
+			if _, err := time.Parse("15:04", automation.DailyAt); err != nil {
+				return fmt.Errorf("%s.daily_at must use HH:MM", prefix)
+			}
+		}
+		if automation.EveryMinutes != 0 && (automation.EveryMinutes < 5 || automation.EveryMinutes > 1440) {
+			return fmt.Errorf("%s.every_minutes must be between 5 and 1440", prefix)
+		}
+		if _, err := time.LoadLocation(automation.Timezone); err != nil {
 			return fmt.Errorf("%s.timezone is invalid: %w", prefix, err)
 		}
-		if !filepath.IsAbs(report.ProjectDir) {
-			return fmt.Errorf("%s.project_dir must be an absolute path", prefix)
+		switch automation.NotifyOn {
+		case "always", "anomaly", "change", "anomaly_or_change":
+		default:
+			return fmt.Errorf("%s.notify_on is invalid", prefix)
 		}
-		if !serviceNamePattern.MatchString(report.ServiceName) {
-			return fmt.Errorf("%s.service_name is invalid", prefix)
+		if len(automation.Checks) == 0 {
+			return fmt.Errorf("%s.checks must not be empty", prefix)
 		}
-		healthURL, err := url.Parse(report.HealthURL)
-		if err != nil || (healthURL.Scheme != "http" && healthURL.Scheme != "https") || healthURL.Host == "" {
-			return fmt.Errorf("%s.health_url must be an absolute HTTP URL", prefix)
+		seenChecks := make(map[string]bool, len(automation.Checks))
+		for _, check := range automation.Checks {
+			if seenChecks[check] {
+				return fmt.Errorf("%s.checks contains duplicate %q", prefix, check)
+			}
+			seenChecks[check] = true
+			switch check {
+			case "git":
+			case "service":
+				if project.ServiceName == "" {
+					return fmt.Errorf("%s requires project service_name", prefix)
+				}
+			case "health":
+				if project.HealthURL == "" {
+					return fmt.Errorf("%s requires project health_url", prefix)
+				}
+			default:
+				return fmt.Errorf("%s.checks contains unsupported check %q", prefix, check)
+			}
 		}
-		if report.CommitLookbackHours < 1 || report.CommitLookbackHours > 168 {
+		if automation.CommitLookbackHours < 1 || automation.CommitLookbackHours > 168 {
 			return fmt.Errorf("%s.commit_lookback_hours must be between 1 and 168", prefix)
 		}
 	}
@@ -154,6 +318,7 @@ func (c ProgressConfig) validate() error {
 func DefaultConfig() *Config {
 	return &Config{
 		Progress: defaultProgressConfig(),
+		Projects: defaultProjects(),
 		Codex:    defaultCodexConfig(),
 		Visual:   defaultVisualConfig(),
 	}
@@ -208,10 +373,19 @@ func (c *Config) validate() error {
 	if err := c.Codex.validate(); err != nil {
 		return err
 	}
+	if err := validateProjects(c.Projects); err != nil {
+		return err
+	}
 	if err := c.Visual.validate(); err != nil {
 		return err
 	}
-	return validateScheduledReports(c.ScheduledReports)
+	if err := c.Security.validate(); err != nil {
+		return err
+	}
+	if err := c.Voice.validate(); err != nil {
+		return err
+	}
+	return validateAutomations(c.Automations, c.Projects)
 }
 
 func loadEnv(cfg *Config) {
@@ -223,9 +397,6 @@ func loadEnv(cfg *Config) {
 	}
 	if v := os.Getenv("WECLAW_CODEX_COMMAND"); v != "" {
 		cfg.Codex.Command = v
-	}
-	if v := os.Getenv("WECLAW_CODEX_CWD"); v != "" {
-		cfg.Codex.Cwd = v
 	}
 	if v := os.Getenv("WECLAW_CODEX_MODEL"); v != "" {
 		cfg.Codex.Model = v

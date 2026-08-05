@@ -39,8 +39,9 @@ type Stats struct {
 
 // Manager 把微信用户归属与 Codex 线程生命周期组合成一个事务边界。
 type Manager struct {
-	store *Store
-	now   func() time.Time
+	store     *Store
+	now       func() time.Time
+	projectID func(ownerID string) string
 }
 
 func NewManager(path string) (*Manager, error) {
@@ -48,7 +49,28 @@ func NewManager(path string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{store: store, now: time.Now}, nil
+	return &Manager{
+		store:     store,
+		now:       time.Now,
+		projectID: func(string) string { return DefaultProjectID },
+	}, nil
+}
+
+// SetProjectResolver 让同一个微信用户在不同项目中拥有相互隔离的当前会话。
+func (m *Manager) SetProjectResolver(resolver func(ownerID string) string) {
+	if resolver == nil {
+		m.projectID = func(string) string { return DefaultProjectID }
+		return
+	}
+	m.projectID = resolver
+}
+
+func (m *Manager) currentProject(ownerID string) string {
+	projectID := strings.TrimSpace(m.projectID(ownerID))
+	if projectID == "" {
+		return DefaultProjectID
+	}
+	return projectID
 }
 
 func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex.ThreadClient, suggestedName string) (codex.ThreadInfo, error) {
@@ -56,7 +78,8 @@ func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex
 	if err != nil {
 		return codex.ThreadInfo{}, err
 	}
-	if threadID, ok := m.store.Active(ownerID); ok {
+	projectID := m.currentProject(ownerID)
+	if threadID, ok := m.store.ActiveForProject(ownerID, projectID); ok {
 		thread, readErr := client.ReadThread(ctx, threadID)
 		if readErr != nil {
 			return codex.ThreadInfo{}, fmt.Errorf("read active session %s: %w", ShortCode(threadID), readErr)
@@ -73,7 +96,7 @@ func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex
 }
 
 func (m *Manager) Current(ctx context.Context, ownerID string, client codex.ThreadClient) (ManagedThread, error) {
-	threadID, ok := m.store.Active(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
 	if !ok {
 		return ManagedThread{}, ErrNoActive
 	}
@@ -86,7 +109,8 @@ func (m *Manager) Current(ctx context.Context, ownerID string, client codex.Thre
 
 // Detail 只允许读取本地索引中归属于该微信用户的会话摘要。
 func (m *Manager) Detail(ctx context.Context, ownerID string, client codex.ThreadClient, reference string, archived bool) (ManagedThread, error) {
-	record, err := m.store.Resolve(ownerID, reference, archived)
+	projectID := m.currentProject(ownerID)
+	record, err := m.store.ResolveForProject(ownerID, projectID, reference, archived)
 	if err != nil {
 		return ManagedThread{}, err
 	}
@@ -94,14 +118,14 @@ func (m *Manager) Detail(ctx context.Context, ownerID string, client codex.Threa
 	if err != nil {
 		return ManagedThread{}, fmt.Errorf("read session detail: %w", err)
 	}
-	activeID, _ := m.store.Active(ownerID)
+	activeID, _ := m.store.ActiveForProject(ownerID, projectID)
 	return ManagedThread{
 		Info: thread, Current: activeID == record.ID, Archived: archived,
 	}, nil
 }
 
 func (m *Manager) Stats(ownerID string) Stats {
-	active, archived, currentID, hasCurrent := m.store.Counts(ownerID)
+	active, archived, currentID, hasCurrent := m.store.CountsForProject(ownerID, m.currentProject(ownerID))
 	return Stats{
 		Active:     active,
 		Archived:   archived,
@@ -126,8 +150,9 @@ func (m *Manager) New(ctx context.Context, ownerID string, client codex.ThreadCl
 		}
 		thread.Name = name
 	}
-	oldThreadID, hadOld := m.store.Active(ownerID)
-	if err := m.store.Register(ownerID, thread, true, m.now()); err != nil {
+	projectID := m.currentProject(ownerID)
+	oldThreadID, hadOld := m.store.ActiveForProject(ownerID, projectID)
+	if err := m.store.RegisterProject(ownerID, projectID, thread, true, m.now()); err != nil {
 		_ = client.ArchiveThread(context.WithoutCancel(ctx), thread.ID)
 		return codex.ThreadInfo{}, fmt.Errorf("persist new session: %w", err)
 	}
@@ -138,11 +163,12 @@ func (m *Manager) New(ctx context.Context, ownerID string, client codex.ThreadCl
 }
 
 func (m *Manager) Use(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (codex.ThreadInfo, error) {
-	record, err := m.store.Resolve(ownerID, reference, false)
+	projectID := m.currentProject(ownerID)
+	record, err := m.store.ResolveForProject(ownerID, projectID, reference, false)
 	if err != nil {
 		return codex.ThreadInfo{}, err
 	}
-	oldThreadID, _ := m.store.Active(ownerID)
+	oldThreadID, _ := m.store.ActiveForProject(ownerID, projectID)
 	if oldThreadID == record.ID {
 		return client.ReadThread(ctx, record.ID)
 	}
@@ -150,7 +176,7 @@ func (m *Manager) Use(ctx context.Context, ownerID string, client codex.ThreadCl
 	if err != nil {
 		return codex.ThreadInfo{}, fmt.Errorf("resume session: %w", err)
 	}
-	if err := m.store.SetActive(ownerID, record.ID, m.now()); err != nil {
+	if err := m.store.SetActiveForProject(ownerID, projectID, record.ID, m.now()); err != nil {
 		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), record.ID)
 		return codex.ThreadInfo{}, fmt.Errorf("persist selected session: %w", err)
 	}
@@ -168,7 +194,7 @@ func (m *Manager) Rename(ctx context.Context, ownerID string, client codex.Threa
 		}
 		return codex.ThreadInfo{}, err
 	}
-	threadID, ok := m.store.Active(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
 	if !ok {
 		return codex.ThreadInfo{}, ErrNoActive
 	}
@@ -186,19 +212,20 @@ func (m *Manager) Rename(ctx context.Context, ownerID string, client codex.Threa
 func (m *Manager) Archive(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (string, error) {
 	if strings.TrimSpace(reference) == "" {
 		var ok bool
-		reference, ok = m.store.Active(ownerID)
+		reference, ok = m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
 		if !ok {
 			return "", ErrNoActive
 		}
 	}
-	record, err := m.store.Resolve(ownerID, reference, false)
+	projectID := m.currentProject(ownerID)
+	record, err := m.store.ResolveForProject(ownerID, projectID, reference, false)
 	if err != nil {
 		return "", err
 	}
-	activeID, _ := m.store.Active(ownerID)
+	activeID, _ := m.store.ActiveForProject(ownerID, projectID)
 	nextActive := ""
 	if activeID == record.ID {
-		for _, candidate := range m.store.Records(ownerID, false) {
+		for _, candidate := range m.store.RecordsForProject(ownerID, projectID, false) {
 			if candidate.ID == record.ID {
 				continue
 			}
@@ -214,7 +241,7 @@ func (m *Manager) Archive(ctx context.Context, ownerID string, client codex.Thre
 		}
 		return "", fmt.Errorf("archive session: %w", err)
 	}
-	if err := m.store.MarkArchived(ownerID, record.ID, nextActive, true, m.now()); err != nil {
+	if err := m.store.MarkArchivedForProject(ownerID, projectID, record.ID, nextActive, true, m.now()); err != nil {
 		_, _ = client.UnarchiveThread(context.WithoutCancel(ctx), record.ID)
 		if nextActive != "" {
 			_ = client.UnsubscribeThread(context.WithoutCancel(ctx), nextActive)
@@ -225,7 +252,8 @@ func (m *Manager) Archive(ctx context.Context, ownerID string, client codex.Thre
 }
 
 func (m *Manager) Restore(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (codex.ThreadInfo, error) {
-	record, err := m.store.Resolve(ownerID, reference, true)
+	projectID := m.currentProject(ownerID)
+	record, err := m.store.ResolveForProject(ownerID, projectID, reference, true)
 	if err != nil {
 		return codex.ThreadInfo{}, err
 	}
@@ -233,12 +261,12 @@ func (m *Manager) Restore(ctx context.Context, ownerID string, client codex.Thre
 	if err != nil {
 		return codex.ThreadInfo{}, fmt.Errorf("restore session: %w", err)
 	}
-	_, hasActive := m.store.Active(ownerID)
+	_, hasActive := m.store.ActiveForProject(ownerID, projectID)
 	nextActive := ""
 	if !hasActive {
 		nextActive = record.ID
 	}
-	if err := m.store.MarkArchived(ownerID, record.ID, nextActive, false, m.now()); err != nil {
+	if err := m.store.MarkArchivedForProject(ownerID, projectID, record.ID, nextActive, false, m.now()); err != nil {
 		_ = client.ArchiveThread(context.WithoutCancel(ctx), record.ID)
 		return codex.ThreadInfo{}, fmt.Errorf("persist restored session: %w", err)
 	}
@@ -252,8 +280,9 @@ func (m *Manager) List(ctx context.Context, ownerID string, client codex.ThreadC
 	if pageNumber <= 0 {
 		pageNumber = 1
 	}
-	records := m.store.Records(ownerID, archived)
-	activeID, _ := m.store.Active(ownerID)
+	projectID := m.currentProject(ownerID)
+	records := m.store.RecordsForProject(ownerID, projectID, archived)
+	activeID, _ := m.store.ActiveForProject(ownerID, projectID)
 	owned := make(map[string]Record, len(records))
 	for _, record := range records {
 		owned[record.ID] = record

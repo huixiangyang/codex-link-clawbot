@@ -38,6 +38,36 @@ type ProgressEvent struct {
 // ProgressHandler 接收一次任务中的阶段更新。
 type ProgressHandler func(ProgressEvent)
 
+type TokenUsageBreakdown struct {
+	InputTokens           int64 `json:"inputTokens"`
+	CachedInputTokens     int64 `json:"cachedInputTokens"`
+	OutputTokens          int64 `json:"outputTokens"`
+	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
+	TotalTokens           int64 `json:"totalTokens"`
+}
+
+type ThreadUsage struct {
+	Last               TokenUsageBreakdown `json:"last"`
+	Total              TokenUsageBreakdown `json:"total"`
+	ModelContextWindow *int64              `json:"modelContextWindow"`
+}
+
+type RateLimitWindow struct {
+	UsedPercent int    `json:"usedPercent"`
+	ResetsAt    *int64 `json:"resetsAt"`
+}
+
+type RateLimits struct {
+	Primary   *RateLimitWindow `json:"primary"`
+	Secondary *RateLimitWindow `json:"secondary"`
+}
+
+// UsageProvider 暴露 App Server 推送的结构化用量快照。
+type UsageProvider interface {
+	Usage(threadID string) (ThreadUsage, bool)
+	RateLimits() (RateLimits, bool)
+}
+
 // LocalFile 是微信文件落盘后的受控本机引用。
 // Codex 只能把它当作不可信数据读取，不能直接执行其中的内容。
 type LocalFile struct {

@@ -185,12 +185,12 @@ func TestConversationalSessionFlowCreateCompleteSwitchRenameArchiveRestore(t *te
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"WeClaw", "版本：dev", "1  会话", "3  任务记录", "4  运行中心", "6  使用说明", "回复数字"} {
+	for _, want := range []string{"WeClaw", "版本：dev", "1  项目", "2  会话", "3  最近任务", "4  更多功能", "回复数字"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
 	}
-	sessions := controlReply(t, handler, "owner-1", "1")
+	sessions := controlReply(t, handler, "owner-1", "2")
 	for _, want := range []string{"会话", "会话列表", "搜索会话", "新建会话", "归档当前会话"} {
 		if !strings.Contains(sessions, want) {
 			t.Fatalf("session menu missing %q: %q", want, sessions)
@@ -359,12 +359,12 @@ func TestTaskStatusOffersRefreshAndConfirmedCancellation(t *testing.T) {
 	}()
 
 	status := controlReply(t, handler, "owner-1", "状态")
-	for _, want := range []string{"任务状态：运行中", "1  刷新状态", "2  取消当前任务"} {
+	for _, want := range []string{"任务状态：运行中", "1  刷新状态", "2  暂存下一条指令", "3  取消当前任务"} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("task status missing %q: %q", want, status)
 		}
 	}
-	confirm := controlReply(t, handler, "owner-1", "2")
+	confirm := controlReply(t, handler, "owner-1", "3")
 	if !strings.Contains(confirm, "准备取消当前任务") || !strings.Contains(confirm, "1  确认取消任务") {
 		t.Fatalf("task cancel confirmation = %q", confirm)
 	}

@@ -8,46 +8,43 @@ import (
 
 	"github.com/huixiangyang/weclaw/config"
 	"github.com/huixiangyang/weclaw/ilink"
-	"github.com/huixiangyang/weclaw/messaging"
 )
 
-func TestSchedulerSendsOnceAndPersistsDailyState(t *testing.T) {
-	report := config.ScheduledReportConfig{
-		Name: "项目日报", DailyAt: "09:00", Timezone: "Asia/Shanghai",
-		ProjectDir: "/srv/project", ServiceName: "weclaw.service",
-		HealthURL: "http://127.0.0.1:18011/health", CommitLookbackHours: 24,
+func testAutomation() config.AutomationConfig {
+	return config.AutomationConfig{
+		ID: "daily", Name: "项目日报", ProjectID: "project", DailyAt: "09:00",
+		Timezone: "Asia/Shanghai", NotifyOn: "always", Checks: []string{"git"}, CommitLookbackHours: 24,
 	}
+}
+
+func TestSchedulerRunsDailySlotOnceAndPersistsState(t *testing.T) {
+	automation := testAutomation()
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	now := time.Date(2026, 8, 4, 9, 5, 0, 0, time.FixedZone("CST", 8*60*60))
 	sends := 0
 	collects := 0
-	newTestScheduler := func() *Scheduler {
+	newScheduler := func() *Scheduler {
 		return &Scheduler{
-			reports:    []config.ScheduledReportConfig{report},
-			recipients: []recipient{{client: &ilink.Client{}, userID: "owner"}},
-			statePath:  statePath,
-			collect: func(context.Context, config.ScheduledReportConfig, time.Time) string {
+			automations: []config.AutomationConfig{automation},
+			projects:    map[string]config.ProjectConfig{"project": {ID: "project", Name: "Project", Root: "/srv/project"}},
+			recipients:  []recipient{{client: &ilink.Client{}, userID: "owner"}}, statePath: statePath,
+			collect: func(context.Context, config.AutomationConfig, config.ProjectConfig, time.Time) Result {
 				collects++
-				return "report"
+				return Result{Text: "report", Fingerprint: "stable"}
 			},
-			send: func(context.Context, *ilink.Client, string, string) error {
-				sends++
-				return nil
-			},
-			state: schedulerState{LastSent: make(map[string]string)},
+			send:  func(context.Context, *ilink.Client, string, string) error { sends++; return nil },
+			state: schedulerState{Version: schedulerStateVersion, Runs: make(map[string]automationRunState), LastSent: make(map[string]string)},
 		}
 	}
-
-	first := newTestScheduler()
+	first := newScheduler()
 	first.runDue(context.Background(), now)
 	first.runDue(context.Background(), now.Add(time.Hour))
 	if sends != 1 || collects != 1 {
 		t.Fatalf("first scheduler sends=%d collects=%d", sends, collects)
 	}
-
-	second := newTestScheduler()
+	second := newScheduler()
 	if err := second.loadState(); err != nil {
-		t.Fatalf("loadState() error: %v", err)
+		t.Fatal(err)
 	}
 	second.runDue(context.Background(), now.Add(2*time.Hour))
 	if sends != 1 || collects != 1 {
@@ -55,67 +52,45 @@ func TestSchedulerSendsOnceAndPersistsDailyState(t *testing.T) {
 	}
 }
 
-func TestSchedulerDoesNotSendBeforeDailyTime(t *testing.T) {
-	sends := 0
+func TestSchedulerNotificationPolicies(t *testing.T) {
+	for _, test := range []struct {
+		policy           string
+		anomaly, changed bool
+		want             bool
+	}{
+		{policy: "always", want: true},
+		{policy: "anomaly", anomaly: true, want: true},
+		{policy: "anomaly", changed: true, want: false},
+		{policy: "change", changed: true, want: true},
+		{policy: "anomaly_or_change", anomaly: true, want: true},
+	} {
+		if got := shouldNotify(test.policy, test.anomaly, test.changed); got != test.want {
+			t.Fatalf("shouldNotify(%q) = %v", test.policy, got)
+		}
+	}
+}
+
+func TestAutomationStatusesAndManualRun(t *testing.T) {
+	automation := testAutomation()
+	now := time.Date(2026, 8, 4, 8, 30, 0, 0, time.FixedZone("CST", 8*60*60))
 	scheduler := &Scheduler{
-		reports:    []config.ScheduledReportConfig{{Name: "日报", DailyAt: "09:00", Timezone: "Asia/Shanghai"}},
-		recipients: []recipient{{client: &ilink.Client{}, userID: "owner"}},
-		statePath:  filepath.Join(t.TempDir(), "state.json"),
-		collect:    func(context.Context, config.ScheduledReportConfig, time.Time) string { return "report" },
-		send: func(context.Context, *ilink.Client, string, string) error {
-			sends++
-			return nil
+		automations: []config.AutomationConfig{automation},
+		projects:    map[string]config.ProjectConfig{"project": {ID: "project", Name: "Project", Root: "/srv/project"}},
+		now:         func() time.Time { return now }, statePath: filepath.Join(t.TempDir(), "state.json"),
+		collect: func(context.Context, config.AutomationConfig, config.ProjectConfig, time.Time) Result {
+			return Result{Text: "manual result", Fingerprint: "one", Anomaly: true}
 		},
-		state: schedulerState{LastSent: make(map[string]string)},
+		state: schedulerState{Version: schedulerStateVersion, Runs: make(map[string]automationRunState), LastSent: make(map[string]string)},
 	}
-	now := time.Date(2026, 8, 4, 8, 59, 0, 0, time.FixedZone("CST", 8*60*60))
-	scheduler.runDue(context.Background(), now)
-	if sends != 0 {
-		t.Fatalf("sends before schedule = %d", sends)
-	}
-}
-
-func TestScheduledReportStatusesDescribeDailyLifecyclePerRecipient(t *testing.T) {
-	report := config.ScheduledReportConfig{
-		Name: "项目日报", DailyAt: "09:00", Timezone: "Asia/Shanghai",
-		ProjectDir: "/srv/project", ServiceName: "weclaw.service",
-		HealthURL: "http://127.0.0.1:18011/health",
-	}
-	current := time.Date(2026, 8, 4, 8, 30, 0, 0, time.FixedZone("CST", 8*60*60))
-	scheduler := &Scheduler{
-		reports: []config.ScheduledReportConfig{report},
-		now:     func() time.Time { return current },
-		state:   schedulerState{LastSent: make(map[string]string)},
-	}
-
-	before := scheduler.ScheduledReportStatuses("owner")
-	assertReportStatus(t, before, "等待发送", "2026-08-04 09:00", "")
-
-	current = time.Date(2026, 8, 4, 9, 5, 0, 0, time.FixedZone("CST", 8*60*60))
-	retry := scheduler.ScheduledReportStatuses("owner")
-	assertReportStatus(t, retry, "等待重试", "2026-08-05 09:00", "")
-
-	scheduler.state.LastSent[reportStateKey(report.Name, "owner")] = "2026-08-04"
-	sent := scheduler.ScheduledReportStatuses("owner")
-	assertReportStatus(t, sent, "今日已发送", "2026-08-05 09:00", "2026-08-04")
-
-	// 调度状态按绑定用户隔离，不能泄漏其他接收者的发送记录。
-	foreign := scheduler.ScheduledReportStatuses("another-owner")
-	assertReportStatus(t, foreign, "等待重试", "2026-08-05 09:00", "")
-}
-
-func assertReportStatus(t *testing.T, statuses []messaging.ScheduledReportStatus, state, nextRun, lastSent string) {
-	t.Helper()
-	if len(statuses) != 1 {
+	statuses := scheduler.AutomationStatuses("owner")
+	if len(statuses) != 1 || statuses[0].State != "等待首次运行" || statuses[0].NextRun != "2026-08-04 09:00" {
 		t.Fatalf("statuses = %#v", statuses)
 	}
-	status := statuses[0]
-	if status.State != state || status.NextRun != nextRun || status.LastSent != lastSent {
-		t.Fatalf("status = %#v, want state=%q next=%q last=%q", status, state, nextRun, lastSent)
+	result, err := scheduler.RunAutomation(context.Background(), "owner", "daily")
+	if err != nil || result != "manual result" {
+		t.Fatalf("RunAutomation() = %q, %v", result, err)
 	}
-	if status.Schedule != "每天 09:00" || status.Timezone != "Asia/Shanghai" ||
-		status.ProjectDir != "/srv/project" || status.Service != "weclaw.service" ||
-		status.HealthURL != "http://127.0.0.1:18011/health" {
-		t.Fatalf("status metadata = %#v", status)
+	if got := scheduler.AutomationStatuses("owner")[0].State; got != "异常" {
+		t.Fatalf("manual outcome = %q", got)
 	}
 }

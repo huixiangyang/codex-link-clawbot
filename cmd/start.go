@@ -17,6 +17,7 @@ import (
 	"github.com/huixiangyang/weclaw/config"
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/project"
 	"github.com/huixiangyang/weclaw/reporting"
 	"github.com/huixiangyang/weclaw/session"
 	"github.com/huixiangyang/weclaw/visual"
@@ -88,18 +89,29 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	if len(cfg.Projects) == 1 && cfg.Projects[0].ID == "workspace" {
+		if err := os.MkdirAll(cfg.Projects[0].Root, 0o700); err != nil {
+			return fmt.Errorf("create default project root: %w", err)
+		}
+	}
+	projectManager, err := project.NewManager(cfg.Projects, "")
+	if err != nil {
+		return fmt.Errorf("initialize project manager: %w", err)
+	}
+	initialProject := projectManager.List()[0]
 	codex := codex.NewCodex(codex.CodexConfig{
 		Command: cfg.Codex.Command,
-		Cwd:     cfg.Codex.Cwd,
+		Cwd:     initialProject.Root,
 		Env:     cfg.Codex.Env,
 		Model:   cfg.Codex.Model,
 	})
-	log.Printf("Initializing Codex App Server (command=%s, cwd=%s, model=%s)...", cfg.Codex.Command, cfg.Codex.Cwd, cfg.Codex.Model)
+	log.Printf("Initializing Codex App Server (command=%s, project=%s, cwd=%s, model=%s)...", cfg.Codex.Command, initialProject.ID, initialProject.Root, cfg.Codex.Model)
 	if err := codex.Start(ctx); err != nil {
 		return fmt.Errorf("initialize codex: %w", err)
 	}
 	defer codex.Stop()
 	handler := messaging.NewHandler(codex)
+	handler.SetProjectManager(projectManager)
 	if cfg.Visual.Enabled {
 		visualRenderer, visualErr := visual.NewRenderer(visual.Config{BrowserCommand: cfg.Visual.BrowserCommand})
 		if visualErr != nil {
@@ -124,6 +136,19 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize task history: %w", err)
 	}
 	handler.SetActivityStore(activityStore)
+	libraryStore, err := messaging.NewLibraryStore("")
+	if err != nil {
+		return fmt.Errorf("initialize material and delivery library: %w", err)
+	}
+	handler.SetLibraryStore(libraryStore)
+	remoteLock, err := messaging.NewRemoteLock("", cfg.Security.RemoteLockCode)
+	if err != nil {
+		return fmt.Errorf("initialize remote lock: %w", err)
+	}
+	handler.SetRemoteLock(remoteLock)
+	if cfg.Voice.Enabled {
+		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(cfg.Voice.Command))
+	}
 
 	handler.SetProgressConfig(messaging.ProgressConfig{
 		Enabled:           cfg.Progress.Enabled,
@@ -167,12 +192,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// 定时巡检复用已登录的微信账号主动发送，状态按报告和绑定者持久化去重。
-	reportScheduler, err := reporting.NewScheduler(cfg.ScheduledReports, clients)
+	// 确定性自动化复用已登录账号主动通知，状态按计划和绑定者隔离。
+	reportScheduler, err := reporting.NewScheduler(cfg.Automations, cfg.Projects, clients)
 	if err != nil {
 		return fmt.Errorf("initialize scheduled reports: %w", err)
 	}
-	handler.SetScheduledReportProvider(reportScheduler)
+	handler.SetAutomationProvider(reportScheduler)
 	go reportScheduler.Run(ctx)
 
 	// Codex 就绪后才启动消息轮询。

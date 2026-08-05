@@ -18,7 +18,7 @@ func TestVisualStyleMenuSwitchesPersistsAndIsolatesOwners(t *testing.T) {
 	handler := newTestHandler()
 	handler.SetVisualRenderer(&fakeControlVisualRenderer{})
 	handler.SetVisualStyleStore(store)
-	mainMenu := handler.openMainMenu(context.Background(), "owner-1")
+	mainMenu := handler.openMoreMenu("owner-1")
 	if !strings.Contains(mainMenu, "视觉风格") {
 		t.Fatalf("main menu missing visual styles: %q", mainMenu)
 	}

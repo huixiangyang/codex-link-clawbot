@@ -37,6 +37,19 @@ type activeTask struct {
 	status   string
 	stopping bool
 	finished bool
+	activity string
+}
+
+func (t *activeTask) setActivity(id string) {
+	t.mu.Lock()
+	t.activity = id
+	t.mu.Unlock()
+}
+
+func (t *activeTask) activityID() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.activity
 }
 
 func newActiveTask(parent context.Context) *activeTask {

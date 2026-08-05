@@ -64,6 +64,30 @@ weclaw restart
     "first_message_delay_seconds": 15,
     "message_interval_seconds": 45
   },
+  "projects": [
+    {
+      "id": "weclaw",
+      "name": "WeClaw",
+      "root": "/absolute/path/to/weclaw",
+      "service_name": "weclaw.service",
+      "health_url": "http://127.0.0.1:18011/health",
+      "quick_tasks": [
+        {"id": "review", "name": "Review changes", "prompt": "Review current changes and run the necessary tests"}
+      ]
+    }
+  ],
+  "automations": [
+    {
+      "id": "daily",
+      "name": "Daily checks",
+      "project_id": "weclaw",
+      "daily_at": "09:00",
+      "timezone": "Asia/Shanghai",
+      "notify_on": "anomaly_or_change",
+      "checks": ["git", "service", "health"],
+      "commit_lookback_hours": 24
+    }
+  ],
   "visual": {
     "enabled": true,
     "browser_command": "",
@@ -72,15 +96,15 @@ weclaw restart
   },
   "codex": {
     "command": "codex",
-    "cwd": "/absolute/path/to/project",
     "model": "",
     "env": {}
   },
-  "scheduled_reports": []
+  "security": {"remote_lock_code": "change-this-code"},
+  "voice": {"enabled": false, "command": ""}
 }
 ```
 
-WeClaw always appends `app-server --listen stdio://` to `codex.command`. An empty `cwd` uses `~/.weclaw/workspace`; a configured path must be absolute. An empty `model` preserves the user's Codex default.
+`projects` is the only working-directory allowlist. Sessions and quick tasks are isolated per project, and roots must already exist. WeClaw always appends `app-server --listen stdio://` to `codex.command`; the removed `codex.cwd` field is rejected. An empty `model` preserves the user's Codex default. Automations support either `daily_at` or `every_minutes`, deterministic Git/service/health checks, and `always`, `anomaly`, `change`, or `anomaly_or_change` notification policies.
 
 Visual controls are enabled by default and include five complete template systems: `刊物` uses paper, Chinese serif typography, and restrained red; `构筑` uses flat mineral surfaces and architectural order; `黑标` uses high-contrast black and white with champagne metal accents; `可爱` uses cream paper, rounded forms, and soft color blocks; `简洁` uses generous whitespace, hairlines, and pure information hierarchy. Each has an independent control-card and reading-card layout rather than a color swap. Send `视觉风格`, or use the main menu, to preview and switch. The choice is isolated per WeChat owner, persisted in strict v1 `~/.weclaw/visual-styles.json`, and restored after restart.
 
@@ -91,7 +115,6 @@ Environment overrides:
 - `WECLAW_API_ADDR`
 - `WECLAW_SAVE_DIR`
 - `WECLAW_CODEX_COMMAND`
-- `WECLAW_CODEX_CWD`
 - `WECLAW_CODEX_MODEL`
 - `WECLAW_VISUAL_BROWSER`
 
@@ -101,7 +124,7 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation. Menu state expires after ten minutes, and an expired number remains ordinary Codex input.
 
-Controls also accept direct natural-language phrases, including `新建会话 叫登录排障`, `搜索会话 登录`, `切换会话 登录`, `当前会话`, `会话列表`, `运行中心`, `工作目录`, `视觉风格`, `切换风格 黑标`, `状态`, and `取消`. Session lookup supports exact, prefix, substring, and ordered-character fuzzy matching. Explicit switching with a unique match runs immediately; browsing and search results always open a detail card first. Multiple switch candidates become numbered choices, and every archive requires confirmation.
+The idle home card has only four primary actions: project, session, recent tasks, and more. While a task is active it changes to task status, pending next instruction, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `自动化`, `素材箱`, `交付记录`, `语音简报`, `远程锁定`, `状态`, and `取消`.
 
 The main card always identifies its bridge version. The runtime center adds bridge uptime and API listen address alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
 
@@ -109,7 +132,7 @@ The task-history center keeps the newest 20 Codex turns per bound owner. It show
 
 Successful create, switch, rename, archive, and restore results remain actionable: they link back to the current detail, list, or session center without requiring another `/`. Any ordinary text still leaves that short-lived result state and goes directly to Codex.
 
-When `scheduled_reports` is configured, the main menu adds a read-only scheduled-inspection center. It shows today's delivery state, the next run, timezone, project directory, systemd service, and health endpoint for each plan. Direct phrases such as `定时巡检` and `报告计划` open it without navigating the menu. Scheduling configuration and forced execution deliberately remain unavailable from WeChat.
+The automation center shows schedules, checks, notification policy, last run and delivery, and allows a deterministic manual check. Pure links saved to Linkhoard are indexed in the material library. Successful Codex artifacts are copied into a private delivery archive and can be sent again from WeChat. Image messages containing an annotation intent request a new annotated PNG artifact.
 
 Codex replies at or above `visual.long_reply_min_runes` are parsed into safe heading, paragraph, list, quote, and code blocks, then delivered as at most ten high-density mobile reading cards. Reading cards share the owner's selected visual system and automatic day/night theme, hold more text per page, and size themselves to the actual content to reduce blank space and image count. Reply with `文字版` within 30 minutes to retrieve the complete copyable text. This phrase is always consumed locally: an expired or missing copy returns an explicit notice and never starts a Codex turn or executes an older menu. Excessively large replies, unsupported renderers, and any rendering or upload failure fall back to the full text without losing content.
 
@@ -135,8 +158,8 @@ curl -X POST http://127.0.0.1:18011/api/send \
 ## Security
 
 - Turns use `approvalPolicy: never` and `dangerFullAccess`. The bound owner can drive Codex on the host; bind only a trusted personal account.
-- `~/.weclaw/session-index.json` uses the strict v2 schema, atomic replacement, and mode `0600`.
-- `~/.weclaw/task-history.json` uses a strict schema, atomic replacement, mode `0600`, and a 20-record per-owner limit.
+- `~/.weclaw/session-index.json` uses strict v3 project-scoped active threads; task history uses strict v2 receipts with project, session, duration, and token usage.
+- Project selection, automations, material/delivery records, and remote-lock state use independent strict JSON stores with atomic replacement and mode `0600`.
 - `~/.weclaw/visual-styles.json` uses strict v1 JSON, atomic replacement, mode `0600`, and per-owner style isolation.
 - Global Codex thread results are intersected with the local ownership index before display.
 - Raw terminal output, commands, diffs, and environment variables are never forwarded as progress messages.
@@ -157,6 +180,7 @@ More details:
 - [Long-running task progress](docs/wechat-progress.md)
 - [Attachments, artifacts, and reports](docs/attachments-and-reports.md)
 - [Visual control cards](docs/visual-controls.md)
+- [v2 breaking migration](docs/migration-v2.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

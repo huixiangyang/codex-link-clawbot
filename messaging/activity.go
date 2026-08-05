@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/huixiangyang/weclaw/codex"
 )
 
 var (
@@ -23,7 +25,7 @@ var (
 )
 
 const (
-	activityStoreVersion = 1
+	activityStoreVersion = 2
 	activityHistoryLimit = 20
 )
 
@@ -38,11 +40,16 @@ const (
 )
 
 type ActivityRecord struct {
-	ID         string         `json:"id"`
-	Summary    string         `json:"summary"`
-	Status     ActivityStatus `json:"status"`
-	StartedAt  int64          `json:"started_at"`
-	FinishedAt int64          `json:"finished_at,omitempty"`
+	ID           string         `json:"id"`
+	Summary      string         `json:"summary"`
+	ProjectID    string         `json:"project_id,omitempty"`
+	SessionID    string         `json:"session_id,omitempty"`
+	InputTokens  int64          `json:"input_tokens,omitempty"`
+	OutputTokens int64          `json:"output_tokens,omitempty"`
+	TotalTokens  int64          `json:"total_tokens,omitempty"`
+	Status       ActivityStatus `json:"status"`
+	StartedAt    int64          `json:"started_at"`
+	FinishedAt   int64          `json:"finished_at,omitempty"`
 }
 
 type activityFile struct {
@@ -109,6 +116,10 @@ func NewActivityStore(path string) (*ActivityStore, error) {
 }
 
 func (s *ActivityStore) Start(ownerID, summary string) (string, error) {
+	return s.StartForProject(ownerID, "", summary)
+}
+
+func (s *ActivityStore) StartForProject(ownerID, projectID, summary string) (string, error) {
 	ownerID = strings.TrimSpace(ownerID)
 	summary = normalizeSessionLine(summary, 120)
 	if ownerID == "" || summary == "" {
@@ -123,7 +134,7 @@ func (s *ActivityStore) Start(ownerID, summary string) (string, error) {
 	defer s.mu.Unlock()
 	previous := append([]ActivityRecord(nil), s.state.Owners[ownerID]...)
 	records := append([]ActivityRecord{{
-		ID: id, Summary: summary, Status: ActivityRunning, StartedAt: now.Unix(),
+		ID: id, Summary: summary, ProjectID: strings.TrimSpace(projectID), Status: ActivityRunning, StartedAt: now.Unix(),
 	}}, previous...)
 	if len(records) > activityHistoryLimit {
 		records = records[:activityHistoryLimit]
@@ -134,6 +145,48 @@ func (s *ActivityStore) Start(ownerID, summary string) (string, error) {
 		return "", err
 	}
 	return id, nil
+}
+
+func (s *ActivityStore) AttachSession(ownerID, id, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if id == "" || sessionID == "" {
+		return fmt.Errorf("task and session id are required")
+	}
+	return s.updateRecord(ownerID, id, func(record *ActivityRecord) {
+		record.SessionID = sessionID
+	})
+}
+
+func (s *ActivityStore) AttachUsage(ownerID, id string, usage codex.TokenUsageBreakdown) error {
+	if id == "" {
+		return fmt.Errorf("task id is required")
+	}
+	return s.updateRecord(ownerID, id, func(record *ActivityRecord) {
+		record.InputTokens = usage.InputTokens
+		record.OutputTokens = usage.OutputTokens
+		record.TotalTokens = usage.TotalTokens
+	})
+}
+
+func (s *ActivityStore) updateRecord(ownerID, id string, change func(*ActivityRecord)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := s.state.Owners[ownerID]
+	for index := range records {
+		if records[index].ID != id {
+			continue
+		}
+		previous := records[index]
+		change(&records[index])
+		s.state.Owners[ownerID] = records
+		if err := s.saveLocked(); err != nil {
+			records[index] = previous
+			s.state.Owners[ownerID] = records
+			return err
+		}
+		return nil
+	}
+	return fmt.Errorf("task activity %q not found", id)
 }
 
 func (s *ActivityStore) Finish(ownerID, id string, status ActivityStatus) error {

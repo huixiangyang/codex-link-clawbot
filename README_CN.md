@@ -31,7 +31,7 @@ codex app-server --listen stdio://
 
 1. Go 1.25 或更高版本。
 2. 已安装 `codex`，并完成 Codex 登录。
-3. 能在目标工作目录运行 `codex app-server --listen stdio://`。
+3. 已创建至少一个项目目录，并能在其中运行 `codex app-server --listen stdio://`。
 4. 已安装非 Snap 版 Chromium，用于视觉操作卡片。推荐由 Playwright 管理：
 
 ```bash
@@ -76,6 +76,30 @@ weclaw restart
     "first_message_delay_seconds": 15,
     "message_interval_seconds": 45
   },
+  "projects": [
+    {
+      "id": "weclaw",
+      "name": "WeClaw",
+      "root": "/absolute/path/to/weclaw",
+      "service_name": "weclaw.service",
+      "health_url": "http://127.0.0.1:18011/health",
+      "quick_tasks": [
+        {"id": "review", "name": "审查改动", "prompt": "审查当前改动并运行必要测试"}
+      ]
+    }
+  ],
+  "automations": [
+    {
+      "id": "daily",
+      "name": "每日检查",
+      "project_id": "weclaw",
+      "daily_at": "09:00",
+      "timezone": "Asia/Shanghai",
+      "notify_on": "anomaly_or_change",
+      "checks": ["git", "service", "health"],
+      "commit_lookback_hours": 24
+    }
+  ],
   "visual": {
     "enabled": true,
     "browser_command": "",
@@ -84,15 +108,17 @@ weclaw restart
   },
   "codex": {
     "command": "codex",
-    "cwd": "/absolute/path/to/project",
     "model": "",
     "env": {}
   },
-  "scheduled_reports": []
+  "security": {"remote_lock_code": "change-this-code"},
+  "voice": {"enabled": false, "command": ""}
 }
 ```
 
-`command` 只能是 Codex 可执行文件，不接受额外协议参数；程序固定追加 `app-server --listen stdio://`。`cwd` 为空时使用 `~/.weclaw/workspace`，设置时必须是绝对路径。`model` 为空时使用用户现有 Codex 默认配置。
+`projects` 是 Codex 唯一允许进入的目录白名单；ID 必须稳定且唯一，根目录必须是已存在的干净绝对路径。会话和快捷任务均按项目隔离。`codex.command` 只接受 Codex 可执行文件，程序固定追加 `app-server --listen stdio://`；旧 `codex.cwd` 已删除并会被严格拒绝。`model` 为空时沿用 Codex 默认配置。
+
+自动化可以设置 `daily_at`，或改用 5–1440 的 `every_minutes`，两者必须且只能设置一个。`notify_on` 支持 `always`、`anomaly`、`change`、`anomaly_or_change`；`checks` 支持 `git`、`service`、`health`。语音简报默认关闭；启用后，`voice.command` 必须是绝对路径，并遵循 `command <text> <output.mp3>` 的本机 TTS 包装器契约。
 
 视觉操作卡片默认开启，并提供五套完整模板：`刊物`使用纸张、中文衬线和克制红，`构筑`使用平面石材、几何秩序和建筑色，`黑标`使用高对比黑白与香槟金，`可爱`使用奶油纸、圆润轮廓和柔和色块，`简洁`使用高留白、细线与纯粹信息秩序。五者各自拥有独立的控制卡和阅读卡版式，不是简单换色。发送“视觉风格”或从主菜单进入即可预览并切换；选择按微信账号隔离，保存到严格 v1 的 `~/.weclaw/visual-styles.json`，重启后继续生效。
 
@@ -103,7 +129,6 @@ weclaw restart
 - `WECLAW_API_ADDR`
 - `WECLAW_SAVE_DIR`
 - `WECLAW_CODEX_COMMAND`
-- `WECLAW_CODEX_CWD`
 - `WECLAW_CODEX_MODEL`
 - `WECLAW_VISUAL_BROWSER`
 
@@ -111,7 +136,7 @@ weclaw restart
 
 ## 微信交互
 
-公开入口只有一个 `/`。发送后返回为手机设计的视觉操作卡片，内容随当前任务和会话变化，回复数字即可继续。会话和定时巡检列表每页展示 6 条，可以回复数字，也可以直接说“下一页”“上一页”。会话列表点选后先展示状态和经过清洗的提示摘要，不会立即切换；从详情返回时保留原搜索词和页码。需要输入的卡片会额外附一条短文字提示；菜单 10 分钟后自动失效，失效后的数字仍作为普通内容交给 Codex。
+公开入口只有一个 `/`。空闲主菜单固定为“项目、会话、最近任务、更多功能”四项；任务运行时变为“任务状态、暂存下一条指令、当前会话、更多功能”。会话、自动化、素材和交付列表每页展示 6 条，支持数字与“下一页/上一页”。菜单 10 分钟后自动失效，失效后的数字仍作为普通内容交给 Codex。
 
 不打开菜单也可以直接说：
 
@@ -120,20 +145,24 @@ weclaw restart
 - `切换会话 登录`
 - `重命名当前会话 为发布检查`
 - `归档当前会话`
-- `会话列表`、`当前会话`、`运行中心`、`工作目录`
+- `项目`、`切换项目 weclaw`、`快捷任务`
+- `会话列表`、`当前会话`、`运行中心`
 - `视觉风格`、`切换风格 刊物`、`切换风格 构筑`、`切换风格 黑标`、`切换风格 可爱`、`切换风格 简洁`
-- `状态`、`取消`
-- `定时巡检`、`报告计划`
+- `状态`、`暂存下一条指令`、`清除暂存`、`取消`
+- `自动化`、`素材箱`、`交付记录`
+- `语音简报`、`远程锁定`；锁定后用 `解锁 解锁码` 恢复
 
 会话名称支持精确、前缀、包含和按字符顺序的模糊补全。明确说“切换会话”且唯一匹配时直接执行；普通浏览和搜索结果始终先打开详情。详情可以切换或归档非当前会话，归档与任务取消都要求二次确认。当前会话详情可以直接进入重命名、切换和归档。选择态收到其他普通文字时立即退出，文字原样进入自然语言控制层或 Codex，不会被菜单吞掉。
 
-主控制台始终显示当前 WeClaw 版本。“运行中心”集中展示桥接器启动时长、本地 API 监听地址，以及 Codex App Server 的协议、模型、工作目录和进程号，并提供刷新和工作目录管理入口。
+主控制台始终显示当前 WeClaw 版本与项目。“运行中心”展示启动时长、本地 API、Codex 协议、模型、项目目录、进程号，以及 App Server 推送的主/次额度使用率。
 
-“任务记录”按绑定者保留最近 20 次 Codex turn，展示安全首行摘要、开始/结束时间、用时，以及运行中、完成、失败、取消或重启中断状态。不会保存回答正文、终端输出、附件名或任何私有路径。
+“任务记录”按绑定者保留最近 20 次 Codex turn，详情包含项目、会话短编号、开始/结束时间、用时和本轮 token 用量；仍不会保存回答正文、终端输出、附件名或私有路径。运行中发送新的普通文字会暂存为唯一后续指令，当前任务结束后自动执行，不再要求反复重发。
 
 创建、切换、重命名、归档和恢复完成后，成功卡片仍可继续进入当前详情、列表或会话中心，不必重新发送 `/`。此时直接发送普通内容仍会退出短期操作态并正常进入 Codex。
 
-配置 `scheduled_reports` 后，主菜单自动出现只读“定时巡检”入口。列表展示今日发送状态和最近下次运行，详情展示计划、时区、上次发送、项目目录、systemd 服务与健康端点；多计划同样按 6 条分页，并保留进入详情前的页码。微信端不允许修改调度配置或强制执行巡检。
+“自动化中心”运行不依赖模型的 Git、systemd 与 HTTP 检查。计划可按天或分钟运行，可选择每次、仅异常、仅变化、异常或变化时主动通知；微信详情页还可以立即手动检查，但不能修改配置。
+
+纯链接在 Linkhoard 保存成功后同步进入“链接素材”。Codex 交付物会在 turn 临时目录删除前复制到私有交付库，可在“交付记录”查看并再次发送。发送图片并写“批注图片”“标注这张图”或“在图上标注”会进入图片批注模式，要求 Codex 生成新的 PNG 交付物，不覆盖原图。
 
 达到 `visual.long_reply_min_runes` 的 Codex 回复会被安全解析为标题、段落、列表、引用和代码块，最多生成 10 张高密度移动阅读卡片。阅读卡沿用当前用户选择的视觉风格和自动昼夜主题，每页提高正文容量并根据实际内容计算高度，减少连续图片数量和空白区域。30 分钟内回复“文字版”即可取回完整可复制原文。“文字版”始终由本机控制层消费：缓存过期或不存在时明确提示，不会启动 Codex，也不会误执行旧菜单。内容过长、渲染器不可用、渲染失败或上传失败时自动回退完整文字，不丢失回答。
 
@@ -144,6 +173,7 @@ weclaw restart
 - 微信图片会下载到每次 turn 的私有目录，并作为 Codex `localImage` 输入。每条最多 4 张，单张最大 20 MiB，支持 JPEG、PNG、GIF 和 WebP。
 - PDF、日志、补丁、压缩包和常见源码作为不可信文件交给 Codex；桥接器不会执行或自动解压。
 - Codex 写入本次 turn 专属 `outbox` 的交付物会自动上传回微信。不会解析回复中的任意本机绝对路径。
+- 已发送交付物会复制到 `~/.weclaw/deliveries`，通过“交付记录”再次发送；临时 `inbox/outbox` 仍按 turn 删除。
 - turn 结束、失败或发送“取消”后，私有 `inbox/outbox` 整体删除。
 - 菜单、会话、状态、确认和错误等控制结果由固定本机模板渲染为 PNG；不会执行 Codex 返回的任意 HTML。
 
@@ -165,8 +195,9 @@ curl -X POST http://127.0.0.1:18011/api/send \
 ## 安全边界
 
 - Codex turn 固定使用 `approvalPolicy: never` 和 `dangerFullAccess`。这意味着绑定者能够驱动 Codex 操作本机，必须只绑定你信任的个人微信。
-- 会话索引 `~/.weclaw/session-index.json` 使用 v2 严格格式、原子替换和 `0600` 权限。
-- 任务记录 `~/.weclaw/task-history.json` 使用严格格式、原子替换、`0600` 权限和每个绑定者最多 20 条的硬限制。
+- 会话索引 `~/.weclaw/session-index.json` 使用 v3 严格格式，为每个项目保存独立当前会话。
+- 任务记录 `~/.weclaw/task-history.json` 使用 v2 严格格式；项目选择、自动化、素材交付和远程锁定也使用独立严格状态文件。所有状态均原子替换并使用 `0600` 权限。
+- `security.remote_lock_code` 启用远程锁；锁定会取消活动任务、清除暂存，并在解锁前阻止文字、图片和文件进入 Codex。
 - 会话列表先读取 Codex 全局 thread，再只保留本地所有权索引中的 ID，避免暴露其他 Codex 客户端历史。
 - 终端原始输出、命令文本、diff 和环境变量不会作为进度消息发送到微信。
 - 运行日志使用 SHA-256 派生的稳定短标签代替微信用户/机器人原始 ID，只记录消息长度，不记录问题或回答预览。
@@ -184,8 +215,9 @@ go vet ./...
 
 - [会话管理](docs/session-management.md)
 - [微信长任务进度](docs/wechat-progress.md)
-- [文件、交付物与定时巡检](docs/attachments-and-reports.md)
+- [文件、素材、交付物与自动化](docs/attachments-and-reports.md)
 - [微信视觉操作卡片](docs/visual-controls.md)
+- [v2 破坏性迁移](docs/migration-v2.md)
 - [微信交互验收清单](docs/acceptance.md)
 
 ## License

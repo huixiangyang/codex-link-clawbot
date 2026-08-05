@@ -21,8 +21,8 @@ func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 	for _, want := range []string{
 		"运行中心", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
 		"本地接口：127.0.0.1:18011", "Codex：运行中", "协议：App Server",
-		"模型：使用 Codex 默认配置", "工作目录：/workspace", "Codex PID：4242",
-		"1  工作目录", "2  刷新运行中心",
+		"模型：使用 Codex 默认配置", "项目目录：/workspace", "Codex PID：4242",
+		"1  项目中心", "2  刷新运行中心",
 	} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("runtime center missing %q: %q", want, status)

@@ -87,16 +87,16 @@ func TestControlCardUsesWarningSemanticsForArchiveConfirmation(t *testing.T) {
 	}
 }
 
-func TestControlCardFromScheduledReportDetail(t *testing.T) {
-	reply := "巡检详情：项目日报\n\n状态：今日已发送\n计划：每天 09:00\n时区：Asia/Shanghai\n\n1  刷新巡检详情\n2  返回巡检列表\n\n回复数字操作，0 返回巡检列表。"
+func TestControlCardFromAutomationDetail(t *testing.T) {
+	reply := "自动化详情：项目日报\n\n状态：正常\n计划：每天 09:00\n时区：Asia/Shanghai\n\n1  立即检查\n2  返回自动化中心\n\n回复数字操作，0 返回自动化中心。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantSystem || card.Title != "巡检详情" || card.Subtitle != "项目日报" {
+	if card.Variant != visual.VariantSystem || card.Title != "自动化详情" || card.Subtitle != "项目日报" {
 		t.Fatalf("report card identity = %#v", card)
 	}
-	if len(card.Facts) != 3 || card.Facts[0].Label != "状态" || card.Facts[0].Value != "今日已发送" {
+	if len(card.Facts) != 3 || card.Facts[0].Label != "状态" || card.Facts[0].Value != "正常" {
 		t.Fatalf("report card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 2 || card.Options[1].Label != "返回巡检列表" {
+	if len(card.Options) != 2 || card.Options[1].Label != "返回自动化中心" {
 		t.Fatalf("report card options = %#v", card.Options)
 	}
 }
@@ -219,7 +219,7 @@ func TestVisualRenderFailureFallsBackToFullText(t *testing.T) {
 		MessageState: ilink.MessageStateFinish,
 		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
 	})
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "1  会话") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "1  项目") {
 		t.Fatalf("fallback message = %#v", sent.Msg.ItemList)
 	}
 }

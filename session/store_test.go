@@ -58,10 +58,10 @@ func TestStoreRejectsCorruptOrUnknownSchema(t *testing.T) {
 		data string
 	}{
 		{name: "invalid json", data: `{`},
-		{name: "unknown version", data: `{"version":3,"owners":{}}`},
-		{name: "unknown field", data: `{"version":2,"owners":{},"legacy":true}`},
-		{name: "trailing data", data: `{"version":2,"owners":{}} {}`},
-		{name: "missing owners", data: `{"version":2}`},
+		{name: "unknown version", data: `{"version":2,"owners":{}}`},
+		{name: "unknown field", data: `{"version":3,"owners":{},"legacy":true}`},
+		{name: "trailing data", data: `{"version":3,"owners":{}} {}`},
+		{name: "missing owners", data: `{"version":3}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -73,6 +73,31 @@ func TestStoreRejectsCorruptOrUnknownSchema(t *testing.T) {
 				t.Fatal("OpenStore() should reject invalid state")
 			}
 		})
+	}
+}
+
+func TestStoreIsolatesSessionsByProject(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "session-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	alpha := codex.ThreadInfo{ID: "019fcc03-fc8b-7842-a812-alpha00000001"}
+	beta := codex.ThreadInfo{ID: "019fcc03-fc8b-7842-a812-beta000000002"}
+	if err := store.RegisterProject("owner", "alpha", alpha, true, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterProject("owner", "beta", beta, true, now); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := store.ActiveForProject("owner", "alpha"); !ok || got != alpha.ID {
+		t.Fatalf("alpha active = %q, %v", got, ok)
+	}
+	if got, ok := store.ActiveForProject("owner", "beta"); !ok || got != beta.ID {
+		t.Fatalf("beta active = %q, %v", got, ok)
+	}
+	if _, err := store.ResolveForProject("owner", "alpha", "00000002", false); !errors.Is(err, ErrNotOwned) {
+		t.Fatalf("cross-project resolve error = %v", err)
 	}
 }
 

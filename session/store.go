@@ -16,7 +16,10 @@ import (
 	"github.com/huixiangyang/weclaw/codex"
 )
 
-const indexVersion = 2
+const (
+	indexVersion     = 3
+	DefaultProjectID = "default"
+)
 
 var (
 	ErrNotOwned      = errors.New("session does not belong to this user")
@@ -30,12 +33,13 @@ type indexFile struct {
 }
 
 type ownerData struct {
-	ActiveThreadID string                    `json:"active_thread_id,omitempty"`
-	Threads        map[string]*trackedThread `json:"threads"`
+	ActiveThreads map[string]string         `json:"active_threads"`
+	Threads       map[string]*trackedThread `json:"threads"`
 }
 
 type trackedThread struct {
 	ID             string `json:"id"`
+	ProjectID      string `json:"project_id"`
 	Archived       bool   `json:"archived"`
 	CreatedAt      int64  `json:"created_at"`
 	UpdatedAt      int64  `json:"updated_at"`
@@ -45,6 +49,7 @@ type trackedThread struct {
 // Record 是会话管理器可读取的归属记录，不包含聊天正文。
 type Record struct {
 	ID             string
+	ProjectID      string
 	Archived       bool
 	CreatedAt      int64
 	UpdatedAt      int64
@@ -112,17 +117,20 @@ func validateIndex(index indexFile) error {
 		return fmt.Errorf("session index owners are missing")
 	}
 	for ownerID, owner := range index.Owners {
-		if strings.TrimSpace(ownerID) == "" || owner == nil || owner.Threads == nil {
+		if strings.TrimSpace(ownerID) == "" || owner == nil || owner.Threads == nil || owner.ActiveThreads == nil {
 			return fmt.Errorf("invalid session owner %q", ownerID)
 		}
-		if owner.ActiveThreadID != "" {
-			thread, ok := owner.Threads[owner.ActiveThreadID]
-			if !ok || thread == nil || thread.Archived {
-				return fmt.Errorf("active thread %q is missing or archived", owner.ActiveThreadID)
+		for projectID, threadID := range owner.ActiveThreads {
+			if strings.TrimSpace(projectID) == "" || strings.TrimSpace(threadID) == "" {
+				return fmt.Errorf("invalid active project session")
+			}
+			thread, ok := owner.Threads[threadID]
+			if !ok || thread == nil || thread.Archived || thread.ProjectID != projectID {
+				return fmt.Errorf("active thread %q is missing, archived, or belongs to another project", threadID)
 			}
 		}
 		for id, thread := range owner.Threads {
-			if thread == nil || id == "" || thread.ID != id {
+			if thread == nil || id == "" || thread.ID != id || strings.TrimSpace(thread.ProjectID) == "" {
 				return fmt.Errorf("invalid thread record %q", id)
 			}
 		}
@@ -131,16 +139,24 @@ func validateIndex(index indexFile) error {
 }
 
 func (s *Store) Active(ownerID string) (string, bool) {
+	return s.ActiveForProject(ownerID, DefaultProjectID)
+}
+
+func (s *Store) ActiveForProject(ownerID, projectID string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	state := findOwner(s.index, ownerID)
-	if state == nil || state.ActiveThreadID == "" {
+	if state == nil || state.ActiveThreads[projectID] == "" {
 		return "", false
 	}
-	return state.ActiveThreadID, true
+	return state.ActiveThreads[projectID], true
 }
 
 func (s *Store) Counts(ownerID string) (active, archived int, currentID string, hasCurrent bool) {
+	return s.CountsForProject(ownerID, DefaultProjectID)
+}
+
+func (s *Store) CountsForProject(ownerID, projectID string) (active, archived int, currentID string, hasCurrent bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	state := findOwner(s.index, ownerID)
@@ -148,27 +164,39 @@ func (s *Store) Counts(ownerID string) (active, archived int, currentID string, 
 		return 0, 0, "", false
 	}
 	for _, thread := range state.Threads {
+		if thread.ProjectID != projectID {
+			continue
+		}
 		if thread.Archived {
 			archived++
 		} else {
 			active++
 		}
 	}
-	return active, archived, state.ActiveThreadID, state.ActiveThreadID != ""
+	currentID = state.ActiveThreads[projectID]
+	return active, archived, currentID, currentID != ""
 }
 
 func (s *Store) Owns(ownerID, threadID string) bool {
+	return s.OwnsProject(ownerID, DefaultProjectID, threadID)
+}
+
+func (s *Store) OwnsProject(ownerID, projectID, threadID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	state := findOwner(s.index, ownerID)
 	if state == nil {
 		return false
 	}
-	_, ok := state.Threads[threadID]
-	return ok
+	thread, ok := state.Threads[threadID]
+	return ok && thread.ProjectID == projectID
 }
 
 func (s *Store) Records(ownerID string, archived bool) []Record {
+	return s.RecordsForProject(ownerID, DefaultProjectID, archived)
+}
+
+func (s *Store) RecordsForProject(ownerID, projectID string, archived bool) []Record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	state := findOwner(s.index, ownerID)
@@ -177,11 +205,11 @@ func (s *Store) Records(ownerID string, archived bool) []Record {
 	}
 	records := make([]Record, 0, len(state.Threads))
 	for _, thread := range state.Threads {
-		if thread.Archived != archived {
+		if thread.ProjectID != projectID || thread.Archived != archived {
 			continue
 		}
 		records = append(records, Record{
-			ID: thread.ID, Archived: thread.Archived,
+			ID: thread.ID, ProjectID: thread.ProjectID, Archived: thread.Archived,
 			CreatedAt: thread.CreatedAt, UpdatedAt: thread.UpdatedAt,
 			LastSelectedAt: thread.LastSelectedAt,
 		})
@@ -196,12 +224,16 @@ func (s *Store) Records(ownerID string, archived bool) []Record {
 }
 
 func (s *Store) Resolve(ownerID, reference string, archived bool) (Record, error) {
+	return s.ResolveForProject(ownerID, DefaultProjectID, reference, archived)
+}
+
+func (s *Store) ResolveForProject(ownerID, projectID, reference string, archived bool) (Record, error) {
 	reference = strings.TrimSpace(reference)
 	if len(reference) < 6 {
 		return Record{}, fmt.Errorf("session code must contain at least 6 characters")
 	}
 	var matches []Record
-	for _, record := range s.Records(ownerID, archived) {
+	for _, record := range s.RecordsForProject(ownerID, projectID, archived) {
 		if record.ID == reference || strings.HasSuffix(record.ID, reference) {
 			matches = append(matches, record)
 		}
@@ -216,15 +248,25 @@ func (s *Store) Resolve(ownerID, reference string, archived bool) (Record, error
 }
 
 func (s *Store) Register(ownerID string, thread codex.ThreadInfo, makeActive bool, now time.Time) error {
+	return s.RegisterProject(ownerID, DefaultProjectID, thread, makeActive, now)
+}
+
+func (s *Store) RegisterProject(ownerID, projectID string, thread codex.ThreadInfo, makeActive bool, now time.Time) error {
 	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(thread.ID) == "" {
 		return fmt.Errorf("owner and thread id are required")
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return fmt.Errorf("project id is required")
 	}
 	return s.mutate(func(index *indexFile) error {
 		state := ensureOwner(index, ownerID)
 		record := state.Threads[thread.ID]
 		if record == nil {
-			record = &trackedThread{ID: thread.ID}
+			record = &trackedThread{ID: thread.ID, ProjectID: projectID}
 			state.Threads[thread.ID] = record
+		}
+		if record.ProjectID != projectID {
+			return ErrNotOwned
 		}
 		record.Archived = false
 		if thread.CreatedAt > 0 {
@@ -238,7 +280,7 @@ func (s *Store) Register(ownerID string, thread codex.ThreadInfo, makeActive boo
 			record.UpdatedAt = now.Unix()
 		}
 		if makeActive {
-			state.ActiveThreadID = thread.ID
+			state.ActiveThreads[projectID] = thread.ID
 			record.LastSelectedAt = now.Unix()
 		}
 		return nil
@@ -246,16 +288,20 @@ func (s *Store) Register(ownerID string, thread codex.ThreadInfo, makeActive boo
 }
 
 func (s *Store) SetActive(ownerID, threadID string, now time.Time) error {
+	return s.SetActiveForProject(ownerID, DefaultProjectID, threadID, now)
+}
+
+func (s *Store) SetActiveForProject(ownerID, projectID, threadID string, now time.Time) error {
 	return s.mutate(func(index *indexFile) error {
 		state := findOwner(*index, ownerID)
 		if state == nil {
 			return ErrNotOwned
 		}
 		thread, ok := state.Threads[threadID]
-		if !ok || thread.Archived {
+		if !ok || thread.Archived || thread.ProjectID != projectID {
 			return ErrNotOwned
 		}
-		state.ActiveThreadID = threadID
+		state.ActiveThreads[projectID] = threadID
 		thread.LastSelectedAt = now.Unix()
 		thread.UpdatedAt = maxInt64(thread.UpdatedAt, now.Unix())
 		return nil
@@ -263,22 +309,36 @@ func (s *Store) SetActive(ownerID, threadID string, now time.Time) error {
 }
 
 func (s *Store) MarkArchived(ownerID, threadID, nextActive string, archived bool, now time.Time) error {
+	return s.MarkArchivedForProject(ownerID, DefaultProjectID, threadID, nextActive, archived, now)
+}
+
+func (s *Store) MarkArchivedForProject(ownerID, projectID, threadID, nextActive string, archived bool, now time.Time) error {
 	return s.mutate(func(index *indexFile) error {
 		state := findOwner(*index, ownerID)
 		if state == nil {
 			return ErrNotOwned
 		}
 		thread, ok := state.Threads[threadID]
-		if !ok {
+		if !ok || thread.ProjectID != projectID {
 			return ErrNotOwned
 		}
 		thread.Archived = archived
 		thread.UpdatedAt = maxInt64(thread.UpdatedAt, now.Unix())
-		if archived && state.ActiveThreadID == threadID {
-			state.ActiveThreadID = nextActive
+		if nextActive != "" {
+			next, ok := state.Threads[nextActive]
+			if !ok || next.ProjectID != projectID || next.Archived {
+				return ErrNotOwned
+			}
 		}
-		if !archived && state.ActiveThreadID == "" && nextActive == threadID {
-			state.ActiveThreadID = threadID
+		if archived && state.ActiveThreads[projectID] == threadID {
+			if nextActive == "" {
+				delete(state.ActiveThreads, projectID)
+			} else {
+				state.ActiveThreads[projectID] = nextActive
+			}
+		}
+		if !archived && state.ActiveThreads[projectID] == "" && nextActive == threadID {
+			state.ActiveThreads[projectID] = threadID
 			thread.LastSelectedAt = now.Unix()
 		}
 		return nil
@@ -377,7 +437,7 @@ func cloneIndex(index indexFile) (indexFile, error) {
 func ensureOwner(index *indexFile, ownerID string) *ownerData {
 	owner := index.Owners[ownerID]
 	if owner == nil {
-		owner = &ownerData{Threads: make(map[string]*trackedThread)}
+		owner = &ownerData{ActiveThreads: make(map[string]string), Threads: make(map[string]*trackedThread)}
 		index.Owners[ownerID] = owner
 	}
 	return owner

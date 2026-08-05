@@ -77,12 +77,13 @@ func controlCardFromText(reply string) visual.Card {
 	switch {
 	case first == "WeClaw":
 		card.Title = first
-	case first == "运行中心":
+	case first == "运行中心", first == "项目中心", first == "更多功能", first == "自动化中心",
+		first == "素材与交付", first == "链接素材", first == "交付记录", first == "快捷任务":
 		card.Title = first
 	case first == "视觉风格", first == "视觉风格已切换":
 		card.Title = first
 	case first == "会话", first == "当前会话", first == "会话详情", first == "归档会话详情", first == "搜索会话",
-		first == "工作目录", first == "新建会话", first == "重命名会话":
+		first == "新建会话", first == "重命名会话":
 		card.Title = first
 	case strings.HasPrefix(first, "选择会话") || strings.HasPrefix(first, "恢复会话"):
 		card.Title = first
@@ -95,9 +96,9 @@ func controlCardFromText(reply string) visual.Card {
 	case strings.HasPrefix(first, "Codex："):
 		card.Title = "Codex 运行信息"
 		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "Codex："))
-	case strings.HasPrefix(first, "巡检详情："):
-		card.Title = "巡检详情"
-		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "巡检详情："))
+	case strings.HasPrefix(first, "自动化详情："):
+		card.Title = "自动化详情"
+		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "自动化详情："))
 	case strings.HasPrefix(first, "直接发送文字、图片或文件"):
 		card.Title = "使用说明"
 		consumeFirst = false
@@ -153,7 +154,8 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantHome
 	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消"):
 		return visual.VariantWarning
-	case strings.HasPrefix(text, "运行中心"):
+	case strings.HasPrefix(text, "运行中心") || strings.HasPrefix(text, "项目中心") ||
+		strings.HasPrefix(text, "自动化") || strings.HasPrefix(text, "素材与交付"):
 		return visual.VariantSystem
 	case strings.HasPrefix(text, "视觉风格已切换"):
 		return visual.VariantSuccess
@@ -178,8 +180,8 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantProgress
 	case strings.Contains(text, "会话"):
 		return visual.VariantSession
-	case strings.HasPrefix(text, "Codex：") || strings.HasPrefix(text, "工作目录") || strings.Contains(text, "协议：") ||
-		strings.Contains(text, "定时巡检") || strings.Contains(text, "巡检详情"):
+	case strings.HasPrefix(text, "Codex：") || strings.Contains(text, "项目目录") || strings.Contains(text, "协议：") ||
+		strings.Contains(text, "自动化详情"):
 		return visual.VariantSystem
 	default:
 		return visual.VariantNeutral

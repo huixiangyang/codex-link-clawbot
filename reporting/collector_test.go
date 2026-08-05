@@ -40,16 +40,18 @@ func TestCollectorBuildsGitServiceAndHealthReport(t *testing.T) {
 		}
 		return runCommand(ctx, name, args...)
 	}
-	report := collector.Build(context.Background(), config.ScheduledReportConfig{
-		Name: "项目日报", DailyAt: "09:00", Timezone: "Asia/Shanghai",
-		ProjectDir: project, ServiceName: "weclaw.service", HealthURL: health.URL,
-		CommitLookbackHours: 24,
-	}, time.Now())
+	report := collector.Build(context.Background(), config.AutomationConfig{
+		ID: "daily", Name: "项目日报", DailyAt: "09:00", Timezone: "Asia/Shanghai",
+		Checks: []string{"git", "service", "health"}, CommitLookbackHours: 24,
+	}, config.ProjectConfig{ID: "project", Name: "Project", Root: project, ServiceName: "weclaw.service", HealthURL: health.URL}, time.Now())
 
-	for _, want := range []string{"项目巡检：项目日报", "Git：main", "有 1 项未提交改动", "initial report", "weclaw.service；active", "健康端点：正常（HTTP 200，ok）"} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("report missing %q:\n%s", want, report)
+	for _, want := range []string{"自动化检查：项目日报", "Git：main", "有 1 项未提交改动", "initial report", "weclaw.service；active", "健康端点：正常（HTTP 200，ok）"} {
+		if !strings.Contains(report.Text, want) {
+			t.Fatalf("report missing %q:\n%s", want, report.Text)
 		}
+	}
+	if !report.Anomaly || report.Fingerprint == "" {
+		t.Fatalf("result metadata = %#v", report)
 	}
 }
 
