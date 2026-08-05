@@ -133,7 +133,7 @@ func (m *Manager) Select(ownerID, projectID string) (Definition, error) {
 	}
 	next := cloneState(m.state)
 	next.Owners[ownerID] = projectID
-	if err := saveState(m.path, next); err != nil {
+	if err := m.saveState(next); err != nil {
 		return Definition{}, err
 	}
 	m.state = next

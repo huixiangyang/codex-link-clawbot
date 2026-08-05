@@ -34,7 +34,17 @@
 3. 图片批注必须生成新 PNG，不覆盖原图；长回复按所选刊物、构筑、黑标、可爱或简洁风格生成阅读卡，“文字版”可取回全文。
 4. 自动化详情必须直接读取受限 Git/systemd/HTTP 检查，不调用 Codex 或自由 Shell；相同指纹不得重复通知。
 
-## 5. 游标、健康与排空
+## 5. 统一状态内核
+
+1. 偏好、项目、远程锁、会话、自动化、素材库、微信游标、任务 JSON、配置和账号凭据不得再包含独立的 `CreateTemp + Rename` writer。
+2. 分别在 write、文件 sync、rename 和目录 sync 注入失败，旧文件必须仍可严格读取；内存状态不得声称未提交的新值。
+3. 文件和目录权限分别收紧为 `0600`、`0700`；目标、临时项或任一路径祖先为符号链接时必须拒绝，且不得穿过链接创建文件。
+4. 未知字段、尾随数据、截断 JSON、错误版本和超限文件必须分别归入稳定的 `schema`、`corrupt` 或 `capacity` 分类。
+5. 服务持有状态锁时离线迁移必须返回 `conflict`；服务停止并释放后，同一迁移必须可以执行且保持幂等。
+6. 无版本账号凭据只允许由离线迁移转换为严格 v1；运行时不得兼容或双写旧格式，损坏凭据不得静默跳过。
+7. 私有备份清单的路径、大小和 SHA-256 必须稳定；修改任一备份文件后校验必须失败。
+
+## 6. 游标、健康与排空
 
 1. 入队写盘失败时不得推进微信同步游标；恢复磁盘后同一消息可以成功入队。
 2. 一批消息中前项成功、后项失败时，私有消费回执应避免重做前项，同时保留整批旧游标。
@@ -42,7 +52,7 @@
 4. 排空期间仍可接收和持久化消息，但 Coordinator 不领取新任务。只有运行、发送、staging 和待提交同步批次都为零时 `drain_complete=true`。
 5. `/admin/drain` 与 `/admin/resume` 只接受回环来源。
 
-## 6. 事务部署与回滚
+## 7. 事务部署与回滚
 
 1. `update`、`upgrade`、daemon、PID 文件和 `scripts/cutover-local.sh` 必须不存在。
 2. 发布部署使用 `weclaw deploy <version>`；本地构建使用 `weclaw deploy --binary /absolute/path --expect-version <version>`，候选必须自证精确版本和 Linux 架构。
@@ -52,11 +62,11 @@
 6. 注入迁移失败、启动失败或版本不符，必须恢复旧二进制、systemd 单元、配置、同步游标和完整任务状态，并验证旧版本重新 `ready`。
 7. 部署收据不得含正文、令牌或附件名；成功后立即删除包含私密任务负载的状态快照。
 
-## 7. 自动化验证
+## 8. 自动化验证
 
 ```bash
 go test ./...
-go test -race ./taskqueue ./messaging ./ilink ./api ./cmd
+go test -race ./statefile ./taskqueue ./messaging ./ilink ./api ./cmd
 go vet ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...

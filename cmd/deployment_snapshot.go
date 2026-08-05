@@ -131,7 +131,7 @@ func snapshotState(stateRoot, destination string, manifest *snapshotManifest) er
 }
 
 func snapshotTopLevelFile(name string) bool {
-	return name != "weclaw.log" && name != "cutover-status.log"
+	return name != "weclaw.log" && name != "cutover-status.log" && name != ".state.lock"
 }
 
 func snapshotTreeEntry(root, source, destination string, manifest *snapshotManifest) error {

@@ -1,16 +1,13 @@
 package preference
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/huixiangyang/weclaw/visual"
 )
 
@@ -87,35 +84,16 @@ func NewStore(path string) (*Store, error) {
 		path:  filepath.Clean(path),
 		state: stateFile{Version: storeVersion, Owners: make(map[string]OwnerPreferences)},
 	}
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
-		return nil, fmt.Errorf("create preferences directory: %w", err)
+	found, err := statefile.ReadJSON(store.path, &store.state, statefile.Options{
+		Validate: func() error { return validateState(store.state) },
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load preferences: %w", err)
 	}
-	if err := os.Chmod(filepath.Dir(store.path), 0o700); err != nil {
-		return nil, fmt.Errorf("protect preferences directory: %w", err)
-	}
-	data, err := os.ReadFile(store.path)
-	if errors.Is(err, os.ErrNotExist) {
+	if !found {
 		if err := store.saveLocked(); err != nil {
 			return nil, fmt.Errorf("initialize preferences: %w", err)
 		}
-		return store, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read preferences: %w", err)
-	}
-	if err := os.Chmod(store.path, 0o600); err != nil {
-		return nil, fmt.Errorf("protect preferences: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&store.state); err != nil {
-		return nil, fmt.Errorf("decode preferences: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("decode preferences: trailing data")
-	}
-	if err := validateState(store.state); err != nil {
-		return nil, err
 	}
 	return store, nil
 }
@@ -174,41 +152,9 @@ func (store *Store) update(ownerID string, change func(*OwnerPreferences)) error
 }
 
 func (store *Store) saveLocked() error {
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(filepath.Dir(store.path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(store.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(store.path), ".preferences-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, store.path); err != nil {
-		return err
-	}
-	return os.Chmod(store.path, 0o600)
+	return statefile.WriteJSON(store.path, store.state, statefile.Options{
+		Validate: func() error { return validateState(store.state) },
+	})
 }
 
 func validateState(state stateFile) error {

@@ -1,15 +1,14 @@
 package messaging
 
 import (
-	"bytes"
 	"crypto/subtle"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const remoteLockVersion = 1
@@ -35,23 +34,14 @@ func NewRemoteLock(path, code string) (*RemoteLock, error) {
 		path = filepath.Join(home, ".weclaw", "remote-lock.json")
 	}
 	lock := &RemoteLock{path: path, code: code, state: remoteLockFile{Version: remoteLockVersion, Owners: make(map[string]bool)}}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return lock, nil
-	}
+	found, err := statefile.ReadJSON(path, &lock.state, statefile.Options{
+		Validate: func() error { return validateRemoteLockState(lock.state) },
+	})
 	if err != nil {
-		return nil, fmt.Errorf("read remote lock: %w", err)
+		return nil, fmt.Errorf("load remote lock: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&lock.state); err != nil {
-		return nil, fmt.Errorf("decode remote lock: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("decode remote lock: trailing data")
-	}
-	if lock.state.Version != remoteLockVersion || lock.state.Owners == nil {
-		return nil, fmt.Errorf("invalid remote lock schema")
+	if !found {
+		return lock, nil
 	}
 	if code == "" {
 		for _, locked := range lock.state.Owners {
@@ -116,35 +106,21 @@ func (l *RemoteLock) set(ownerID string, locked bool) error {
 }
 
 func (l *RemoteLock) saveLocked() error {
-	data, err := json.MarshalIndent(l.state, "", "  ")
-	if err != nil {
-		return err
+	return statefile.WriteJSON(l.path, l.state, statefile.Options{
+		Validate: func() error { return validateRemoteLockState(l.state) },
+	})
+}
+
+func validateRemoteLockState(state remoteLockFile) error {
+	if state.Version != remoteLockVersion || state.Owners == nil {
+		return fmt.Errorf("invalid remote lock schema")
 	}
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
-		return err
+	for ownerID, locked := range state.Owners {
+		if strings.TrimSpace(ownerID) == "" || !locked {
+			return fmt.Errorf("invalid remote lock owner")
+		}
 	}
-	temp, err := os.CreateTemp(filepath.Dir(l.path), ".remote-lock-*")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.Write(append(data, '\n')); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, l.path)
+	return nil
 }
 
 func (h *Handler) lockRemote(userID string) string {

@@ -1,12 +1,9 @@
 package messaging
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -15,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const (
@@ -66,29 +65,20 @@ func NewLibraryStore(path string) (*LibraryStore, error) {
 		path: filepath.Clean(path), fileDir: filepath.Join(filepath.Dir(path), "deliveries"), now: time.Now,
 		state: libraryFile{Version: libraryVersion, Owners: make(map[string][]LibraryRecord)},
 	}
-	if err := os.MkdirAll(store.fileDir, 0o700); err != nil {
+	if err := statefile.EnsurePrivateDirectory(store.fileDir); err != nil {
 		return nil, fmt.Errorf("create delivery archive: %w", err)
 	}
-	data, err := os.ReadFile(store.path)
-	if errors.Is(err, os.ErrNotExist) {
+	found, err := statefile.ReadJSON(store.path, &store.state, statefile.Options{
+		Validate: store.validate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load library: %w", err)
+	}
+	if !found {
 		if err := store.saveLocked(); err != nil {
 			return nil, err
 		}
 		return store, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read library: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&store.state); err != nil {
-		return nil, fmt.Errorf("decode library: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("decode library: trailing data")
-	}
-	if err := store.validate(); err != nil {
-		return nil, err
 	}
 	return store, nil
 }
@@ -197,8 +187,8 @@ func (s *LibraryStore) validate() error {
 				if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 					return fmt.Errorf("delivery record escapes private archive")
 				}
-				info, err := os.Stat(record.FilePath)
-				if err != nil || !info.Mode().IsRegular() {
+				info, err := os.Lstat(record.FilePath)
+				if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 					return fmt.Errorf("delivery archive file is missing")
 				}
 			}
@@ -208,35 +198,7 @@ func (s *LibraryStore) validate() error {
 }
 
 func (s *LibraryStore) saveLocked() error {
-	data, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".library-*")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.Write(append(data, '\n')); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, s.path)
+	return statefile.WriteJSON(s.path, s.state, statefile.Options{Validate: s.validate})
 }
 
 func newLibraryRecord(kind LibraryKind, projectID, title string, now time.Time) (LibraryRecord, error) {

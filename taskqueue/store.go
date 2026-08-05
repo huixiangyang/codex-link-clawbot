@@ -3,8 +3,6 @@ package taskqueue
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 type Store struct {
@@ -41,32 +41,23 @@ func newStore(root string, now func() time.Time) (*Store, error) {
 	if !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("task queue root must be an absolute path")
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, fmt.Errorf("create task queue root: %w", err)
-	}
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := statefile.EnsurePrivateDirectory(root); err != nil {
 		return nil, fmt.Errorf("protect task queue root: %w", err)
 	}
 	store := &Store{
 		root: root, indexPath: filepath.Join(root, "index.json"),
 		state: defaultIndex(), now: now,
 	}
-	data, err := os.ReadFile(store.indexPath)
-	if errors.Is(err, os.ErrNotExist) {
+	found, err := statefile.ReadJSON(store.indexPath, &store.state, statefile.Options{
+		MaxBytes: 16 << 20,
+		Validate: func() error { return validateIndex(store.state) },
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load task queue index: %w", err)
+	}
+	if !found {
 		if err := store.saveLocked(); err != nil {
 			return nil, fmt.Errorf("initialize task queue index: %w", err)
-		}
-	} else if err != nil {
-		return nil, fmt.Errorf("read task queue index: %w", err)
-	} else {
-		if err := os.Chmod(store.indexPath, 0o600); err != nil {
-			return nil, fmt.Errorf("protect task queue index: %w", err)
-		}
-		if err := decodeStrictJSON(data, &store.state); err != nil {
-			return nil, fmt.Errorf("decode task queue index: %w", err)
-		}
-		if err := validateIndex(store.state); err != nil {
-			return nil, err
 		}
 	}
 	changed, err := store.recoverLocked()
@@ -259,41 +250,10 @@ func (store *Store) TotalPayloadBytes() int64 {
 }
 
 func (store *Store) saveLocked() error {
-	if err := validateIndex(store.state); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(store.state, "", "  ")
-	if err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(store.root, ".index-")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, store.indexPath); err != nil {
-		return err
-	}
-	if err := os.Chmod(store.indexPath, 0o600); err != nil {
-		return err
-	}
-	return syncDirectory(store.root)
+	return statefile.WriteJSON(store.indexPath, store.state, statefile.Options{
+		MaxBytes: 16 << 20,
+		Validate: func() error { return validateIndex(store.state) },
+	})
 }
 
 func (store *Store) taskPath(taskID string) string {

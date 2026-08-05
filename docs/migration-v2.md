@@ -1,4 +1,4 @@
-# v2.5 破坏性迁移与部署
+# v2.5 / v2.6 破坏性迁移与部署
 
 v2.5 不兼容旧运行状态。运行时只读取当前严格 schema，不猜测、不兜底，也不自动改写旧文件；所有必要迁移只允许在旧服务排空并完全停止后，由目标二进制的一次性离线迁移执行。
 
@@ -10,18 +10,21 @@ v2.5 不兼容旧运行状态。运行时只读取当前严格 schema，不猜�
 - 删除 daemon、PID 文件、`--foreground`、`update`、`upgrade` 和 `scripts/cutover-local.sh`。
 - `start` 永远在前台运行；生产生命周期只交给 systemd 用户服务。
 
-项目、会话、偏好、自动化、素材、交付和远程锁仍使用各自当前严格 schema。此前 v2 的 `codex.cwd`、多 Agent 字段、旧语音字段和 `visual-styles.json` 继续被拒绝，不在 v2.5 迁移中恢复兼容。
+v2.6 删除项目、会话、偏好、自动化、素材、交付、远程锁、同步游标和任务 JSON 各自的文件 writer，统一交给 `statefile`。此前 v2 的 `codex.cwd`、多 Agent 字段、旧语音字段和 `visual-styles.json` 继续被拒绝，不恢复兼容。
+
+账号凭据是 v2.6 唯一需要改变磁盘 schema 的现存领域：无版本账号文件一次性升级为严格 v1。运行时只接受 `version: 1`，不会猜测或静默跳过损坏凭据。
 
 ## 自动离线迁移
 
 `weclaw deploy` 会调用目标候选的隐藏 `migrate-state` 命令，迁移内容严格限定为：
 
 1. 将只有 `get_updates_buf` 的旧 `accounts/*.sync.json` 原子转换为严格 v1。
-2. 已是合法 v1 的同步文件保持不变；未知字段、非法回执或尾随 JSON 立即失败。
-3. 删除已进入事务快照的 `task-history.json` 与 `weclaw.pid`。
-4. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
+2. 将已知无版本 `accounts/*.json` 凭据原子转换为严格 v1；非法或未知结构立即失败。
+3. 已是合法 v1 的同步与凭据文件保持不变；未知字段、非法回执或尾随 JSON 立即失败。
+4. 删除已进入事务快照的 `task-history.json` 与 `weclaw.pid`。
+5. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
 
-迁移命令不是日常修复工具，也不会在 `weclaw start` 中自动运行。
+迁移命令不是日常修复工具，也不会在 `weclaw start` 中自动运行。服务生命周期持有 `~/.weclaw/.state.lock`；服务仍在运行时迁移必须以 `conflict` 失败，部署器停服后才可获取迁移锁。
 
 ## systemd 前提
 

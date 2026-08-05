@@ -94,7 +94,7 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
 
 ```bash
 go test ./...
-go test -race ./taskqueue ./messaging ./ilink ./api ./cmd
+go test -race ./statefile ./taskqueue ./messaging ./ilink ./api ./cmd
 go vet ./...
 systemctl --user status weclaw.service
 curl -fsS http://127.0.0.1:18011/health

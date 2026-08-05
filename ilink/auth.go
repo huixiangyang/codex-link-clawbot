@@ -2,20 +2,25 @@ package ilink
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const (
-	qrCodeURL       = "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3"
-	qrStatusURL     = "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode="
-	statusWait      = "wait"
-	statusScanned   = "scaned"
-	statusConfirmed = "confirmed"
-	statusExpired   = "expired"
+	qrCodeURL          = "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3"
+	qrStatusURL        = "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode="
+	statusWait         = "wait"
+	statusScanned      = "scaned"
+	statusConfirmed    = "confirmed"
+	statusExpired      = "expired"
+	credentialsVersion = 1
 )
 
 // FetchQRCode retrieves a new QR code for login.
@@ -61,6 +66,7 @@ func PollQRStatus(ctx context.Context, qrcode string, onStatus func(status strin
 		switch resp.Status {
 		case statusConfirmed:
 			creds := &Credentials{
+				Version:     credentialsVersion,
 				BotToken:    resp.BotToken,
 				ILinkBotID:  resp.ILinkBotID,
 				BaseURL:     resp.BaseURL,
@@ -117,23 +123,27 @@ func indexOf(s, sub string) int {
 
 // SaveCredentials saves credentials to disk under ~/.weclaw/accounts/{id}.json.
 func SaveCredentials(creds *Credentials) error {
+	if creds == nil {
+		return fmt.Errorf("credentials are required")
+	}
 	dir, err := AccountsDir()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := statefile.EnsurePrivateDirectory(dir); err != nil {
 		return fmt.Errorf("create accounts dir: %w", err)
 	}
 
-	id := NormalizeAccountID(creds.ILinkBotID)
-	path := filepath.Join(dir, id+".json")
-
-	data, err := json.MarshalIndent(creds, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal credentials: %w", err)
+	stored := *creds
+	stored.Version = credentialsVersion
+	if err := validateCredentials(stored); err != nil {
+		return err
 	}
-
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	id := NormalizeAccountID(stored.ILinkBotID)
+	path := filepath.Join(dir, id+".json")
+	if err := statefile.WriteJSON(path, stored, statefile.Options{
+		Validate: func() error { return validateCredentials(stored) },
+	}); err != nil {
 		return fmt.Errorf("write credentials: %w", err)
 	}
 	return nil
@@ -156,19 +166,65 @@ func LoadAllCredentials() ([]*Credentials, error) {
 
 	var result []*Credentials
 	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sync.json") {
+			continue
+		}
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
-		}
+		path := filepath.Join(dir, e.Name())
 		var creds Credentials
-		if json.Unmarshal(data, &creds) == nil && creds.BotToken != "" {
-			result = append(result, &creds)
+		found, err := statefile.ReadJSON(path, &creds, statefile.Options{
+			Validate: func() error { return validateCredentials(creds) },
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load credentials %s: %w", e.Name(), err)
 		}
+		if !found {
+			return nil, fmt.Errorf("credentials %s disappeared during load", e.Name())
+		}
+		if e.Name() != NormalizeAccountID(creds.ILinkBotID)+".json" {
+			return nil, fmt.Errorf("credentials filename does not match its bot id")
+		}
+		result = append(result, &creds)
 	}
 	return result, nil
+}
+
+func validateCredentials(creds Credentials) error {
+	if creds.Version != credentialsVersion {
+		return fmt.Errorf("invalid credentials version")
+	}
+	values := []struct {
+		name  string
+		value string
+		max   int
+	}{
+		{name: "bot_token", value: creds.BotToken, max: 16 << 10},
+		{name: "ilink_bot_id", value: creds.ILinkBotID, max: 512},
+		{name: "ilink_user_id", value: creds.ILinkUserID, max: 512},
+	}
+	for _, item := range values {
+		if strings.TrimSpace(item.value) == "" || len(item.value) > item.max || strings.ContainsAny(item.value, "\r\n") {
+			return fmt.Errorf("invalid credentials %s", item.name)
+		}
+	}
+	baseURL, err := url.Parse(strings.TrimSpace(creds.BaseURL))
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return fmt.Errorf("invalid credentials baseurl")
+	}
+	if baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && isLoopbackCredentialHost(baseURL.Hostname())) {
+		return fmt.Errorf("credentials baseurl must use HTTPS")
+	}
+	return nil
+}
+
+func isLoopbackCredentialHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // CredentialsPath returns the path for display purposes.

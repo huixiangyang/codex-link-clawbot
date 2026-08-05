@@ -22,6 +22,7 @@ import (
 	"github.com/huixiangyang/weclaw/reporting"
 	"github.com/huixiangyang/weclaw/runtimecontrol"
 	"github.com/huixiangyang/weclaw/session"
+	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/huixiangyang/weclaw/taskqueue"
 	"github.com/huixiangyang/weclaw/visual"
 	"github.com/mdp/qrterminal/v3"
@@ -49,6 +50,19 @@ var startCmd = &cobra.Command{
 func runStart(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	stateRoot, err := statefile.DefaultRoot()
+	if err != nil {
+		return fmt.Errorf("resolve state root: %w", err)
+	}
+	stateLease, err := statefile.Acquire(stateRoot, statefile.LeaseRuntime)
+	if err != nil {
+		return fmt.Errorf("acquire runtime state lease: %w", err)
+	}
+	defer func() {
+		if err := stateLease.Close(); err != nil {
+			log.Printf("release runtime state lease: %v", err)
+		}
+	}()
 
 	// Load all accounts
 	accounts, err := ilink.LoadAllCredentials()

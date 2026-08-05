@@ -1,11 +1,9 @@
 package session
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/huixiangyang/weclaw/codex"
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const (
@@ -86,24 +85,16 @@ func OpenStore(path string) (*Store, error) {
 			Owners:  make(map[string]*ownerData),
 		},
 	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return store, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read session index: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	var decoded indexFile
-	if err := decoder.Decode(&decoded); err != nil {
-		return nil, fmt.Errorf("decode session index: %w", err)
+	found, err := statefile.ReadJSON(path, &decoded, statefile.Options{
+		MaxBytes: 8 << 20,
+		Validate: func() error { return validateIndex(decoded) },
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load session index: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("decode session index: trailing data")
-	}
-	if err := validateIndex(decoded); err != nil {
-		return nil, err
+	if !found {
+		return store, nil
 	}
 	store.index = decoded
 	return store, nil
@@ -381,45 +372,10 @@ func (s *Store) mutate(change func(*indexFile) error) error {
 }
 
 func (s *Store) save(index indexFile) error {
-	data, err := json.MarshalIndent(index, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode session index: %w", err)
-	}
-	data = append(data, '\n')
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create session index directory: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".session-index-*")
-	if err != nil {
-		return fmt.Errorf("create temporary session index: %w", err)
-	}
-	tmpPath := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		cleanup()
-		return fmt.Errorf("set session index permissions: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("write session index: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("sync session index: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close session index: %w", err)
-	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace session index: %w", err)
-	}
-	return nil
+	return statefile.WriteJSON(s.path, index, statefile.Options{
+		MaxBytes: 8 << 20,
+		Validate: func() error { return validateIndex(index) },
+	})
 }
 
 func cloneIndex(index indexFile) (indexFile, error) {

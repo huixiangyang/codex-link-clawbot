@@ -41,6 +41,7 @@ type QRStatusResponse struct {
 
 // Credentials stores login session data.
 type Credentials struct {
+	Version     int    `json:"version"`
 	BotToken    string `json:"bot_token"`
 	ILinkBotID  string `json:"ilink_bot_id"`
 	BaseURL     string `json:"baseurl"`

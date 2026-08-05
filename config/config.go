@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 // Config holds the application configuration.
@@ -455,20 +457,14 @@ func Load() (*Config, error) {
 		return cfg, nil
 	}
 
-	data, err := os.ReadFile(path)
+	found, err := statefile.ReadJSON(path, cfg, statefile.Options{MaxBytes: 4 << 20})
 	if err != nil {
-		if os.IsNotExist(err) {
-			loadEnv(cfg)
-			return cfg, cfg.validate()
-		}
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, fmt.Errorf("load config: %w", err)
 	}
-
-	decoded, err := decodeConfig(data)
-	if err != nil {
-		return nil, err
+	if !found {
+		loadEnv(cfg)
+		return cfg, cfg.validate()
 	}
-	cfg = decoded
 	loadEnv(cfg)
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -542,19 +538,19 @@ func loadEnv(cfg *Config) {
 
 // Save saves the configuration to disk.
 func Save(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	if err := cfg.validate(); err != nil {
+		return err
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-
-	return os.WriteFile(path, data, 0o600)
+	return statefile.WriteJSON(path, cfg, statefile.Options{
+		MaxBytes: 4 << 20,
+		Validate: cfg.validate,
+	})
 }

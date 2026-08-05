@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,21 @@ type currentSyncState struct {
 	GetUpdatesBuf string   `json:"get_updates_buf"`
 	PendingCursor string   `json:"pending_cursor,omitempty"`
 	Consumed      []string `json:"consumed,omitempty"`
+}
+
+type legacyCredentialState struct {
+	BotToken    string `json:"bot_token"`
+	ILinkBotID  string `json:"ilink_bot_id"`
+	BaseURL     string `json:"baseurl"`
+	ILinkUserID string `json:"ilink_user_id"`
+}
+
+type currentCredentialState struct {
+	Version     int    `json:"version"`
+	BotToken    string `json:"bot_token"`
+	ILinkBotID  string `json:"ilink_bot_id"`
+	BaseURL     string `json:"baseurl"`
+	ILinkUserID string `json:"ilink_user_id"`
 }
 
 var migrationStateRoot string
@@ -38,11 +54,11 @@ var migrateStateCmd = &cobra.Command{
 	Hidden: true,
 	Args:   cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return migrateStateV25(migrationStateRoot)
+		return migrateStateV26(migrationStateRoot)
 	},
 }
 
-func migrateStateV25(root string) error {
+func migrateStateV26(root string) error {
 	root = filepath.Clean(strings.TrimSpace(root))
 	if !filepath.IsAbs(root) || root == string(filepath.Separator) {
 		return fmt.Errorf("state root must be a specific absolute path")
@@ -54,18 +70,32 @@ func migrateStateV25(root string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("state root must be a real directory")
 	}
+	lease, err := statefile.Acquire(root, statefile.LeaseMigration)
+	if err != nil {
+		return fmt.Errorf("acquire migration state lease: %w", err)
+	}
+	defer lease.Close()
 	accountsPath := filepath.Join(root, "accounts")
 	entries, err := os.ReadDir(accountsPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("list account state: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sync.json") {
+		if entry.IsDir() {
 			continue
 		}
 		path := filepath.Join(accountsPath, entry.Name())
-		if err := migrateSyncFile(path); err != nil {
-			return fmt.Errorf("migrate %s: %w", entry.Name(), err)
+		var migrateErr error
+		switch {
+		case strings.HasSuffix(entry.Name(), ".sync.json"):
+			migrateErr = migrateSyncFile(path)
+		case strings.HasSuffix(entry.Name(), ".json"):
+			migrateErr = migrateCredentialFile(path)
+		default:
+			continue
+		}
+		if migrateErr != nil {
+			return fmt.Errorf("migrate %s: %w", entry.Name(), migrateErr)
 		}
 	}
 	for _, legacyName := range []string{"task-history.json", "weclaw.pid"} {
@@ -75,6 +105,57 @@ func migrateStateV25(root string) error {
 		}
 	}
 	return syncDirectoryPath(root)
+}
+
+func migrateCredentialFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("credentials must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var header map[string]json.RawMessage
+	if err := decodeStrictJSONBytes(data, &header); err != nil {
+		return err
+	}
+	if _, exists := header["version"]; exists {
+		var current currentCredentialState
+		if err := decodeStrictJSONBytes(data, &current); err != nil {
+			return err
+		}
+		if err := validateCredentialState(current.Version, current.BotToken, current.ILinkBotID, current.BaseURL, current.ILinkUserID); err != nil {
+			return err
+		}
+		return os.Chmod(path, 0o600)
+	}
+	var legacy legacyCredentialState
+	if err := decodeStrictJSONBytes(data, &legacy); err != nil {
+		return fmt.Errorf("unsupported legacy credentials schema: %w", err)
+	}
+	if err := validateCredentialState(1, legacy.BotToken, legacy.ILinkBotID, legacy.BaseURL, legacy.ILinkUserID); err != nil {
+		return err
+	}
+	return writePrivateJSONAtomic(path, currentCredentialState{
+		Version: 1, BotToken: legacy.BotToken, ILinkBotID: legacy.ILinkBotID,
+		BaseURL: legacy.BaseURL, ILinkUserID: legacy.ILinkUserID,
+	})
+}
+
+func validateCredentialState(version int, token, botID, baseURL, userID string) error {
+	if version != 1 || strings.TrimSpace(token) == "" || strings.TrimSpace(botID) == "" || strings.TrimSpace(baseURL) == "" || strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("invalid v1 credentials")
+	}
+	for _, value := range []string{token, botID, baseURL, userID} {
+		if strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("invalid multiline credentials")
+		}
+	}
+	return nil
 }
 
 func migrateSyncFile(path string) error {
@@ -137,9 +218,5 @@ func decodeStrictJSONBytes(data []byte, target any) error {
 }
 
 func writePrivateJSONAtomic(path string, value any) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return writeAtomicFile(path, append(data, '\n'), 0o600)
+	return statefile.WriteJSON(path, value, statefile.Options{})
 }

@@ -3,7 +3,6 @@ package taskqueue
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/huixiangyang/weclaw/preference"
+	"github.com/huixiangyang/weclaw/statefile"
 	"github.com/huixiangyang/weclaw/visual"
 )
 
@@ -167,23 +167,16 @@ func (store *Store) LoadResult(ownerID, taskID string) (Result, error) {
 
 func (store *Store) loadResult(task Task) (Result, error) {
 	resultPath := filepath.Join(store.taskPath(task.ID), "result.json")
-	info, err := os.Lstat(resultPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return Result{}, fmt.Errorf("task result file is invalid")
-	}
-	if err := os.Chmod(resultPath, 0o600); err != nil {
-		return Result{}, fmt.Errorf("protect task result: %w", err)
-	}
-	data, err := os.ReadFile(resultPath)
-	if err != nil {
-		return Result{}, fmt.Errorf("read task result: %w", err)
-	}
 	var result Result
-	if err := decodeStrictJSON(data, &result); err != nil {
-		return Result{}, fmt.Errorf("decode task result: %w", err)
+	found, err := statefile.ReadJSON(resultPath, &result, statefile.Options{
+		MaxBytes: maxResultReplyBytes + 1<<20,
+		Validate: func() error { return validateResult(result, task) },
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("load task result: %w", err)
 	}
-	if err := validateResult(result, task); err != nil {
-		return Result{}, err
+	if !found {
+		return Result{}, fmt.Errorf("task result file is missing")
 	}
 	for _, artifact := range result.Artifacts {
 		absolutePath := filepath.Join(store.taskPath(task.ID), artifact.Path)
@@ -292,40 +285,5 @@ func hashRegularFile(path string, expectedSize int64) (string, error) {
 }
 
 func writeJSONAtomic(path string, value any) error {
-	directory := filepath.Dir(path)
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(directory, ".result-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	closeWithError := func(cause error) error {
-		if closeErr := temporary.Close(); cause == nil {
-			return closeErr
-		}
-		return cause
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		return closeWithError(err)
-	}
-	if _, err := temporary.Write(data); err != nil {
-		return closeWithError(err)
-	}
-	if err := temporary.Sync(); err != nil {
-		return closeWithError(err)
-	}
-	if err := closeWithError(nil); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return err
-	}
-	return syncDirectory(directory)
+	return statefile.WriteJSON(path, value, statefile.Options{MaxBytes: maxResultReplyBytes + 1<<20})
 }

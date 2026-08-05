@@ -1,11 +1,8 @@
 package reporting
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,6 +13,7 @@ import (
 	"github.com/huixiangyang/weclaw/config"
 	"github.com/huixiangyang/weclaw/ilink"
 	"github.com/huixiangyang/weclaw/messaging"
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const schedulerStateVersion = 1
@@ -251,69 +249,75 @@ func automationStateKey(automationID, userID string) string {
 func (s *Scheduler) recordRun(id string, run automationRunState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous, existed := s.state.Runs[id]
 	s.state.Runs[id] = run
-	return s.saveStateLocked()
+	if err := s.saveStateLocked(); err != nil {
+		if existed {
+			s.state.Runs[id] = previous
+		} else {
+			delete(s.state.Runs, id)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Scheduler) markSent(id, userID string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.LastSent[automationStateKey(id, userID)] = now.Format("2006-01-02 15:04")
-	return s.saveStateLocked()
+	key := automationStateKey(id, userID)
+	previous, existed := s.state.LastSent[key]
+	s.state.LastSent[key] = now.Format("2006-01-02 15:04")
+	if err := s.saveStateLocked(); err != nil {
+		if existed {
+			s.state.LastSent[key] = previous
+		} else {
+			delete(s.state.LastSent, key)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Scheduler) loadState() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data, err := os.ReadFile(s.statePath)
-	if os.IsNotExist(err) {
-		return nil
-	}
+	found, err := statefile.ReadJSON(s.statePath, &s.state, statefile.Options{
+		Validate: func() error { return validateSchedulerState(s.state) },
+	})
 	if err != nil {
 		return fmt.Errorf("读取自动化状态: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&s.state); err != nil {
-		return fmt.Errorf("解析自动化状态: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("解析自动化状态: trailing data")
-	}
-	if s.state.Version != schedulerStateVersion || s.state.Runs == nil || s.state.LastSent == nil {
-		return fmt.Errorf("自动化状态 schema 无效")
+	if !found {
+		return nil
 	}
 	return nil
 }
 
 func (s *Scheduler) saveStateLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.statePath), 0o700); err != nil {
-		return err
+	return statefile.WriteJSON(s.statePath, s.state, statefile.Options{
+		Validate: func() error { return validateSchedulerState(s.state) },
+	})
+}
+
+func validateSchedulerState(state schedulerState) error {
+	if state.Version != schedulerStateVersion || state.Runs == nil || state.LastSent == nil {
+		return fmt.Errorf("自动化状态 schema 无效")
 	}
-	data, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return err
+	for id, run := range state.Runs {
+		if strings.TrimSpace(id) == "" || run.LastRun < 0 || len(run.LastSlot) > 128 || len(run.Fingerprint) > 256 {
+			return fmt.Errorf("自动化运行状态无效")
+		}
+		switch run.Outcome {
+		case "", "正常", "异常", "发生变化":
+		default:
+			return fmt.Errorf("自动化运行结果无效")
+		}
 	}
-	temp, err := os.CreateTemp(filepath.Dir(s.statePath), ".automation-state-*")
-	if err != nil {
-		return err
+	for key, sentAt := range state.LastSent {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(sentAt) == "" || len(sentAt) > 32 {
+			return fmt.Errorf("自动化投递状态无效")
+		}
 	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.Write(append(data, '\n')); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, s.statePath)
+	return nil
 }

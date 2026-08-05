@@ -203,7 +203,8 @@ curl -X POST http://127.0.0.1:18011/api/send \
 
 - Turns use `approvalPolicy: never` and `dangerFullAccess`. The bound owner can drive Codex on the host; bind only a trusted personal account.
 - `~/.weclaw/session-index.json` uses strict v3 project-scoped active threads. The strict v1 task tree under `~/.weclaw/tasks/` replaces `task-history.json` and separates sanitized index metadata from private requests and frozen delivery results.
-- Project selection, automations, material/delivery records, and remote-lock state use independent strict JSON stores with atomic replacement and mode `0600`.
+- All domain JSON state uses the shared `statefile` transaction kernel: files are `0600`, directories are `0700`, symlinks and oversized input are rejected, and a failed directory sync restores the prior file. Runtime and offline migration hold mutually exclusive state leases.
+- Account credentials use strict v1 JSON. Offline deployment migration adds `version: 1` once; unknown fields, mismatched filenames, and damaged credentials now fail startup instead of being silently skipped.
 - `~/.weclaw/preferences.json` uses strict v1 JSON, atomic replacement, mode `0600`, and per-owner response-mode and style isolation.
 - Global Codex thread results are intersected with the local ownership index before display.
 - Raw terminal output, commands, diffs, and environment variables are never forwarded as progress messages.
@@ -214,7 +215,7 @@ curl -X POST http://127.0.0.1:18011/api/send \
 
 ```bash
 go test ./...
-go test -race ./taskqueue ./messaging ./ilink ./api ./cmd
+go test -race ./statefile ./taskqueue ./messaging ./ilink ./api ./cmd
 go vet ./...
 ```
 
@@ -227,6 +228,7 @@ More details:
 - [v2 breaking migration](docs/migration-v2.md)
 - [v2.5 persistent task queue and safe deployment specification](docs/v2.5-task-queue.md)
 - [v2.6 reliable control plane and state-kernel plan](docs/v2.6-control-plane.md)
+- [v2.6 unified state-kernel implementation](docs/v2.6-state-kernel.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

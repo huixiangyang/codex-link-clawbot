@@ -1,16 +1,16 @@
 package taskqueue
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 func (store *Store) stagePayloadLocked(input EnqueueInput, taskID string) (Request, int64, error) {
@@ -92,11 +92,7 @@ func writeInputAttachment(inboxPath, prefix string, index int, input InputAttach
 }
 
 func writeJSONSync(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFileSync(path, data)
+	return statefile.WriteJSON(path, value, statefile.Options{MaxBytes: 8 << 20, CreateOnly: true})
 }
 
 func writeFileSync(path string, data []byte) error {
@@ -142,23 +138,16 @@ func (store *Store) LoadRequest(ownerID, taskID string) (LoadedRequest, error) {
 		return LoadedRequest{}, fmt.Errorf("task payload is unavailable")
 	}
 	requestPath := filepath.Join(store.taskPath(taskID), "request.json")
-	requestInfo, err := os.Lstat(requestPath)
-	if err != nil || !requestInfo.Mode().IsRegular() || requestInfo.Mode()&os.ModeSymlink != 0 {
-		return LoadedRequest{}, fmt.Errorf("task request file is invalid")
-	}
-	if err := os.Chmod(requestPath, 0o600); err != nil {
-		return LoadedRequest{}, fmt.Errorf("protect task request: %w", err)
-	}
-	data, err := os.ReadFile(requestPath)
-	if err != nil {
-		return LoadedRequest{}, fmt.Errorf("read task request: %w", err)
-	}
 	var request Request
-	if err := decodeStrictJSON(data, &request); err != nil {
-		return LoadedRequest{}, fmt.Errorf("decode task request: %w", err)
+	found, err := statefile.ReadJSON(requestPath, &request, statefile.Options{
+		MaxBytes: 2 << 20,
+		Validate: func() error { return validateRequest(request) },
+	})
+	if err != nil {
+		return LoadedRequest{}, fmt.Errorf("load task request: %w", err)
 	}
-	if err := validateRequest(request); err != nil {
-		return LoadedRequest{}, err
+	if !found {
+		return LoadedRequest{}, fmt.Errorf("task request file is missing")
 	}
 	if request.SourceMessageKey != task.SourceMessageKey || len(request.Images) != task.ImageCount || len(request.Files) != task.FileCount {
 		return LoadedRequest{}, fmt.Errorf("task request does not match its index")
@@ -254,16 +243,4 @@ func (store *Store) verifyAttachment(taskID string, attachment Attachment) (stri
 		return "", fmt.Errorf("task attachment checksum changed")
 	}
 	return absolutePath, nil
-}
-
-func decodeStrictJSON(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("trailing data")
-	}
-	return nil
 }

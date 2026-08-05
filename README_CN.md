@@ -252,6 +252,8 @@ curl -X POST http://127.0.0.1:18011/api/send \
 - 会话索引 `~/.weclaw/session-index.json` 使用 v3 严格格式，为每个项目保存独立当前会话。
 - 任务队列 `~/.weclaw/tasks/index.json` 与每项 `request.json/result.json` 使用严格 v1 格式；旧 `task-history.json` 已删除。目录、正文、附件、令牌和冻结结果均为私有状态，索引只保留脱敏元数据。
 - `~/.weclaw/preferences.json` 使用 v1 严格格式，按绑定者保存回答方式与视觉风格；未知字段、非法枚举和尾随数据都会拒绝启动。
+- 所有领域 JSON 状态统一通过 `statefile` 原子内核读写：文件 `0600`、目录 `0700`，拒绝符号链接与超限内容，并在目录同步失败时恢复旧文件。运行服务与离线迁移持有互斥状态锁。
+- 账号凭据使用严格 v1；部署离线迁移会一次性加入 `version: 1`。未知字段、错误文件名或损坏凭据会明确阻止启动，不再静默跳过。
 - `security.remote_lock_code` 启用远程锁；锁定会取消当前任务并暂停该绑定者队列，解锁后仍需显式继续，避免旧任务突然恢复。
 - 会话列表先读取 Codex 全局 thread，再只保留本地所有权索引中的 ID，避免暴露其他 Codex 客户端历史。
 - 终端原始输出、命令文本、diff 和环境变量不会作为进度消息发送到微信。
@@ -262,7 +264,7 @@ curl -X POST http://127.0.0.1:18011/api/send \
 
 ```bash
 go test ./...
-go test -race ./taskqueue ./messaging ./ilink ./api ./cmd
+go test -race ./statefile ./taskqueue ./messaging ./ilink ./api ./cmd
 go vet ./...
 ```
 
@@ -276,6 +278,7 @@ go vet ./...
 - [微信交互验收清单](docs/acceptance.md)
 - [v2.5 持久任务队列与安全部署规格](docs/v2.5-task-queue.md)
 - [v2.6 可靠控制面与状态内核规划](docs/v2.6-control-plane.md)
+- [v2.6 统一状态内核实现](docs/v2.6-state-kernel.md)
 
 ## License
 

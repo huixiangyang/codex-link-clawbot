@@ -1,17 +1,15 @@
 package ilink
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
 const (
@@ -240,27 +238,15 @@ type syncData struct {
 const syncVersion = 1
 
 func (m *Monitor) loadBuf() error {
-	data, err := os.ReadFile(m.bufPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read sync cursor: %w", err)
-	}
-	if err := os.Chmod(m.bufPath, 0o600); err != nil {
-		return fmt.Errorf("protect sync cursor: %w", err)
-	}
 	var s syncData
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&s); err != nil {
-		return fmt.Errorf("decode sync cursor: %w", err)
+	found, err := statefile.ReadJSON(m.bufPath, &s, statefile.Options{
+		Validate: func() error { return validateSyncData(s) },
+	})
+	if err != nil {
+		return fmt.Errorf("load sync cursor: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("decode sync cursor: trailing data")
-	}
-	if err := validateSyncData(s); err != nil {
-		return err
+	if !found {
+		return nil
 	}
 	for _, key := range s.Consumed {
 		if key == "" || m.consumed[key] {
@@ -281,61 +267,10 @@ func (m *Monitor) saveBuf(next string) error {
 }
 
 func (m *Monitor) saveState(state syncData) error {
-	if err := validateSyncData(state); err != nil {
+	if err := statefile.WriteJSON(m.bufPath, state, statefile.Options{
+		Validate: func() error { return validateSyncData(state) },
+	}); err != nil {
 		return err
-	}
-	dir := filepath.Dir(m.bufPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(dir, ".sync-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	closeWithError := func(cause error) error {
-		if closeErr := temporary.Close(); cause == nil {
-			return closeErr
-		}
-		return cause
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		return closeWithError(err)
-	}
-	if _, err := temporary.Write(append(data, '\n')); err != nil {
-		return closeWithError(err)
-	}
-	if err := temporary.Sync(); err != nil {
-		return closeWithError(err)
-	}
-	if err := closeWithError(nil); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, m.bufPath); err != nil {
-		return err
-	}
-	if err := os.Chmod(m.bufPath, 0o600); err != nil {
-		return err
-	}
-	directory, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return syncErr
-	}
-	if closeErr != nil {
-		return closeErr
 	}
 	m.getUpdatesBuf = state.GetUpdatesBuf
 	m.pendingCursor = state.PendingCursor

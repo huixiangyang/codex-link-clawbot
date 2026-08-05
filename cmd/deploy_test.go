@@ -10,9 +10,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/huixiangyang/weclaw/statefile"
 )
 
-func TestMigrateStateV25ConvertsOnlyKnownLegacyState(t *testing.T) {
+func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
 	root := t.TempDir()
 	accounts := filepath.Join(root, "accounts")
 	if err := os.MkdirAll(accounts, 0o700); err != nil {
@@ -31,30 +33,42 @@ func TestMigrateStateV25ConvertsOnlyKnownLegacyState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := migrateStateV25(root); err != nil {
-		t.Fatalf("migrateStateV25() error = %v", err)
+	credentialsPath := filepath.Join(accounts, "bot.json")
+	if err := os.WriteFile(credentialsPath, []byte(`{"bot_token":"secret","ilink_bot_id":"bot","baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"owner"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateStateV26(root); err != nil {
+		t.Fatalf("migrateStateV26() error = %v", err)
 	}
 	data, err := os.ReadFile(legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\"version\":1,\"get_updates_buf\":\"cursor-1\"}\n" {
+	if string(data) != "{\n  \"version\": 1,\n  \"get_updates_buf\": \"cursor-1\"\n}\n" {
 		t.Fatalf("migrated sync = %q", data)
 	}
 	if info, err := os.Stat(legacy); err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("migrated sync mode = %v, %v", info.Mode().Perm(), err)
+	}
+	credentialsData, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var credentials currentCredentialState
+	if err := decodeStrictJSONBytes(credentialsData, &credentials); err != nil || credentials.Version != 1 || credentials.BotToken != "secret" {
+		t.Fatalf("migrated credentials = %#v, err=%v", credentials, err)
 	}
 	for _, name := range []string{"task-history.json", "weclaw.pid"} {
 		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
 			t.Fatalf("legacy %s still exists: %v", name, err)
 		}
 	}
-	if err := migrateStateV25(root); err != nil {
-		t.Fatalf("idempotent migrateStateV25() error = %v", err)
+	if err := migrateStateV26(root); err != nil {
+		t.Fatalf("idempotent migrateStateV26() error = %v", err)
 	}
 }
 
-func TestMigrateStateV25RejectsUnknownSyncSchema(t *testing.T) {
+func TestMigrateStateV26RejectsUnknownSyncSchema(t *testing.T) {
 	root := t.TempDir()
 	accounts := filepath.Join(root, "accounts")
 	if err := os.MkdirAll(accounts, 0o700); err != nil {
@@ -64,11 +78,23 @@ func TestMigrateStateV25RejectsUnknownSyncSchema(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"get_updates_buf":"cursor","unknown":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateStateV25(root); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("migrateStateV25() error = %v", err)
+	if err := migrateStateV26(root); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("migrateStateV26() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "task-history.json")); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
+	}
+}
+
+func TestMigrateStateV26RejectsRunningStateLease(t *testing.T) {
+	root := t.TempDir()
+	lease, err := statefile.Acquire(root, statefile.LeaseRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	if err := migrateStateV26(root); statefile.ErrorCategory(err) != statefile.CategoryConflict {
+		t.Fatalf("migration error = %v, category = %q", err, statefile.ErrorCategory(err))
 	}
 }
 
