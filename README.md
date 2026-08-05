@@ -38,6 +38,7 @@ npx playwright install chromium
 
 ```bash
 go install github.com/huixiangyang/weclaw@main
+go install github.com/huixiangyang/weclaw/cmd/weclaw-silk-encoder@main
 weclaw login
 weclaw start
 ```
@@ -102,6 +103,8 @@ weclaw restart
   "security": {"remote_lock_code": "change-this-code"},
   "voice": {
     "enabled": true,
+    "ffmpeg_command": "/usr/bin/ffmpeg",
+    "silk_command": "/usr/local/bin/weclaw-silk-encoder",
     "providers": [
       {
         "id": "local",
@@ -111,7 +114,6 @@ weclaw restart
           "command": "/opt/weclaw/piper/venv/bin/piper",
           "model": "/opt/weclaw/piper/voices/zh_CN-huayan-medium.onnx",
           "model_config": "/opt/weclaw/piper/voices/zh_CN-huayan-medium.onnx.json",
-          "ffmpeg_command": "/usr/bin/ffmpeg",
           "length_scale": 1
         }
       },
@@ -134,9 +136,11 @@ weclaw restart
 
 `projects` is the only working-directory allowlist. Sessions and quick tasks are isolated per project, and roots must already exist. WeClaw always appends `app-server --listen stdio://` to `codex.command`; the removed `codex.cwd` field is rejected. An empty `model` preserves the user's Codex default. Automations support either `daily_at` or `every_minutes`, deterministic Git/service/health checks, and `always`, `anomaly`, `change`, or `anomaly_or_change` notification policies.
 
-Voice briefings use a strict ordered chain of one to four `piper` or `mimo` providers. Each provider has its own timeout; failures automatically fall through to the next entry, and the success reply identifies the provider actually used. Piper runs fully offline with a fixed executable and ONNX model, then converts WAV to a 24 kHz mono MP3 through FFmpeg. MiMo calls `/chat/completions`; `WECLAW_MIMO_API_KEY` can inject the key into every configured MiMo provider. Removed flat `voice.base_url`, `voice.api_key`, `voice.model`, `voice.voice`, and legacy `voice.command` fields are rejected.
+Voice briefings use a strict ordered chain of one to four `piper` or `mimo` providers. Each provider has its own timeout; failures automatically fall through to the next entry, and the result identifies the provider actually used. Piper returns its native WAV and MiMo returns MP3; the shared delivery layer uses `voice.ffmpeg_command` to produce 16 kHz mono PCM, invokes the separately built `voice.silk_command` process to isolate SILK codec memory faults, uploads Tencent-compatible SILK V3 as CDN media type `VOICE=4`, and sends a native WeChat voice item with sample rate and playtime metadata. A current conversation context token is mandatory, so an API acknowledgement is never treated as proof of client delivery. `WECLAW_MIMO_API_KEY` can inject the key into every configured MiMo provider. Removed flat MiMo fields, provider-level `piper.ffmpeg_command`, and legacy `voice.command` are rejected.
 
-Run `./scripts/install-piper.sh` to create an isolated Piper 1.4.1 environment and download `zh_CN-huayan-medium` under `~/.weclaw/tts/piper`. It requires `uv` and FFmpeg, does not modify the system Python, and prints the four absolute paths required by the provider configuration. WeClaw does not redistribute voice models; operators must review each model card and dataset license. The upstream model card currently marks the example Huayan dataset license as unknown.
+`weclaw update` supports Linux amd64/arm64 only. It downloads the main program and `weclaw-silk-encoder` from the same immutable release, verifies both against `checksums.txt`, then installs the encoder before replacing the main binary.
+
+Run `./scripts/install-piper.sh` to create an isolated Piper 1.4.1 environment and download `zh_CN-huayan-medium` under `~/.weclaw/tts/piper`. It requires `uv` and FFmpeg, does not modify the system Python, and prints the shared FFmpeg path plus the three Piper paths required by configuration. WeClaw does not redistribute voice models; operators must review each model card and dataset license. The upstream model card currently marks the example Huayan dataset license as unknown.
 
 Visual controls are enabled by default and include five complete template systems: `刊物` uses paper, Chinese serif typography, and restrained red; `构筑` uses flat mineral surfaces and architectural order; `黑标` uses high-contrast black and white with champagne metal accents; `可爱` uses cream paper, rounded forms, and soft color blocks; `简洁` uses generous whitespace, hairlines, and pure information hierarchy. Each has an independent control-card and reading-card layout rather than a color swap. Send `视觉风格`, or use the main menu, to preview and switch. The choice is isolated per WeChat owner, persisted in strict v1 `~/.weclaw/visual-styles.json`, and restored after restart.
 

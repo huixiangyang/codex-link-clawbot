@@ -155,11 +155,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 			switch providerConfig.Type {
 			case "piper":
 				provider = messaging.NewPiperVoiceProvider(providerConfig.ID, messaging.PiperVoiceProviderConfig{
-					Command:       providerConfig.Piper.Command,
-					Model:         providerConfig.Piper.Model,
-					ModelConfig:   providerConfig.Piper.ModelConfig,
-					FFmpegCommand: providerConfig.Piper.FFmpegCommand,
-					LengthScale:   providerConfig.Piper.LengthScale,
+					Command:     providerConfig.Piper.Command,
+					Model:       providerConfig.Piper.Model,
+					ModelConfig: providerConfig.Piper.ModelConfig,
+					LengthScale: providerConfig.Piper.LengthScale,
 				})
 			case "mimo":
 				provider = messaging.NewMiMoVoiceProvider(providerConfig.ID, messaging.MiMoVoiceProviderConfig{
@@ -176,8 +175,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 			})
 			providerIDs = append(providerIDs, providerConfig.ID)
 		}
-		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(providers))
-		log.Printf("Voice briefing enabled (providers=%s)", strings.Join(providerIDs, ","))
+		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(cfg.Voice.FFmpegCommand, cfg.Voice.SilkCommand, providers))
+		log.Printf("Voice briefing enabled (providers=%s, delivery=silk)", strings.Join(providerIDs, ","))
 	}
 
 	handler.SetProgressConfig(messaging.ProgressConfig{

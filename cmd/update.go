@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -16,6 +18,13 @@ import (
 )
 
 const githubRepo = "huixiangyang/weclaw"
+
+const (
+	maxReleaseBinaryBytes = 100 << 20
+	maxChecksumBytes      = 1 << 20
+)
+
+var updateHTTPClient = &http.Client{Timeout: 2 * time.Minute}
 
 func init() {
 	rootCmd.AddCommand(updateCmd)
@@ -44,6 +53,10 @@ var upgradeCmd = &cobra.Command{
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
+	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
+		return fmt.Errorf("self-update only supports linux/amd64 and linux/arm64")
+	}
+
 	// 1. Get latest version
 	fmt.Println("Checking for updates...")
 	latest, err := getLatestVersion()
@@ -58,20 +71,40 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Current: %s -> Latest: %s\n", Version, latest)
 
-	// 2. Download new binary
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-	filename := fmt.Sprintf("weclaw_%s_%s", goos, goarch)
-	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", githubRepo, latest, filename)
+	// 2. 同批下载主程序、SILK 编码器与校验清单，避免只升级一半。
+	mainFilename := fmt.Sprintf("weclaw_linux_%s", runtime.GOARCH)
+	silkFilename := fmt.Sprintf("weclaw_silk_encoder_linux_%s", runtime.GOARCH)
+	releaseBaseURL := fmt.Sprintf("https://github.com/%s/releases/download/%s", githubRepo, latest)
 
-	fmt.Printf("Downloading %s...\n", url)
-	tmpFile, err := downloadFile(url)
+	checksumFile, err := downloadFile(releaseBaseURL+"/checksums.txt", maxChecksumBytes)
 	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
+		return fmt.Errorf("download checksums: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	defer os.Remove(checksumFile)
+	checksums, err := os.ReadFile(checksumFile)
+	if err != nil {
+		return fmt.Errorf("read checksums: %w", err)
+	}
 
-	// 3. Replace current binary
+	fmt.Printf("Downloading %s and %s...\n", mainFilename, silkFilename)
+	mainFile, err := downloadFile(releaseBaseURL+"/"+mainFilename, maxReleaseBinaryBytes)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", mainFilename, err)
+	}
+	defer os.Remove(mainFile)
+	silkFile, err := downloadFile(releaseBaseURL+"/"+silkFilename, maxReleaseBinaryBytes)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", silkFilename, err)
+	}
+	defer os.Remove(silkFile)
+	if err := verifyReleaseChecksum(mainFile, mainFilename, checksums); err != nil {
+		return err
+	}
+	if err := verifyReleaseChecksum(silkFile, silkFilename, checksums); err != nil {
+		return err
+	}
+
+	// 3. 先替换编码器，再替换主程序；主程序永远不会指向缺失的新版编码器。
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)
@@ -80,15 +113,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if resolved, err := resolveSymlink(exePath); err == nil {
 		exePath = resolved
 	}
+	silkPath := filepath.Join(filepath.Dir(exePath), "weclaw-silk-encoder")
 
-	if err := replaceBinary(tmpFile, exePath); err != nil {
-		return fmt.Errorf("replace binary: %w", err)
+	if err := replaceBinary(silkFile, silkPath); err != nil {
+		return fmt.Errorf("replace SILK encoder: %w", err)
 	}
-
-	// Clear macOS quarantine/provenance attributes to avoid Gatekeeper killing the binary
-	if runtime.GOOS == "darwin" {
-		exec.Command("xattr", "-d", "com.apple.quarantine", exePath).Run()
-		exec.Command("xattr", "-d", "com.apple.provenance", exePath).Run()
+	if err := replaceBinary(mainFile, exePath); err != nil {
+		return fmt.Errorf("replace main binary: %w", err)
 	}
 
 	fmt.Printf("Updated to %s\n", latest)
@@ -122,7 +153,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func getLatestVersion() (string, error) {
-	resp, err := http.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo))
+	resp, err := updateHTTPClient.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo))
 	if err != nil {
 		return "", err
 	}
@@ -141,8 +172,8 @@ func getLatestVersion() (string, error) {
 	return release.TagName, nil
 }
 
-func downloadFile(url string) (string, error) {
-	resp, err := http.Get(url)
+func downloadFile(url string, maxBytes int64) (string, error) {
+	resp, err := updateHTTPClient.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -157,12 +188,21 @@ func downloadFile(url string) (string, error) {
 		return "", err
 	}
 
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	written, err := io.Copy(tmp, io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return "", err
 	}
-	tmp.Close()
+	if written > maxBytes {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("response exceeds %d bytes", maxBytes)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return "", err
+	}
 
 	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
 		os.Remove(tmp.Name())
@@ -170,6 +210,36 @@ func downloadFile(url string) (string, error) {
 	}
 
 	return tmp.Name(), nil
+}
+
+func verifyReleaseChecksum(path, filename string, manifest []byte) error {
+	want := ""
+	for _, line := range strings.Split(string(manifest), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != filename {
+			continue
+		}
+		want = strings.ToLower(fields[0])
+		break
+	}
+	if len(want) != sha256.Size*2 {
+		return fmt.Errorf("checksum for %s is missing or invalid", filename)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s for checksum: %w", filename, err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return fmt.Errorf("hash %s: %w", filename, err)
+	}
+	got := fmt.Sprintf("%x", hash.Sum(nil))
+	if got != want {
+		return fmt.Errorf("checksum mismatch for %s", filename)
+	}
+	return nil
 }
 
 func replaceBinary(src, dst string) error {

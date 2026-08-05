@@ -95,6 +95,7 @@ const (
 	CDNMediaTypeImage = 1
 	CDNMediaTypeVideo = 2
 	CDNMediaTypeFile  = 3
+	CDNMediaTypeVoice = 4
 )
 
 // GetUploadURLRequest is the body for getuploadurl.
@@ -133,7 +134,6 @@ type MediaInfo struct {
 // VoiceItem holds voice content.
 type VoiceItem struct {
 	Media         *MediaInfo `json:"media,omitempty"`
-	VoiceSize     int        `json:"voice_size,omitempty"`
 	EncodeType    int        `json:"encode_type,omitempty"` // 1=pcm 2=adpcm 3=feature 4=speex 5=amr 6=silk 7=mp3
 	BitsPerSample int        `json:"bits_per_sample,omitempty"`
 	SampleRate    int        `json:"sample_rate,omitempty"` // Hz

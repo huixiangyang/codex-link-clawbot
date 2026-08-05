@@ -8,10 +8,10 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  test:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,32 +19,62 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: true
 
-      - name: Build
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            echo "The following files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test ./... -count=1 -race
+
+      - name: Build packages
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -count=1 -race -v
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: ./config
+            target: FuzzDecodeConfig
+          - package: ./ilink
+            target: FuzzDecodeGetUpdatesResponse
+          - package: ./messaging
+            target: FuzzValidateInboundFile
+          - package: ./messaging
+            target: FuzzValidatedImageExtension
+          - package: ./codex
+            target: FuzzCodexEventDecoders
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run fuzz smoke test
+        run: go test "${{ matrix.package }}" -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=10s
 
   build:
-    needs: test
+    needs: [quality, fuzz-smoke]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
+        goarch: [amd64, arm64]
 
     steps:
       - uses: actions/checkout@v4
@@ -52,73 +82,31 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: true
 
-      - name: Determine version
+      - name: Determine immutable development version
         id: version
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "version=v0.0.0-beta+${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=v0.0.0-alpha+${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          fi
+        shell: bash
+        run: echo "version=v1.0.0-dev.$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build
+      - name: Build Linux binary
         env:
           CGO_ENABLED: 0
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
         run: |
-          EXT=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          go build -trimpath -ldflags="-s -w -X github.com/huixiangyang/weclaw/cmd.Version=${{ steps.version.outputs.version }}" \
-            -o weclaw_${{ matrix.goos }}_${{ matrix.goarch }}${EXT} .
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/huixiangyang/weclaw/cmd.Version=${{ steps.version.outputs.version }}" \
+            -o weclaw_linux_${GOARCH} .
+          go build -trimpath -ldflags="-s -w" \
+            -o weclaw_silk_encoder_linux_${GOARCH} ./cmd/weclaw-silk-encoder
 
       - uses: actions/upload-artifact@v4
         with:
-          name: weclaw_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: weclaw_${{ matrix.goos }}_${{ matrix.goarch }}*
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        working-directory: dist
-        run: sha256sum weclaw_* > checksums.txt
-
-      - name: Determine release tag
-        id: tag
-        run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "tag=beta-latest" >> "$GITHUB_OUTPUT"
-            echo "name=Beta (main @ $(echo ${{ github.sha }} | cut -c1-7))" >> "$GITHUB_OUTPUT"
-          else
-            SAFE_BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
-            echo "tag=alpha-${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
-            echo "name=Alpha (${SAFE_BRANCH} @ $(echo ${{ github.sha }} | cut -c1-7))" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Delete existing release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release delete "${{ steps.tag.outputs.tag }}" --repo "${{ github.repository }}" --yes 2>/dev/null || true
-
-      - name: Create pre-release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.name }}
-          prerelease: true
-          target_commitish: ${{ github.sha }}
-          files: |
-            dist/weclaw_*
-            dist/checksums.txt
-          body: |
-            Pre-release build from `${{ github.ref_name }}` branch.
-            Commit: ${{ github.sha }}
+          name: weclaw_linux_${{ matrix.goarch }}
+          path: |
+            weclaw_linux_${{ matrix.goarch }}
+            weclaw_silk_encoder_linux_${{ matrix.goarch }}
+            THIRD_PARTY_NOTICES.md
+          if-no-files-found: error
+          retention-days: 7

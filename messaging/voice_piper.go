@@ -14,11 +14,10 @@ import (
 const maxVoiceProcessLogBytes = 16 << 10
 
 type PiperVoiceProviderConfig struct {
-	Command       string
-	Model         string
-	ModelConfig   string
-	FFmpegCommand string
-	LengthScale   float64
+	Command     string
+	Model       string
+	ModelConfig string
+	LengthScale float64
 }
 
 type PiperVoiceProvider struct {
@@ -32,41 +31,35 @@ func NewPiperVoiceProvider(id string, config PiperVoiceProviderConfig) *PiperVoi
 
 func (v *PiperVoiceProvider) ID() string { return v.id }
 
-func (v *PiperVoiceProvider) Generate(ctx context.Context, text string) ([]byte, error) {
+func (v *PiperVoiceProvider) Generate(ctx context.Context, text string) (VoiceAudio, error) {
 	dir, err := os.MkdirTemp("", "weclaw-piper-*")
 	if err != nil {
-		return nil, fmt.Errorf("创建 Piper 临时目录: %w", err)
+		return VoiceAudio{}, fmt.Errorf("创建 Piper 临时目录: %w", err)
 	}
 	defer os.RemoveAll(dir)
 	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("保护 Piper 临时目录: %w", err)
+		return VoiceAudio{}, fmt.Errorf("保护 Piper 临时目录: %w", err)
 	}
 	wavPath := filepath.Join(dir, "voice.wav")
-	mp3Path := filepath.Join(dir, "voice.mp3")
 
 	piperArgs := []string{"-m", v.config.Model, "-c", v.config.ModelConfig, "--length-scale", strconv.FormatFloat(v.config.LengthScale, 'f', -1, 64), "-f", wavPath, "--", text}
 	if err := runVoiceCommand(ctx, v.config.Command, piperArgs...); err != nil {
-		return nil, fmt.Errorf("Piper 合成失败: %w", err)
+		return VoiceAudio{}, fmt.Errorf("Piper 合成失败: %w", err)
 	}
 	if err := validateVoiceFile(wavPath, 50<<20); err != nil {
-		return nil, fmt.Errorf("Piper 未生成有效 WAV: %w", err)
+		return VoiceAudio{}, fmt.Errorf("Piper 未生成有效 WAV: %w", err)
 	}
 	if err := os.Chmod(wavPath, 0o600); err != nil {
-		return nil, fmt.Errorf("保护 Piper WAV: %w", err)
+		return VoiceAudio{}, fmt.Errorf("保护 Piper WAV: %w", err)
 	}
-
-	ffmpegArgs := []string{"-hide_banner", "-loglevel", "error", "-y", "-i", wavPath, "-codec:a", "libmp3lame", "-b:a", "64k", "-ar", "24000", "-ac", "1", mp3Path}
-	if err := runVoiceCommand(ctx, v.config.FFmpegCommand, ffmpegArgs...); err != nil {
-		return nil, fmt.Errorf("Piper MP3 转码失败: %w", err)
-	}
-	if err := os.Chmod(mp3Path, 0o600); err != nil {
-		return nil, fmt.Errorf("保护 Piper MP3: %w", err)
-	}
-	audio, err := readVoiceFile(mp3Path)
+	audio, err := readVoiceFile(wavPath, 50<<20)
 	if err != nil {
-		return nil, err
+		return VoiceAudio{}, fmt.Errorf("读取 Piper WAV: %w", err)
 	}
-	return audio, nil
+	if !isWAV(audio) {
+		return VoiceAudio{}, fmt.Errorf("Piper 返回了无效的 WAV 音频")
+	}
+	return VoiceAudio{Data: audio, Format: VoiceAudioWAV}, nil
 }
 
 func runVoiceCommand(ctx context.Context, command string, args ...string) error {
@@ -117,18 +110,18 @@ func validateVoiceFile(path string, maxBytes int64) error {
 	return nil
 }
 
-func readVoiceFile(path string) ([]byte, error) {
+func readVoiceFile(path string, maxBytes int64) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Piper MP3: %w", err)
+		return nil, err
 	}
 	defer file.Close()
-	audio, err := io.ReadAll(io.LimitReader(file, maxVoiceBytes+1))
+	audio, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("读取 Piper MP3: %w", err)
+		return nil, err
 	}
-	if len(audio) == 0 || len(audio) > maxVoiceBytes || !isMP3(audio) {
-		return nil, fmt.Errorf("Piper 返回了无效的 MP3 音频")
+	if len(audio) == 0 || int64(len(audio)) > maxBytes {
+		return nil, fmt.Errorf("音频文件大小无效")
 	}
 	return audio, nil
 }

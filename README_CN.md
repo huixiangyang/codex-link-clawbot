@@ -44,6 +44,7 @@ npx playwright install chromium
 
 ```bash
 go install github.com/huixiangyang/weclaw@main
+go install github.com/huixiangyang/weclaw/cmd/weclaw-silk-encoder@main
 weclaw start
 ```
 
@@ -114,6 +115,8 @@ weclaw restart
   "security": {"remote_lock_code": "change-this-code"},
   "voice": {
     "enabled": true,
+    "ffmpeg_command": "/usr/bin/ffmpeg",
+    "silk_command": "/usr/local/bin/weclaw-silk-encoder",
     "providers": [
       {
         "id": "local",
@@ -123,7 +126,6 @@ weclaw restart
           "command": "/opt/weclaw/piper/venv/bin/piper",
           "model": "/opt/weclaw/piper/voices/zh_CN-huayan-medium.onnx",
           "model_config": "/opt/weclaw/piper/voices/zh_CN-huayan-medium.onnx.json",
-          "ffmpeg_command": "/usr/bin/ffmpeg",
           "length_scale": 1
         }
       },
@@ -148,13 +150,15 @@ weclaw restart
 
 自动化可以设置 `daily_at`，或改用 5–1440 的 `every_minutes`，两者必须且只能设置一个。`notify_on` 支持 `always`、`anomaly`、`change`、`anomaly_or_change`；`checks` 支持 `git`、`service`、`health`。
 
-语音简报使用严格的有序提供商链，支持 1–4 个 `piper` 或 `mimo` 提供商。程序从 `providers` 第一项开始调用；单项失败或超时后自动尝试下一项，全部失败时一次性返回每个提供商的原因，成功提示会显示实际提供商 ID。最终统一转换并发送真正的微信 MP3 语音消息，不需要用户在微信选择线路。
+语音简报使用严格的有序提供商链，支持 1–4 个 `piper` 或 `mimo` 提供商。程序从 `providers` 第一项开始调用；单项失败或超时后自动尝试下一项，全部失败时一次性返回每个提供商的原因，受理提示会显示实际提供商 ID。提供商音频统一通过 FFmpeg 转为 16 kHz 单声道 PCM，再由独立 `weclaw-silk-encoder` 进程编码为腾讯 SILK V3，以 `VOICE=4` 上传并作为微信原生语音条发送。发送必须带当前会话令牌，接口受理不再被描述为客户端已送达。
 
-`piper` 完全离线运行，直接启动固定可执行文件和 ONNX 模型生成 WAV，再由 FFmpeg 转成 24 kHz 单声道 MP3；参数不经过 Shell，因此正文不能注入命令。`length_scale` 越大语速越慢，允许 0.5–2。推荐使用 `zh_CN-huayan-medium` 中文模型。
+`piper` 完全离线运行，直接启动固定可执行文件和 ONNX 模型生成 WAV；参数不经过 Shell，因此正文不能注入命令。`length_scale` 越大语速越慢，允许 0.5–2。推荐使用 `zh_CN-huayan-medium` 中文模型。SILK 编码放在独立进程中，编码器故障不会拖垮主桥接服务。
 
-仓库提供隔离安装器 `./scripts/install-piper.sh`。它要求系统已有 `uv` 和 FFmpeg，只把 Piper 1.4.1、缺失的 CLI 依赖和中文模型写入 `~/.weclaw/tts/piper`，完成后输出应填入配置的四个绝对路径；不会修改系统 Python。WeClaw 不分发声音模型，部署者必须自行检查所选模型卡和数据集许可；示例 `huayan` 的上游模型卡目前把数据集许可标为 Unknown。
+仓库提供隔离安装器 `./scripts/install-piper.sh`。它要求系统已有 `uv` 和 FFmpeg，只把 Piper 1.4.1、缺失的 CLI 依赖和中文模型写入 `~/.weclaw/tts/piper`，完成后输出共享 FFmpeg 路径和三个 Piper 路径；不会修改系统 Python。`weclaw-silk-encoder` 必须与主程序同时安装。WeClaw 不分发声音模型，部署者必须自行检查所选模型卡和数据集许可；示例 `huayan` 的上游模型卡目前把数据集许可标为 Unknown。
 
-`mimo` 通过 `/chat/completions` 调用 MiMo V2.5 TTS。密钥可以写入私有配置，也可以用 `WECLAW_MIMO_API_KEY` 注入到所有 MiMo 提供商。模型固定为 `mimo-v2.5-tts`；可选音色为 `冰糖`、`茉莉`、`苏打`、`白桦`、`Mia`、`Chloe`、`Milo`、`Dean`。旧的扁平 `voice.base_url`、`voice.api_key`、`voice.model`、`voice.voice` 以及更早的 `voice.command` 均已删除并会被拒绝。
+`mimo` 通过 `/chat/completions` 调用 MiMo V2.5 TTS。密钥可以写入私有配置，也可以用 `WECLAW_MIMO_API_KEY` 注入到所有 MiMo 提供商。模型固定为 `mimo-v2.5-tts`；可选音色为 `冰糖`、`茉莉`、`苏打`、`白桦`、`Mia`、`Chloe`、`Milo`、`Dean`。旧的扁平 `voice.base_url`、`voice.api_key`、`voice.model`、`voice.voice`、提供商级 `piper.ffmpeg_command` 以及更早的 `voice.command` 均已删除并会被拒绝。
+
+`weclaw update` 只支持 Linux amd64/arm64。更新时会从同一个不可变发布中下载主程序与 `weclaw-silk-encoder`，按 `checksums.txt` 分别校验，并先安装编码器再替换主程序，避免只升级一半。
 
 视觉操作卡片默认开启，并提供五套完整模板：`刊物`使用纸张、中文衬线和克制红，`构筑`使用平面石材、几何秩序和建筑色，`黑标`使用高对比黑白与香槟金，`可爱`使用奶油纸、圆润轮廓和柔和色块，`简洁`使用高留白、细线与纯粹信息秩序。五者各自拥有独立的控制卡和阅读卡版式，不是简单换色。发送“视觉风格”或从主菜单进入即可预览并切换；选择按微信账号隔离，保存到严格 v1 的 `~/.weclaw/visual-styles.json`，重启后继续生效。
 

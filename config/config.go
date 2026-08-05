@@ -43,8 +43,10 @@ func (c SecurityConfig) validate() error {
 }
 
 type VoiceConfig struct {
-	Enabled   bool                  `json:"enabled"`
-	Providers []VoiceProviderConfig `json:"providers,omitempty"`
+	Enabled       bool                  `json:"enabled"`
+	FFmpegCommand string                `json:"ffmpeg_command,omitempty"`
+	SilkCommand   string                `json:"silk_command,omitempty"`
+	Providers     []VoiceProviderConfig `json:"providers,omitempty"`
 }
 
 type VoiceProviderConfig struct {
@@ -56,11 +58,10 @@ type VoiceProviderConfig struct {
 }
 
 type PiperVoiceProviderConfig struct {
-	Command       string  `json:"command"`
-	Model         string  `json:"model"`
-	ModelConfig   string  `json:"model_config"`
-	FFmpegCommand string  `json:"ffmpeg_command"`
-	LengthScale   float64 `json:"length_scale"`
+	Command     string  `json:"command"`
+	Model       string  `json:"model"`
+	ModelConfig string  `json:"model_config"`
+	LengthScale float64 `json:"length_scale"`
 }
 
 type MiMoVoiceProviderConfig struct {
@@ -74,6 +75,12 @@ type MiMoVoiceProviderConfig struct {
 func (c VoiceConfig) validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	if !filepath.IsAbs(c.FFmpegCommand) || filepath.Clean(c.FFmpegCommand) != c.FFmpegCommand {
+		return fmt.Errorf("voice.ffmpeg_command must be a clean absolute path")
+	}
+	if !filepath.IsAbs(c.SilkCommand) || filepath.Clean(c.SilkCommand) != c.SilkCommand {
+		return fmt.Errorf("voice.silk_command must be a clean absolute path")
 	}
 	if len(c.Providers) == 0 || len(c.Providers) > 4 {
 		return fmt.Errorf("voice.providers must contain between 1 and 4 providers")
@@ -121,7 +128,6 @@ func (c PiperVoiceProviderConfig) validate(prefix string) error {
 		{field: "command", path: c.Command},
 		{field: "model", path: c.Model},
 		{field: "model_config", path: c.ModelConfig},
-		{field: "ffmpeg_command", path: c.FFmpegCommand},
 	}
 	for _, item := range paths {
 		if !filepath.IsAbs(item.path) || filepath.Clean(item.path) != item.path {
@@ -462,6 +468,21 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
+	decoded, err := decodeConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	cfg = decoded
+	loadEnv(cfg)
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// decodeConfig 只负责严格解析本地配置，不读取环境变量，便于独立验证不可信输入。
+func decodeConfig(data []byte) (*Config, error) {
+	cfg := DefaultConfig()
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(cfg); err != nil {
@@ -469,10 +490,6 @@ func Load() (*Config, error) {
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse config: trailing data")
-	}
-	loadEnv(cfg)
-	if err := cfg.validate(); err != nil {
-		return nil, err
 	}
 	return cfg, nil
 }

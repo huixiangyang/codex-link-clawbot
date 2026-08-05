@@ -51,7 +51,7 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
 		t.Fatalf("unexpected default visual config: %#v", cfg.Visual)
 	}
-	if cfg.Voice.Enabled || len(cfg.Voice.Providers) != 0 {
+	if cfg.Voice.Enabled || cfg.Voice.FFmpegCommand != "" || cfg.Voice.SilkCommand != "" || len(cfg.Voice.Providers) != 0 {
 		t.Fatalf("unexpected default voice config: %#v", cfg.Voice)
 	}
 }
@@ -228,6 +228,8 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 	}
 	cfg.Security.RemoteLockCode = "secure-code"
 	cfg.Voice.Enabled = true
+	cfg.Voice.FFmpegCommand = "/usr/bin/ffmpeg"
+	cfg.Voice.SilkCommand = "/usr/local/bin/weclaw-silk-encoder"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.providers") {
 		t.Fatalf("missing providers error = %v", err)
 	}
@@ -254,7 +256,7 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 		ID: "local", Type: "piper", TimeoutSeconds: 30,
 		Piper: &PiperVoiceProviderConfig{
 			Command: "/opt/piper/bin/piper", Model: "/opt/piper/voice.onnx", ModelConfig: "/opt/piper/voice.onnx.json",
-			FFmpegCommand: "/usr/bin/ffmpeg", LengthScale: 1,
+			LengthScale: 1,
 		},
 	}}, cfg.Voice.Providers...)
 	if err := cfg.validate(); err != nil {

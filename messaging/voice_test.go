@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -50,7 +51,7 @@ func TestVoiceBriefingCallsMiMoTTSContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(audio) != string(wantAudio) {
+	if audio.Format != VoiceAudioMP3 || string(audio.Data) != string(wantAudio) {
 		t.Fatalf("audio = %v, want %v", audio, wantAudio)
 	}
 }
@@ -90,7 +91,7 @@ func TestVoiceBriefingRejectsInvalidAudio(t *testing.T) {
 }
 
 func TestVoiceBriefingRejectsOversizeTextBeforeRequest(t *testing.T) {
-	voice := NewVoiceBriefing([]VoiceProviderEntry{{Provider: &stubVoiceProvider{id: "local", audio: validTestMP3()}, Timeout: time.Second}})
+	voice := NewVoiceBriefing("/usr/bin/ffmpeg", "/usr/bin/weclaw-silk-encoder", []VoiceProviderEntry{{Provider: &stubVoiceProvider{id: "local", audio: validTestMP3()}, Timeout: time.Second}})
 	if _, err := voice.Generate(context.Background(), strings.Repeat("字", maxVoiceTextRunes+1)); err == nil || !strings.Contains(err.Error(), "2500") {
 		t.Fatalf("error = %v", err)
 	}
@@ -99,7 +100,7 @@ func TestVoiceBriefingRejectsOversizeTextBeforeRequest(t *testing.T) {
 func TestVoiceBriefingFallsBackInConfiguredOrder(t *testing.T) {
 	first := &stubVoiceProvider{id: "local", waitForContext: true}
 	second := &stubVoiceProvider{id: "mimo", audio: validTestMP3()}
-	voice := NewVoiceBriefing([]VoiceProviderEntry{
+	voice := NewVoiceBriefing("/usr/bin/ffmpeg", "/usr/bin/weclaw-silk-encoder", []VoiceProviderEntry{
 		{Provider: first, Timeout: 10 * time.Millisecond},
 		{Provider: second, Timeout: time.Second},
 	})
@@ -114,7 +115,7 @@ func TestVoiceBriefingFallsBackInConfiguredOrder(t *testing.T) {
 }
 
 func TestVoiceBriefingReportsEveryProviderFailure(t *testing.T) {
-	voice := NewVoiceBriefing([]VoiceProviderEntry{
+	voice := NewVoiceBriefing("/usr/bin/ffmpeg", "/usr/bin/weclaw-silk-encoder", []VoiceProviderEntry{
 		{Provider: &stubVoiceProvider{id: "local", err: context.DeadlineExceeded}, Timeout: time.Second},
 		{Provider: &stubVoiceProvider{id: "mimo", err: context.Canceled}, Timeout: time.Second},
 	})
@@ -125,25 +126,20 @@ func TestVoiceBriefingReportsEveryProviderFailure(t *testing.T) {
 	}
 }
 
-func TestPiperVoiceProviderGeneratesMP3(t *testing.T) {
+func TestPiperVoiceProviderGeneratesWAV(t *testing.T) {
 	dir := t.TempDir()
 	piper := filepath.Join(dir, "piper")
-	ffmpeg := filepath.Join(dir, "ffmpeg")
 	writeExecutable(t, piper, `#!/bin/sh
 output=''
 while [ "$#" -gt 0 ]; do
   if [ "$1" = '-f' ]; then shift; output="$1"; fi
   shift
 done
-printf 'RIFFfake-wave' > "$output"
-`)
-	writeExecutable(t, ffmpeg, `#!/bin/sh
-for output do :; done
-printf 'ID3\004\000\000\000\000\000\000' > "$output"
+printf 'RIFFxxxxWAVEdata' > "$output"
 `)
 	provider := NewPiperVoiceProvider("local", PiperVoiceProviderConfig{
 		Command: piper, Model: filepath.Join(dir, "voice.onnx"), ModelConfig: filepath.Join(dir, "voice.onnx.json"),
-		FFmpegCommand: ffmpeg, LengthScale: 1,
+		LengthScale: 1,
 	})
 
 	sentinel := filepath.Join(dir, "injected")
@@ -151,7 +147,7 @@ printf 'ID3\004\000\000\000\000\000\000' > "$output"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !isMP3(audio) {
+	if audio.Format != VoiceAudioWAV || !isWAV(audio.Data) {
 		t.Fatalf("audio = %v", audio)
 	}
 	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
@@ -159,17 +155,18 @@ printf 'ID3\004\000\000\000\000\000\000' > "$output"
 	}
 }
 
-func TestPiperVoiceProviderLive(t *testing.T) {
+func TestPiperVoicePipelineLive(t *testing.T) {
 	command := os.Getenv("WECLAW_TEST_PIPER_COMMAND")
 	model := os.Getenv("WECLAW_TEST_PIPER_MODEL")
 	modelConfig := os.Getenv("WECLAW_TEST_PIPER_MODEL_CONFIG")
 	ffmpeg := os.Getenv("WECLAW_TEST_FFMPEG_COMMAND")
-	if command == "" || model == "" || modelConfig == "" || ffmpeg == "" {
+	silkCommand := os.Getenv("WECLAW_TEST_SILK_COMMAND")
+	if command == "" || model == "" || modelConfig == "" || ffmpeg == "" || silkCommand == "" {
 		t.Skip("未配置本机 Piper 实测环境")
 	}
 	provider := NewPiperVoiceProvider("local", PiperVoiceProviderConfig{
 		Command: command, Model: model, ModelConfig: modelConfig,
-		FFmpegCommand: ffmpeg, LengthScale: 1,
+		LengthScale: 1,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -177,20 +174,28 @@ func TestPiperVoiceProviderLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !isMP3(audio) || len(audio) < 1000 {
-		t.Fatalf("unexpected live audio: bytes=%d", len(audio))
+	if audio.Format != VoiceAudioWAV || !isWAV(audio.Data) || len(audio.Data) < 1000 {
+		t.Fatalf("unexpected live audio: format=%s bytes=%d", audio.Format, len(audio.Data))
+	}
+	wechatVoice, err := EncodeWeChatVoice(ctx, ffmpeg, silkCommand, audio)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wechatVoice.PlaytimeMS <= 0 || !bytes.HasPrefix(wechatVoice.Data, []byte("\x02#!SILK_V3")) {
+		t.Fatalf("unexpected WeChat voice: playtime=%d bytes=%d", wechatVoice.PlaytimeMS, len(wechatVoice.Data))
 	}
 }
 
-func TestSendPiperVoiceLive(t *testing.T) {
-	if os.Getenv("WECLAW_TEST_SEND_VOICE") != "1" {
-		t.Skip("未启用微信语音实发测试")
+func TestUploadWeChatVoiceLive(t *testing.T) {
+	if os.Getenv("WECLAW_TEST_UPLOAD_VOICE") != "1" {
+		t.Skip("未启用微信语音 CDN 实测")
 	}
 	command := os.Getenv("WECLAW_TEST_PIPER_COMMAND")
 	model := os.Getenv("WECLAW_TEST_PIPER_MODEL")
 	modelConfig := os.Getenv("WECLAW_TEST_PIPER_MODEL_CONFIG")
 	ffmpeg := os.Getenv("WECLAW_TEST_FFMPEG_COMMAND")
-	if command == "" || model == "" || modelConfig == "" || ffmpeg == "" {
+	silkCommand := os.Getenv("WECLAW_TEST_SILK_COMMAND")
+	if command == "" || model == "" || modelConfig == "" || ffmpeg == "" || silkCommand == "" {
 		t.Fatal("本机 Piper 实测环境不完整")
 	}
 	accounts, err := ilink.LoadAllCredentials()
@@ -198,27 +203,79 @@ func TestSendPiperVoiceLive(t *testing.T) {
 		t.Fatalf("load WeChat credentials: count=%d err=%v", len(accounts), err)
 	}
 	client := ilink.NewClient(accounts[0])
-	if client.OwnerUserID() == "" {
-		t.Fatal("WeChat owner user ID is empty")
-	}
 	provider := NewPiperVoiceProvider("local", PiperVoiceProviderConfig{
-		Command: command, Model: model, ModelConfig: modelConfig,
-		FFmpegCommand: ffmpeg, LengthScale: 1,
+		Command: command, Model: model, ModelConfig: modelConfig, LengthScale: 1,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	audio, err := provider.Generate(ctx, "本机语音服务已经接入。网络服务不可用时，也可以继续生成语音。")
+	audio, err := provider.Generate(ctx, "微信语音上传链路测试。")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SendVoice(ctx, client, client.OwnerUserID(), audio, ""); err != nil {
+	voice, err := EncodeWeChatVoice(ctx, ffmpeg, silkCommand, audio)
+	if err != nil {
 		t.Fatal(err)
+	}
+	uploaded, err := UploadFileToCDN(ctx, client, voice.Data, client.OwnerUserID(), ilink.CDNMediaTypeVoice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uploaded.DownloadParam == "" || uploaded.FileSize != len(voice.Data) {
+		t.Fatalf("uploaded voice = %#v", uploaded)
+	}
+}
+
+func TestEncodeWeChatVoiceCreatesTencentSILK(t *testing.T) {
+	dir := t.TempDir()
+	ffmpeg := filepath.Join(dir, "ffmpeg")
+	writeExecutable(t, ffmpeg, `#!/bin/sh
+head -c 32000 /dev/zero
+`)
+	silkCommand := filepath.Join(dir, "silk")
+	writeExecutable(t, silkCommand, `#!/bin/sh
+cat >/dev/null
+printf '\002#!SILK_V3encoded'
+`)
+	voice, err := EncodeWeChatVoice(context.Background(), ffmpeg, silkCommand, validTestMP3())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if voice.PlaytimeMS != 1000 || !strings.HasPrefix(string(voice.Data), "\x02#!SILK_V3") {
+		t.Fatalf("voice = playtime:%d bytes:%d", voice.PlaytimeMS, len(voice.Data))
+	}
+}
+
+func TestSendVoiceRejectsMissingContextToken(t *testing.T) {
+	voice := WeChatVoice{Data: append([]byte("\x02#!SILK_V3"), 1), PlaytimeMS: 20}
+	if err := SendVoice(context.Background(), nil, "owner", voice, ""); err == nil || !strings.Contains(err.Error(), "context token") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestVoiceMessageItemUsesNativeSilkProtocol(t *testing.T) {
+	item := newVoiceMessageItem(&UploadedFile{
+		DownloadParam: "download-token",
+		AESKeyHex:     "00112233445566778899aabbccddeeff",
+	}, 1234)
+	if item.Type != ilink.ItemTypeVoice || item.VoiceItem == nil {
+		t.Fatalf("item = %#v", item)
+	}
+	voice := item.VoiceItem
+	if voice.EncodeType != 6 || voice.BitsPerSample != 16 || voice.SampleRate != 16000 || voice.Playtime != 1234 {
+		t.Fatalf("voice metadata = %#v", voice)
+	}
+	data, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "voice_size") || !strings.Contains(string(data), "download-token") {
+		t.Fatalf("voice JSON = %s", data)
 	}
 }
 
 type stubVoiceProvider struct {
 	id             string
-	audio          []byte
+	audio          VoiceAudio
 	err            error
 	waitForContext bool
 	calls          int
@@ -226,17 +283,17 @@ type stubVoiceProvider struct {
 
 func (p *stubVoiceProvider) ID() string { return p.id }
 
-func (p *stubVoiceProvider) Generate(ctx context.Context, _ string) ([]byte, error) {
+func (p *stubVoiceProvider) Generate(ctx context.Context, _ string) (VoiceAudio, error) {
 	p.calls++
 	if p.waitForContext {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return VoiceAudio{}, ctx.Err()
 	}
 	return p.audio, p.err
 }
 
-func validTestMP3() []byte {
-	return []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0}
+func validTestMP3() VoiceAudio {
+	return VoiceAudio{Data: []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0}, Format: VoiceAudioMP3}
 }
 
 func writeExecutable(t *testing.T, path, body string) {

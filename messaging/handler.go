@@ -220,7 +220,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			if err != nil {
 				reply = fmt.Sprintf("语音简报生成失败：%v", err)
 			} else {
-				reply = fmt.Sprintf("语音简报已生成并发送。提供商：%s。", providerID)
+				reply = fmt.Sprintf("微信接口已受理语音简报。提供商：%s。", providerID)
 			}
 		}
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {

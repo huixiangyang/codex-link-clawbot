@@ -11,7 +11,7 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "缺少 ffmpeg，无法生成微信 MP3 语音。" >&2
+	echo "缺少 ffmpeg，无法生成微信 SILK 语音。" >&2
   exit 1
 fi
 
@@ -30,7 +30,7 @@ fi
 chmod 600 "${MODEL_PATH}" "${CONFIG_PATH}"
 
 echo "Piper 已安装。"
+echo "ffmpeg_command=$(command -v ffmpeg)"
 echo "command=${VENV_DIR}/bin/piper"
 echo "model=${MODEL_PATH}"
 echo "model_config=${CONFIG_PATH}"
-echo "ffmpeg_command=$(command -v ffmpeg)"
