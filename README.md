@@ -218,6 +218,7 @@ More details:
 - [Attachments, artifacts, and reports](docs/attachments-and-reports.md)
 - [Visual control cards](docs/visual-controls.md)
 - [v2 breaking migration](docs/migration-v2.md)
+- [v2.5 persistent task queue and safe deployment specification](docs/v2.5-task-queue.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License

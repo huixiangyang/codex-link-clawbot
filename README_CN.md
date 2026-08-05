@@ -265,6 +265,7 @@ go vet ./...
 - [微信视觉操作卡片](docs/visual-controls.md)
 - [v2 破坏性迁移](docs/migration-v2.md)
 - [微信交互验收清单](docs/acceptance.md)
+- [v2.5 持久任务队列与安全部署规格](docs/v2.5-task-queue.md)
 
 ## License
 
