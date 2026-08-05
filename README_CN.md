@@ -150,7 +150,7 @@ weclaw restart
 
 自动化可以设置 `daily_at`，或改用 5–1440 的 `every_minutes`，两者必须且只能设置一个。`notify_on` 支持 `always`、`anomaly`、`change`、`anomaly_or_change`；`checks` 支持 `git`、`service`、`health`。
 
-语音简报使用严格的有序提供商链，支持 1–4 个 `piper` 或 `mimo` 提供商。程序从 `providers` 第一项开始调用；单项失败或超时后自动尝试下一项，全部失败时一次性返回每个提供商的原因，受理提示会显示实际提供商 ID。提供商音频统一通过 FFmpeg 转为 16 kHz 单声道 PCM，再由独立 `weclaw-silk-encoder` 进程编码为腾讯 SILK V3，以 `VOICE=4` 上传并作为微信原生语音条发送。发送必须带当前会话令牌，接口受理不再被描述为客户端已送达。
+语音简报使用严格的有序提供商链，支持 1–4 个 `piper` 或 `mimo` 提供商。程序从 `providers` 第一项开始调用；单项失败或超时后自动尝试下一项，全部失败时一次性返回每个提供商的原因，受理提示会显示实际提供商 ID。提供商音频统一通过 FFmpeg 转为 16 kHz 单声道 PCM，再由独立 `weclaw-silk-encoder` 进程编码为腾讯 SILK V3，以 `VOICE=4` 上传并作为微信原生语音条发送。CDN 引用严格使用上传响应的 `X-Encrypted-Param`，不复用只用于上传的 `upload_param`。发送必须带当前会话令牌，接口受理不再被描述为客户端已送达。
 
 `piper` 完全离线运行，直接启动固定可执行文件和 ONNX 模型生成 WAV；参数不经过 Shell，因此正文不能注入命令。`length_scale` 越大语速越慢，允许 0.5–2。推荐使用 `zh_CN-huayan-medium` 中文模型。SILK 编码放在独立进程中，编码器故障不会拖垮主桥接服务。
 

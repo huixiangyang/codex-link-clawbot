@@ -1,25 +1,37 @@
 package messaging
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	"github.com/huixiangyang/weclaw/ilink"
 )
 
-func TestSelectCDNDownloadParamUsesVoiceUploadTokenFallback(t *testing.T) {
-	if got := selectCDNDownloadParam(ilink.CDNMediaTypeVoice, "upload", "", ""); got != "upload" {
-		t.Fatalf("voice download token = %q", got)
+func TestUploadToCDNUsesOfficialDownloadHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("X-Encrypted-Param", "download-token")
+		response.Header().Set("X-Encrypted-Query-Param", "legacy-token")
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	got, err := uploadToCDN(context.Background(), []byte("encrypted"), server.URL)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := selectCDNDownloadParam(ilink.CDNMediaTypeVoice, "upload", "query", "short"); got != "upload" {
-		t.Fatalf("voice upload token precedence = %q", got)
+	if got != "download-token" {
+		t.Fatalf("download token = %q", got)
 	}
 }
 
-func TestSelectCDNDownloadParamKeepsMediaSpecificPrecedence(t *testing.T) {
-	if got := selectCDNDownloadParam(ilink.CDNMediaTypeImage, "upload", "query", "short"); got != "short" {
-		t.Fatalf("image download token = %q", got)
-	}
-	if got := selectCDNDownloadParam(ilink.CDNMediaTypeFile, "upload", "query", "short"); got != "query" {
-		t.Fatalf("file download token = %q", got)
+func TestUploadToCDNRejectsMissingOfficialDownloadHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("X-Encrypted-Query-Param", "wrong-token")
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if _, err := uploadToCDN(context.Background(), []byte("encrypted"), server.URL); err == nil {
+		t.Fatal("missing X-Encrypted-Param should fail")
 	}
 }

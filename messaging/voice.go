@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"time"
@@ -225,6 +226,7 @@ func SendVoice(ctx context.Context, client *ilink.Client, userID string, voice W
 	if err != nil {
 		return fmt.Errorf("upload voice: %w", err)
 	}
+	log.Printf("[voice] uploaded native SILK for %s (bytes=%d playtime_ms=%d)", ilink.LogLabel(userID), len(voice.Data), voice.PlaytimeMS)
 	item := newVoiceMessageItem(uploaded, voice.PlaytimeMS)
 	response, err := client.SendMessage(ctx, &ilink.SendMessageRequest{
 		Msg: ilink.SendMsg{
@@ -239,6 +241,7 @@ func SendVoice(ctx context.Context, client *ilink.Client, userID string, voice W
 	if response.Ret != 0 {
 		return fmt.Errorf("send voice failed: ret=%d errmsg=%s", response.Ret, response.ErrMsg)
 	}
+	log.Printf("[voice] WeChat accepted native voice for %s", ilink.LogLabel(userID))
 	return nil
 }
 
@@ -282,10 +285,12 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[voice] synthesized provider=%s format=%s bytes=%d for %s", synthesis.ProviderID, synthesis.Audio.Format, len(synthesis.Audio.Data), ilink.LogLabel(userID))
 	encoded, err := EncodeWeChatVoice(ctx, h.voice.ffmpegCommand, h.voice.silkCommand, synthesis.Audio)
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[voice] encoded Tencent SILK bytes=%d playtime_ms=%d for %s", len(encoded.Data), encoded.PlaytimeMS, ilink.LogLabel(userID))
 	if err := SendVoice(ctx, client, userID, encoded, contextToken); err != nil {
 		return "", err
 	}

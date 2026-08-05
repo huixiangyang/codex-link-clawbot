@@ -87,13 +87,9 @@ func UploadFileToCDN(ctx context.Context, client *ilink.Client, data []byte, toU
 			cdnBaseURL, url.QueryEscape(uploadResp.UploadParam), url.QueryEscape(filekeyHex))
 	}
 
-	uploadResult, err := uploadToCDN(ctx, encrypted, cdnURL)
+	downloadParam, err := uploadToCDN(ctx, encrypted, cdnURL)
 	if err != nil {
 		return nil, fmt.Errorf("CDN upload: %w", err)
-	}
-	downloadParam := selectCDNDownloadParam(mediaType, uploadResp.UploadParam, uploadResult.QueryParam, uploadResult.ShortParam)
-	if downloadParam == "" {
-		return nil, fmt.Errorf("CDN upload: missing download token")
 	}
 
 	return &UploadedFile{
@@ -187,55 +183,29 @@ func decryptAESECB(ciphertext, key []byte) ([]byte, error) {
 	return plaintext[:len(plaintext)-padLen], nil
 }
 
-type cdnUploadResult struct {
-	QueryParam string
-	ShortParam string
-}
-
-func uploadToCDN(ctx context.Context, encrypted []byte, cdnURL string) (cdnUploadResult, error) {
+func uploadToCDN(ctx context.Context, encrypted []byte, cdnURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cdnURL, bytes.NewReader(encrypted))
 	if err != nil {
-		return cdnUploadResult{}, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return cdnUploadResult{}, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return cdnUploadResult{}, fmt.Errorf("CDN upload HTTP %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("CDN upload HTTP %d: %s", resp.StatusCode, string(body))
 	}
-	return cdnUploadResult{
-		QueryParam: resp.Header.Get("X-Encrypted-Query-Param"),
-		ShortParam: resp.Header.Get("X-Encrypted-Param"),
-	}, nil
-}
-
-func selectCDNDownloadParam(mediaType int, uploadParam, queryParam, shortParam string) string {
-	if mediaType == ilink.CDNMediaTypeVoice {
-		// 微信语音 CDN 当前要求复用 VOICE 的 upload_param，响应下载头并不稳定。
-		for _, candidate := range []string{uploadParam, queryParam, shortParam} {
-			if strings.TrimSpace(candidate) != "" {
-				return candidate
-			}
-		}
-		return ""
+	downloadParam := strings.TrimSpace(resp.Header.Get("X-Encrypted-Param"))
+	if downloadParam == "" {
+		return "", fmt.Errorf("CDN response missing X-Encrypted-Param")
 	}
-	if mediaType == ilink.CDNMediaTypeFile {
-		if strings.TrimSpace(queryParam) != "" {
-			return queryParam
-		}
-		return shortParam
-	}
-	if strings.TrimSpace(shortParam) != "" {
-		return shortParam
-	}
-	return queryParam
+	return downloadParam, nil
 }
 
 // encryptAESECB encrypts data using AES-128-ECB with PKCS7 padding.

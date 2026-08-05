@@ -38,7 +38,7 @@
 4. 临时让 Piper 失败后再次发送，应自动调用 MiMo；MiMo 也失败时，文字结果必须同时列出 `local` 和 `mimo` 的原因。
 5. Piper 必须以参数数组直接执行并返回 WAV；共享发送层必须通过 FFmpeg 转为 16 kHz 单声道 PCM，再由独立 `weclaw-silk-encoder` 进程编码为带腾讯头的 SILK V3。编码器崩溃只能让本次语音失败，不得拖垮主服务。正文中的 Shell 元字符不得执行，临时目录和音频必须受 `0700/0600` 保护并在结束后清理。
 6. MiMo 网关 4xx/5xx、无音频、非法 Base64、非 MP3 和超限响应都必须进入下一提供商；日志、微信错误消息和仓库不得出现 API 密钥。
-7. CDN 上传必须使用 `media_type=4`；消息必须使用 `ItemTypeVoice`、`encode_type=6`、16 kHz 采样率和真实毫秒时长。语音发送缺少当前 `context_token` 时必须在上传前失败，不得把 `ret=0` 描述成客户端已送达。
+7. CDN 上传必须使用 `media_type=4`，下载引用必须且只能取上传响应的 `X-Encrypted-Param`，不得复用请求阶段的 `upload_param` 或接受旧响应头；消息必须使用 `ItemTypeVoice`、`encode_type=6`、16 kHz 采样率和真实毫秒时长。语音发送缺少当前 `context_token` 时必须在上传前失败，不得把 `ret=0` 描述成客户端已送达。
 8. 旧扁平 MiMo 字段、提供商级 `piper.ffmpeg_command` 和 `voice.command` 必须作为未知字段拒绝。
 9. `weclaw update` 必须同批下载主程序与 SILK 编码器，分别通过发布清单 SHA-256 校验后按“编码器 → 主程序”顺序安装；任一下载或校验失败时不得替换主程序。
 
