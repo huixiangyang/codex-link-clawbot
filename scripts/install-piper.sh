@@ -11,7 +11,7 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 if ! command -v ffmpeg >/dev/null 2>&1; then
-	echo "缺少 ffmpeg，无法生成微信 SILK 语音。" >&2
+	echo "缺少 ffmpeg，无法生成微信 MP3 音频。" >&2
   exit 1
 fi
 

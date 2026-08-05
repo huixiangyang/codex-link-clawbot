@@ -175,8 +175,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 			})
 			providerIDs = append(providerIDs, providerConfig.ID)
 		}
-		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(cfg.Voice.FFmpegCommand, cfg.Voice.SilkCommand, providers))
-		log.Printf("Voice briefing enabled (providers=%s, delivery=silk)", strings.Join(providerIDs, ","))
+		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(cfg.Voice.FFmpegCommand, providers))
+		log.Printf("Voice briefing enabled (providers=%s, delivery=mp3-file)", strings.Join(providerIDs, ","))
 	}
 
 	handler.SetProgressConfig(messaging.ProgressConfig{

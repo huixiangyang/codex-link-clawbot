@@ -45,7 +45,6 @@ func (c SecurityConfig) validate() error {
 type VoiceConfig struct {
 	Enabled       bool                  `json:"enabled"`
 	FFmpegCommand string                `json:"ffmpeg_command,omitempty"`
-	SilkCommand   string                `json:"silk_command,omitempty"`
 	Providers     []VoiceProviderConfig `json:"providers,omitempty"`
 }
 
@@ -78,9 +77,6 @@ func (c VoiceConfig) validate() error {
 	}
 	if !filepath.IsAbs(c.FFmpegCommand) || filepath.Clean(c.FFmpegCommand) != c.FFmpegCommand {
 		return fmt.Errorf("voice.ffmpeg_command must be a clean absolute path")
-	}
-	if !filepath.IsAbs(c.SilkCommand) || filepath.Clean(c.SilkCommand) != c.SilkCommand {
-		return fmt.Errorf("voice.silk_command must be a clean absolute path")
 	}
 	if len(c.Providers) == 0 || len(c.Providers) > 4 {
 		return fmt.Errorf("voice.providers must contain between 1 and 4 providers")

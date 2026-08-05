@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -71,9 +70,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Current: %s -> Latest: %s\n", Version, latest)
 
-	// 2. 同批下载主程序、SILK 编码器与校验清单，避免只升级一半。
+	// 2. 下载单一主程序及校验清单。
 	mainFilename := fmt.Sprintf("weclaw_linux_%s", runtime.GOARCH)
-	silkFilename := fmt.Sprintf("weclaw_silk_encoder_linux_%s", runtime.GOARCH)
 	releaseBaseURL := fmt.Sprintf("https://github.com/%s/releases/download/%s", githubRepo, latest)
 
 	checksumFile, err := downloadFile(releaseBaseURL+"/checksums.txt", maxChecksumBytes)
@@ -86,25 +84,17 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read checksums: %w", err)
 	}
 
-	fmt.Printf("Downloading %s and %s...\n", mainFilename, silkFilename)
+	fmt.Printf("Downloading %s...\n", mainFilename)
 	mainFile, err := downloadFile(releaseBaseURL+"/"+mainFilename, maxReleaseBinaryBytes)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", mainFilename, err)
 	}
 	defer os.Remove(mainFile)
-	silkFile, err := downloadFile(releaseBaseURL+"/"+silkFilename, maxReleaseBinaryBytes)
-	if err != nil {
-		return fmt.Errorf("download %s: %w", silkFilename, err)
-	}
-	defer os.Remove(silkFile)
 	if err := verifyReleaseChecksum(mainFile, mainFilename, checksums); err != nil {
 		return err
 	}
-	if err := verifyReleaseChecksum(silkFile, silkFilename, checksums); err != nil {
-		return err
-	}
 
-	// 3. 先替换编码器，再替换主程序；主程序永远不会指向缺失的新版编码器。
+	// 3. Replace current binary
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("find executable: %w", err)
@@ -112,11 +102,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// Resolve symlinks
 	if resolved, err := resolveSymlink(exePath); err == nil {
 		exePath = resolved
-	}
-	silkPath := filepath.Join(filepath.Dir(exePath), "weclaw-silk-encoder")
-
-	if err := replaceBinary(silkFile, silkPath); err != nil {
-		return fmt.Errorf("replace SILK encoder: %w", err)
 	}
 	if err := replaceBinary(mainFile, exePath); err != nil {
 		return fmt.Errorf("replace main binary: %w", err)

@@ -95,7 +95,6 @@ const (
 	CDNMediaTypeImage = 1
 	CDNMediaTypeVideo = 2
 	CDNMediaTypeFile  = 3
-	CDNMediaTypeVoice = 4
 )
 
 // GetUploadURLRequest is the body for getuploadurl.

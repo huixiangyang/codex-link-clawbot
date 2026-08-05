@@ -13,11 +13,8 @@ import (
 )
 
 const (
-	maxVoiceTextRunes     = 2500
-	maxVoiceBytes         = 20 << 20
-	maxVoicePCMBytes      = 16000 * 2 * 300
-	wechatVoiceSampleRate = 16000
-	wechatVoiceFrameBytes = wechatVoiceSampleRate * 2 * 20 / 1000
+	maxVoiceTextRunes = 2500
+	maxVoiceBytes     = 20 << 20
 )
 
 type VoiceAudioFormat string
@@ -27,7 +24,7 @@ const (
 	VoiceAudioWAV VoiceAudioFormat = "wav"
 )
 
-// VoiceAudio 保留提供商的原始格式，微信发送层统一完成 PCM/SILK 编码。
+// VoiceAudio 保留提供商的原始格式，微信发送层统一压缩为 MP3 文件。
 type VoiceAudio struct {
 	Data   []byte
 	Format VoiceAudioFormat
@@ -52,12 +49,11 @@ type VoiceSynthesis struct {
 
 type VoiceBriefing struct {
 	ffmpegCommand string
-	silkCommand   string
 	providers     []VoiceProviderEntry
 }
 
-func NewVoiceBriefing(ffmpegCommand, silkCommand string, providers []VoiceProviderEntry) *VoiceBriefing {
-	return &VoiceBriefing{ffmpegCommand: ffmpegCommand, silkCommand: silkCommand, providers: append([]VoiceProviderEntry(nil), providers...)}
+func NewVoiceBriefing(ffmpegCommand string, providers []VoiceProviderEntry) *VoiceBriefing {
+	return &VoiceBriefing{ffmpegCommand: ffmpegCommand, providers: append([]VoiceProviderEntry(nil), providers...)}
 }
 
 func (v *VoiceBriefing) Generate(ctx context.Context, text string) (VoiceSynthesis, error) {
@@ -125,57 +121,17 @@ func validateVoiceAudio(audio VoiceAudio) error {
 	return nil
 }
 
-type WeChatVoice struct {
-	Data       []byte
-	PlaytimeMS int
-}
-
-// EncodeWeChatVoice 将任意提供商音频收敛为微信原生语音条要求的 16 kHz SILK V3。
-func EncodeWeChatVoice(ctx context.Context, ffmpegCommand, silkCommand string, audio VoiceAudio) (WeChatVoice, error) {
+// EncodeVoiceMP3 将提供商音频统一压缩为适合微信移动端下载播放的单声道 MP3。
+func EncodeVoiceMP3(ctx context.Context, ffmpegCommand string, audio VoiceAudio) ([]byte, error) {
 	if err := validateVoiceAudio(audio); err != nil {
-		return WeChatVoice{}, err
+		return nil, err
 	}
 	process := exec.CommandContext(ctx, ffmpegCommand,
 		"-hide_banner", "-loglevel", "error", "-i", "pipe:0",
-		"-vn", "-sn", "-dn", "-f", "s16le", "-acodec", "pcm_s16le",
-		"-ar", fmt.Sprintf("%d", wechatVoiceSampleRate), "-ac", "1", "pipe:1",
+		"-vn", "-sn", "-dn", "-f", "mp3", "-codec:a", "libmp3lame",
+		"-b:a", "64k", "-ar", "24000", "-ac", "1", "pipe:1",
 	)
 	process.Stdin = bytes.NewReader(audio.Data)
-	stdout := &boundedVoiceOutputBuffer{remaining: maxVoicePCMBytes + wechatVoiceFrameBytes}
-	stderr := &boundedVoiceBuffer{remaining: maxVoiceProcessLogBytes}
-	process.Stdout = stdout
-	process.Stderr = stderr
-	if err := process.Run(); err != nil {
-		if ctx.Err() != nil {
-			return WeChatVoice{}, ctx.Err()
-		}
-		message := normalizeSessionLine(stderr.String(), 200)
-		if message == "" {
-			message = err.Error()
-		}
-		return WeChatVoice{}, fmt.Errorf("FFmpeg 语音转码失败: %s", message)
-	}
-	if stdout.exceeded || stdout.buffer.Len() > maxVoicePCMBytes {
-		return WeChatVoice{}, fmt.Errorf("微信语音超过 5 分钟限制")
-	}
-	pcm := stdout.buffer.Bytes()
-	pcm = pcm[:len(pcm)-len(pcm)%wechatVoiceFrameBytes]
-	if len(pcm) == 0 {
-		return WeChatVoice{}, fmt.Errorf("FFmpeg 未生成完整语音帧")
-	}
-	silkData, err := runSILKEncoder(ctx, silkCommand, pcm)
-	if err != nil {
-		return WeChatVoice{}, err
-	}
-	if len(silkData) <= 10 || len(silkData) > maxVoiceBytes || !bytes.Equal(silkData[:10], []byte("\x02#!SILK_V3")) {
-		return WeChatVoice{}, fmt.Errorf("SILK 编码器返回了无效音频")
-	}
-	return WeChatVoice{Data: silkData, PlaytimeMS: len(pcm) * 1000 / (wechatVoiceSampleRate * 2)}, nil
-}
-
-func runSILKEncoder(ctx context.Context, command string, pcm []byte) ([]byte, error) {
-	process := exec.CommandContext(ctx, command)
-	process.Stdin = bytes.NewReader(pcm)
 	stdout := &boundedVoiceOutputBuffer{remaining: maxVoiceBytes + 1}
 	stderr := &boundedVoiceBuffer{remaining: maxVoiceProcessLogBytes}
 	process.Stdout = stdout
@@ -188,12 +144,16 @@ func runSILKEncoder(ctx context.Context, command string, pcm []byte) ([]byte, er
 		if message == "" {
 			message = err.Error()
 		}
-		return nil, fmt.Errorf("SILK 编码失败: %s", message)
+		return nil, fmt.Errorf("FFmpeg MP3 转码失败: %s", message)
 	}
 	if stdout.exceeded || stdout.buffer.Len() > maxVoiceBytes {
-		return nil, fmt.Errorf("SILK 音频超过 20 MiB 限制")
+		return nil, fmt.Errorf("MP3 音频超过 20 MiB 限制")
 	}
-	return append([]byte(nil), stdout.buffer.Bytes()...), nil
+	mp3 := stdout.buffer.Bytes()
+	if !isMP3(mp3) {
+		return nil, fmt.Errorf("FFmpeg 未生成有效 MP3")
+	}
+	return append([]byte(nil), mp3...), nil
 }
 
 type boundedVoiceOutputBuffer struct {
@@ -215,46 +175,6 @@ func (b *boundedVoiceOutputBuffer) Write(data []byte) (int, error) {
 	return originalLength, nil
 }
 
-func SendVoice(ctx context.Context, client *ilink.Client, userID string, voice WeChatVoice, contextToken string) error {
-	if len(voice.Data) == 0 || len(voice.Data) > maxVoiceBytes || !bytes.HasPrefix(voice.Data, []byte("\x02#!SILK_V3")) || voice.PlaytimeMS <= 0 {
-		return fmt.Errorf("voice data must be valid Tencent SILK with a positive playtime")
-	}
-	if strings.TrimSpace(contextToken) == "" {
-		return fmt.Errorf("发送微信语音必须使用当前会话 context token")
-	}
-	uploaded, err := UploadFileToCDN(ctx, client, voice.Data, userID, ilink.CDNMediaTypeVoice)
-	if err != nil {
-		return fmt.Errorf("upload voice: %w", err)
-	}
-	log.Printf("[voice] uploaded native SILK for %s (bytes=%d playtime_ms=%d)", ilink.LogLabel(userID), len(voice.Data), voice.PlaytimeMS)
-	item := newVoiceMessageItem(uploaded, voice.PlaytimeMS)
-	response, err := client.SendMessage(ctx, &ilink.SendMessageRequest{
-		Msg: ilink.SendMsg{
-			FromUserID: client.BotID(), ToUserID: userID, ClientID: NewClientID(),
-			MessageType: ilink.MessageTypeBot, MessageState: ilink.MessageStateFinish,
-			ItemList: []ilink.MessageItem{item}, ContextToken: contextToken,
-		},
-	})
-	if err != nil {
-		return err
-	}
-	if response.Ret != 0 {
-		return fmt.Errorf("send voice failed: ret=%d errmsg=%s", response.Ret, response.ErrMsg)
-	}
-	log.Printf("[voice] WeChat accepted native voice for %s", ilink.LogLabel(userID))
-	return nil
-}
-
-func newVoiceMessageItem(uploaded *UploadedFile, playtimeMS int) ilink.MessageItem {
-	return ilink.MessageItem{Type: ilink.ItemTypeVoice, VoiceItem: &ilink.VoiceItem{
-		Media:         &ilink.MediaInfo{EncryptQueryParam: uploaded.DownloadParam, AESKey: AESKeyToBase64(uploaded.AESKeyHex), EncryptType: 1},
-		EncodeType:    6,
-		BitsPerSample: 16,
-		SampleRate:    wechatVoiceSampleRate,
-		Playtime:      playtimeMS,
-	}}
-}
-
 func (h *Handler) requestVoiceBriefing(userID string) string {
 	if h.voice == nil {
 		return "语音简报未启用。需要配置语音提供商。"
@@ -264,6 +184,9 @@ func (h *Handler) requestVoiceBriefing(userID string) string {
 }
 
 func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) (string, error) {
+	if strings.TrimSpace(contextToken) == "" {
+		return "", fmt.Errorf("发送微信音频必须使用当前会话 context token")
+	}
 	projectName := "未配置项目"
 	if h.projects != nil {
 		projectName = h.projects.Current(userID).Name
@@ -286,12 +209,12 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 		return "", err
 	}
 	log.Printf("[voice] synthesized provider=%s format=%s bytes=%d for %s", synthesis.ProviderID, synthesis.Audio.Format, len(synthesis.Audio.Data), ilink.LogLabel(userID))
-	encoded, err := EncodeWeChatVoice(ctx, h.voice.ffmpegCommand, h.voice.silkCommand, synthesis.Audio)
+	mp3, err := EncodeVoiceMP3(ctx, h.voice.ffmpegCommand, synthesis.Audio)
 	if err != nil {
 		return "", err
 	}
-	log.Printf("[voice] encoded Tencent SILK bytes=%d playtime_ms=%d for %s", len(encoded.Data), encoded.PlaytimeMS, ilink.LogLabel(userID))
-	if err := SendVoice(ctx, client, userID, encoded, contextToken); err != nil {
+	log.Printf("[voice] encoded MP3 bytes=%d for %s", len(mp3), ilink.LogLabel(userID))
+	if err := sendMediaData(ctx, client, userID, "weclaw-briefing.mp3", "weclaw-briefing.mp3", mp3, "audio/mpeg", contextToken); err != nil {
 		return "", err
 	}
 	return synthesis.ProviderID, nil

@@ -51,7 +51,7 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
 		t.Fatalf("unexpected default visual config: %#v", cfg.Visual)
 	}
-	if cfg.Voice.Enabled || cfg.Voice.FFmpegCommand != "" || cfg.Voice.SilkCommand != "" || len(cfg.Voice.Providers) != 0 {
+	if cfg.Voice.Enabled || cfg.Voice.FFmpegCommand != "" || len(cfg.Voice.Providers) != 0 {
 		t.Fatalf("unexpected default voice config: %#v", cfg.Voice)
 	}
 }
@@ -229,7 +229,6 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 	cfg.Security.RemoteLockCode = "secure-code"
 	cfg.Voice.Enabled = true
 	cfg.Voice.FFmpegCommand = "/usr/bin/ffmpeg"
-	cfg.Voice.SilkCommand = "/usr/local/bin/weclaw-silk-encoder"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.providers") {
 		t.Fatalf("missing providers error = %v", err)
 	}
@@ -281,5 +280,12 @@ func TestLoadRejectsRemovedSingleProviderVoiceSchema(t *testing.T) {
 	}
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("Load() error = %v, want removed single-provider voice schema rejection", err)
+	}
+}
+
+func TestDecodeRejectsRemovedSilkCommand(t *testing.T) {
+	data := []byte(`{"voice":{"silk_command":"/usr/local/bin/weclaw-silk-encoder"}}`)
+	if _, err := decodeConfig(data); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("decodeConfig() error = %v, want removed silk_command rejection", err)
 	}
 }

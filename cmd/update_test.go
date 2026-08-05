@@ -22,7 +22,7 @@ func TestVerifyReleaseChecksum(t *testing.T) {
 	if err := verifyReleaseChecksum(path, "weclaw_linux_amd64", manifest); err != nil {
 		t.Fatalf("verify checksum: %v", err)
 	}
-	if err := verifyReleaseChecksum(path, "weclaw_silk_encoder_linux_amd64", manifest); err == nil || !strings.Contains(err.Error(), "missing or invalid") {
+	if err := verifyReleaseChecksum(path, "weclaw_linux_arm64", manifest); err == nil || !strings.Contains(err.Error(), "missing or invalid") {
 		t.Fatalf("missing checksum error = %v", err)
 	}
 

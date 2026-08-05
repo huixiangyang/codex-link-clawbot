@@ -78,15 +78,11 @@ jobs:
           go build -trimpath \
             -ldflags="-s -w -X github.com/huixiangyang/weclaw/cmd.Version=${GITHUB_REF_NAME}" \
             -o weclaw_linux_${GOARCH} .
-          go build -trimpath -ldflags="-s -w" \
-            -o weclaw_silk_encoder_linux_${GOARCH} ./cmd/weclaw-silk-encoder
 
       - uses: actions/upload-artifact@v4
         with:
           name: weclaw_linux_${{ matrix.goarch }}
-          path: |
-            weclaw_linux_${{ matrix.goarch }}
-            weclaw_silk_encoder_linux_${{ matrix.goarch }}
+          path: weclaw_linux_${{ matrix.goarch }}
           if-no-files-found: error
 
   release:
@@ -126,4 +122,3 @@ jobs:
           files: |
             dist/weclaw_*
             dist/checksums.txt
-            THIRD_PARTY_NOTICES.md

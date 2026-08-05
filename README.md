@@ -38,7 +38,6 @@ npx playwright install chromium
 
 ```bash
 go install github.com/huixiangyang/weclaw@main
-go install github.com/huixiangyang/weclaw/cmd/weclaw-silk-encoder@main
 weclaw login
 weclaw start
 ```
@@ -104,7 +103,6 @@ weclaw restart
   "voice": {
     "enabled": true,
     "ffmpeg_command": "/usr/bin/ffmpeg",
-    "silk_command": "/usr/local/bin/weclaw-silk-encoder",
     "providers": [
       {
         "id": "local",
@@ -136,9 +134,9 @@ weclaw restart
 
 `projects` is the only working-directory allowlist. Sessions and quick tasks are isolated per project, and roots must already exist. WeClaw always appends `app-server --listen stdio://` to `codex.command`; the removed `codex.cwd` field is rejected. An empty `model` preserves the user's Codex default. Automations support either `daily_at` or `every_minutes`, deterministic Git/service/health checks, and `always`, `anomaly`, `change`, or `anomaly_or_change` notification policies.
 
-Voice briefings use a strict ordered chain of one to four `piper` or `mimo` providers. Each provider has its own timeout; failures automatically fall through to the next entry, and the result identifies the provider actually used. Piper returns its native WAV and MiMo returns MP3; the shared delivery layer uses `voice.ffmpeg_command` to produce 16 kHz mono PCM, invokes the separately built `voice.silk_command` process to isolate SILK codec memory faults, uploads Tencent-compatible SILK V3 as CDN media type `VOICE=4`, and sends a native WeChat voice item with sample rate and playtime metadata. The CDN reference must come from the upload response's official `X-Encrypted-Param` header; the request-only `upload_param` is never reused as a download token. A current conversation context token is mandatory, so an API acknowledgement is never treated as proof of client delivery. `WECLAW_MIMO_API_KEY` can inject the key into every configured MiMo provider. Removed flat MiMo fields, provider-level `piper.ffmpeg_command`, and legacy `voice.command` are rejected.
+Voice briefings use a strict ordered chain of one to four `piper` or `mimo` providers. Each provider has its own timeout; failures automatically fall through to the next entry, and the result identifies the provider actually used. Piper returns WAV and MiMo returns MP3; the shared delivery layer uses `voice.ffmpeg_command` to normalize either format into a compact 24 kHz mono MP3, then sends it through WeChat's supported file-message path. Personal iLink bots silently discard outbound native `VOICE` items even when the API acknowledges them, so the removed SILK/native-voice path is intentionally rejected instead of claiming delivery. A current conversation context token remains mandatory. `WECLAW_MIMO_API_KEY` can inject the key into every configured MiMo provider. Removed flat MiMo fields, `voice.silk_command`, provider-level `piper.ffmpeg_command`, and legacy `voice.command` are rejected.
 
-`weclaw update` supports Linux amd64/arm64 only. It downloads the main program and `weclaw-silk-encoder` from the same immutable release, verifies both against `checksums.txt`, then installs the encoder before replacing the main binary.
+`weclaw update` supports Linux amd64/arm64 only. It downloads the single main program from an immutable release and verifies it against `checksums.txt` before replacement.
 
 Run `./scripts/install-piper.sh` to create an isolated Piper 1.4.1 environment and download `zh_CN-huayan-medium` under `~/.weclaw/tts/piper`. It requires `uv` and FFmpeg, does not modify the system Python, and prints the shared FFmpeg path plus the three Piper paths required by configuration. WeClaw does not redistribute voice models; operators must review each model card and dataset license. The upstream model card currently marks the example Huayan dataset license as unknown.
 
@@ -161,7 +159,7 @@ Configuration decoding is strict. Legacy `default_agent`, `agents`, `type`, `arg
 
 The only public slash entry is `/`. It opens a context-aware numbered menu rendered as a mobile-first visual card; reply with a number to continue. Actionable cards are followed by a short text instruction so input remains convenient in WeChat. Session and scheduled-report lists use six items per page and accept both numbered navigation and the natural phrases `下一页` / `上一页`. Selecting a session from the browsing list opens its status and sanitized prompt summary before any switch or archive operation. The original search query and page survive detail navigation. Menu state expires after ten minutes, and an expired number remains ordinary Codex input.
 
-The idle home card has only four primary actions: project, session, recent tasks, and more. While a task is active it changes to task status, pending next instruction, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `自动化`, `素材箱`, `交付记录`, `语音简报` or the shorter `发语音`, `远程锁定`, `状态`, and `取消`. Voice delivery is a reply capability: personal WeChat iLink bots require the current inbound `context_token`; out-of-conversation proactive voice is rejected instead of reporting a false success.
+The idle home card has only four primary actions: project, session, recent tasks, and more. While a task is active it changes to task status, pending next instruction, current session, and more. Direct phrases include `切换项目 weclaw`, `快捷任务`, `新建会话 叫登录排障`, `搜索会话 登录`, `自动化`, `素材箱`, `交付记录`, `语音简报` or the shorter `发语音`, `远程锁定`, `状态`, and `取消`. Audio delivery is a reply capability: personal WeChat iLink bots require the current inbound `context_token`; out-of-conversation delivery is rejected instead of reporting a false success.
 
 The main card always identifies its bridge version. The runtime center adds bridge uptime and API listen address alongside the Codex App Server protocol, model, working directory, and process ID, with direct refresh and working-directory actions.
 
