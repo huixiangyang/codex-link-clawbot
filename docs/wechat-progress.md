@@ -1,119 +1,103 @@
-# 微信长任务进度桥接
+# 微信持久任务与进度桥接
 
 ## 目标
 
-Codex 执行本机检查、构建或部署时，微信端不再从一次“正在输入”直接静默到最终答案。桥接层持续提供可见状态，同时保证最终答案只发送一次。
+WeClaw 把微信输入与 Codex 执行彻底分离：消息先可靠落盘并获得稳定任务编号，再由进程内唯一 Coordinator 串行消费。长任务继续提供克制的阶段进度，最终答案只进入一次受控投递事务。
 
-## 事件链路
+## 入站与幂等
 
-1. WeClaw 通过 iLink 长轮询接收扫码绑定账号的消息。
-2. 文本、微信图片和文件被整理为结构化输入；图片以 `localImage` 进入 Codex App Server，文件以受控本机路径和元数据进入同一个 turn。
-3. `turn/plan/updated` 被压缩为已完成步骤数和当前步骤。
-4. `agentMessage` 的 `commentary` 阶段作为进度，`final_answer` 阶段只进入最终回复。
-5. `commandExecution` 和 `fileChange` 只产生固定活动标签；终端输出、命令文本和 diff 内容不进入微信消息。
-6. 任务期间每 8 秒刷新一次“正在输入”；15 秒后检查首条文字进度，此后每 45 秒只发送尚未推送过的新状态。没有新状态时不发送文字保活，也不会重复旧详情。
+1. iLink 长轮询取回一批消息，但在整批可靠消费前不推进同步游标。
+2. 控制意图同步处理；普通文字、图片和文件进入任务 staging。
+3. 附件下载、内容校验、私有写盘和 `request.json` 同步完成后，staging 原子改名并更新严格任务索引。
+4. 只有持久入队成功才向微信确认；磁盘或状态错误保留旧游标供重投。
+5. 来源键使用账号标识与 `message_id`，缺失时使用 `seq`。重投命中已有任务，不重复下载附件或创建 Codex turn。
 
-## 图片输入
+单批前项已成功、后项失败时，`accounts/*.sync.json` 会保存 `pending_cursor` 与已消费消息回执。微信重投整批时跳过前项，直到全部成功才原子提交新游标。
 
-- 图片只通过 Codex App Server 的 `localImage` 输入，不存在其他协议回退。
-- 图片无需依赖 `save_dir`，统一写入 `~/.weclaw/turns/turn-*/inbox` 私有任务目录，目录权限为 `0700`、文件权限为 `0600`。
-- 单条消息最多 4 张图片，单张最大 20 MiB，仅接受按文件内容识别出的 JPEG、PNG、GIF 和 WebP。
-- 有文字时按“文字 + 图片”提交；纯图片消息自动补充图片分析指令。
-- turn 完成、失败或通过“取消”停止后，包含入站附件和出站交付物的整个任务目录立即删除。
+## 附件输入
 
-## 并发规则
+- 图片与文件都可以在忙碌时排队，不要求任务结束后重发。
+- 单条最多 4 张图片，单张最大 20 MiB，只接受内容识别出的 JPEG、PNG、GIF 和 WebP。
+- 文件最大 50 MiB，单任务负载最大 100 MiB，全队列附件最大 500 MiB。
+- 入站附件保存在 `~/.weclaw/tasks/<task-id>/inbox`，目录 `0700`、文件 `0600`；执行时图片作为 `localImage`，文件作为不可信本机引用。
+- 索引只记录数量、总字节和脱敏摘要，不记录附件名、正文、令牌或绝对路径。
 
-每个微信用户只允许一个活动任务。旧任务运行时，“状态”“取消”等控制仍立即执行；新的普通文字会作为唯一一条后续指令暂存，并在当前任务结束后自动进入同一项目会话。第二条后续指令不会覆盖第一条，可先发送“清除暂存”。图片和文件不会进入暂存队列。
+## 全局执行协调器
 
-该规则用于消除同一个 Codex thread 上多个 turn 竞争事件通道的问题。暂存槽只有一个，不恢复旧的并发行为。
+全部项目共用一个 Coordinator，同时最多一个任务处于 `running` 或 `delivering`。它按全局 FIFO 领取未暂停、未锁定且拥有在线客户端的绑定者任务，并严格使用入队时固定的项目、会话、回答方式和视觉风格。
 
-## 任务控制
+执行流程：
 
-- 发送“状态”随时以视觉卡片返回任务状态、已运行时间和当前阶段；卡片可继续刷新，活动任务可进入二次确认取消；空闲时同时展示 WeClaw 与 Codex 运行摘要。
-- 发送“取消”使用当前 `threadId` 和 `turnId` 调用 `turn/interrupt`。
-- 单独发送 `/` 打开视觉数字菜单；任务运行期间仍可查询运行信息和会话状态。
-- 发送“回答方式”进入统一偏好中心；“开启语音模式”“阅读模式”“自适应模式”可直接切换，重启后保持。
-- 发送“视觉风格”在刊物、构筑、黑标、可爱和简洁五套完整模板间切换；选择按绑定者隔离并同时作用于控制卡和长回复。
-- 新建、切换、重命名、归档、恢复和项目切换继续被忙碌保护拦截。
-
-取消请求发出后，原任务的文字进度、最终答案和迟到错误都不再推送。任务完成与取消通过同一状态锁原子决胜，避免确认取消后仍发送最终答案；重复发送“取消”只返回“正在取消”，不会重复提交中断。
-
-## 持久化任务记录
-
-主控制台直接显示记录数量，主控制台和任务状态卡片都可以进入“任务记录”，也可以直接发送“最近任务”“任务历史”或“历史任务”。列表每页 6 条，支持数字与“下一页/上一页”，详情显示摘要、状态、开始、结束和用时，并从详情返回原页。
-
-每个绑定者最多保留 20 条记录，状态包括：
-
-| 内部状态 | 微信显示 | 产生时机 |
-| --- | --- | --- |
-| `running` | 运行中 | turn 已接收且尚未结束 |
-| `succeeded` | 已完成 | Codex 正常返回最终结果 |
-| `failed` | 失败 | 附件准备或 Codex turn 失败 |
-| `cancelled` | 已取消 | 用户取消先于任务完成生效 |
-| `interrupted` | 重启中断 | 服务启动时发现上次仍为运行中的记录 |
-
-`~/.weclaw/task-history.json` 采用严格 v2 JSON、原子替换和 `0600` 文件权限。记录包含截断摘要、项目 ID、会话 ID、时间状态和 App Server 推送的本轮 token 用量；不保存完整问题、回答、终端输出、文件名或附件路径。微信详情只展示会话短编号。
-
-## 配置
-
-`~/.weclaw/config.json`：
-
-```json
-{
-  "progress": {
-    "enabled": true,
-    "typing_interval_seconds": 8,
-    "first_message_delay_seconds": 15,
-    "message_interval_seconds": 45
-  },
-  "visual": {
-    "enabled": true,
-    "browser_command": "",
-    "long_replies": true,
-    "long_reply_min_runes": 900
-  }
-}
+```text
+queued
+  → running：解析固定项目与 thread，独占 Codex
+  → result.json：冻结正文、图片 URL、交付物与哈希
+  → delivering：按冻结计划发送
+  → succeeded / failed / interrupted
 ```
 
-约束：
+执行期间的 `turn/plan/updated` 被压缩为完成步骤数和当前步骤；命令执行与文件修改只产生固定活动标签。每 8 秒刷新“正在输入”，15 秒后检查首条文字进度，之后每 45 秒只推送新阶段。命令文本、输出、diff、环境变量和回答预览不进入进度或日志。
 
-- `typing_interval_seconds`：3–30 秒。
-- `first_message_delay_seconds`：5–120 秒。
-- `message_interval_seconds`：15–300 秒，只控制检查和发送新文字详情的节奏，不会触发重复保活。
-- 配置越界时服务拒绝启动，不做静默纠正。
-- `visual.browser_command` 为空时自动发现 Playwright Chromium 或系统 Google Chrome；设置时必须使用绝对路径。Snap Chromium 不受支持。
-- `visual.long_reply_min_runes`：300–5000 个 Unicode 字符，只决定自适应模式何时从文字转为阅读卡；阅读模式始终优先卡片。
-- `visual.long_replies=false` 只关闭自适应长回复卡片；语音功能开启时必须同时设置 `visual.enabled=true`。
-- 五套视觉模板按服务本地时区固定切换明暗模式：07:00–18:59 为明亮主题，19:00–06:59 为深色主题；状态与短操作自动采用高密度多列布局，阅读模式每页使用 32 个视觉容量单位。
-- `~/.weclaw/preferences.json` 使用严格 v1 JSON、原子替换和 `0600` 权限保存每个绑定者的回答方式与模板 ID，父目录保持 `0700`；旧 `visual-styles.json` 不再读取。
+## 任务中心
 
-## 本机部署
+空闲主菜单为“项目、会话、任务中心、更多功能”，执行中为“当前任务、任务中心、当前会话、更多功能”。也可以直接说“任务中心”“任务队列”“暂停队列”“继续队列”或“清空队列”。
 
-- 源码：`/root/CODES/weclaw-progress`
-- 二进制：`/root/.local/bin/weclaw-codex-direct`
-- 配置：`/root/.weclaw/config.json`
-- 日志：`/root/.weclaw/weclaw.log`
-- systemd 用户服务：`/root/.config/systemd/user/weclaw.service`
+任务中心每页 6 项，展示当前状态、等待数量、暂停状态和最近结果。详情按状态提供：
 
-前台模式会登记并在退出时核对清理 `~/.weclaw/weclaw.pid`，因此 `weclaw status` 与 systemd 主进程保持一致。
-systemd 使用 `Restart=always` 自动拉起桥接器，标准输出和错误继续追加到 `~/.weclaw/weclaw.log`。本机切换脚本是 `scripts/cutover-local.sh`，它会验证 systemd 状态、`/health` 端点和主动微信发送链路，并把结果写入 `~/.weclaw/cutover-status.log`。
-启动顺序是 Codex App Server 握手成功后再开放健康端点和微信轮询；初始化失败时进程退出并由 systemd 重试，不再使用 echo 模式接收消息。
+| 状态 | 操作 |
+| --- | --- |
+| 等待 | 移到最前、删除 |
+| 执行 | 刷新、二次确认取消 |
+| 发送 | 刷新 |
+| 失败或中断 | 重试、删除；发送中断可取回冻结文字 |
+| 完成 | 查看安全摘要 |
 
-验证命令：
+“清空队列”二次确认后只删除当前绑定者的等待项。暂停一个绑定者不影响其他绑定者；远程锁定会先持久化锁，再取消当前任务并暂停队列，解锁后不会自动继续。
+
+## 重启与投递恢复
+
+`queued` 在重启后保持等待。启动时发现 `running` 会转为执行中断，发现 `delivering` 会验证冻结结果后转为发送中断，两者都不自动重试。
+
+投递回执区分四种结果：
+
+- 完整成功：进入 `succeeded` 并立即清理私密负载。
+- 明确失败且没有可见内容：进入 `failed/delivery_failed`。
+- 响应丢失或可能部分可见：进入 `interrupted/delivery_ambiguous`，禁止盲目重发。
+- 进程在发送中退出：进入 `interrupted/restart_delivery`，用户可以只取回冻结文字。
+
+成功与取消立即删除请求、`context_token`、inbox 和 result；失败与中断负载最多保留 24 小时，过期后仍保留无正文元数据但不再提供恢复。
+
+## 健康、排空与部署
+
+`GET /health` 返回 `starting`、`ready`、`draining`、`stopping` 或 `degraded`，以及实际版本、Codex 就绪、微信监控、任务数量和 `drain_complete`。`POST /admin/drain` 与 `/admin/resume` 只允许回环来源。
+
+排空期间继续可靠接收微信消息，但 Coordinator 不领取新任务。`drain_complete` 要求没有运行/发送任务、没有 staging，并且没有待提交同步批次。
+
+生产进程始终由 `weclaw.service` 托管，`start` 只以前台方式运行。普通重启与停止会先排空：
 
 ```bash
-go test -race ./codex ./messaging ./session ./config ./reporting ./visual
-go test ./...
-go vet ./...
-systemctl --user status weclaw.service
+weclaw status
+weclaw restart
+weclaw stop
 ```
 
-服务切换后，在微信发送一个预计超过 20 秒的只读检查任务。预期先看到持续输入状态，15 秒左右收到阶段消息；同一详情不重复，新阶段出现后才发送下一条文字进度，完成时收到不含中间说明的最终答案。任务期间另发“进度？”应立即收到活动任务快照。
+事务部署：
 
-## 安全边界
+```bash
+weclaw deploy v2.5.0
+weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
+```
 
-- 只接受扫码凭据中的 `ILinkUserID` 对应账号，其他联系人和群聊来源直接拒绝。
-- Codex 保持本机已授权的 `danger-full-access`；该权限没有扩展到其他微信账号。
-- 进度事件不包含命令输出、命令文本、diff、环境变量或终端交互内容。
-- 运行日志不写微信用户 ID、机器人 ID、消息正文、回答预览或媒体来源；账号使用稳定短哈希标签关联排障记录。
-- 配置只包含单一 `codex` 节点，未知字段和旧多 Agent 字段会使服务拒绝启动。
+候选先验证版本、平台和 SHA-256。旧进程排空并停止后才快照和离线迁移；新进程以隐藏的排空启动模式完成版本、Codex、微信和游标验收，再恢复正常 systemd 单元并放行队列。失败同时恢复旧二进制、单元、配置和任务状态。成功写入无正文部署收据、发送纯文字微信通知，并立即销毁包含任务正文、附件或令牌的状态副本。
+
+## 验证
+
+```bash
+go test ./...
+go test -race ./taskqueue ./messaging ./ilink ./api ./cmd
+go vet ./...
+systemctl --user status weclaw.service
+curl -fsS http://127.0.0.1:18011/health
+```
+
+真机应连续验证文字、图片和 PDF 排队，项目/会话快照，暂停/继续，取消，执行与发送阶段重启，以及部署通知。任务卡只显示短编号、脱敏摘要、项目和必要状态。
