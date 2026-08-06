@@ -75,24 +75,24 @@ func TestControlCardFromMainMenu(t *testing.T) {
 }
 
 func TestControlDirectoryFromTextBuildsSixStableSections(t *testing.T) {
-	reply := "WeClaw 操作总览\n\n能力边界：Codex 原生与 WeClaw 增强已分区\n版本：v2\nWeClaw 项目入口：主项目\nCodex 线程：移动端开发\nWeClaw 执行：运行中\nWeClaw 回复：自适应\nWeClaw 队列：2 项等待\n\n" +
-		"[1]  Codex · 线程\n11  新建线程\n12  重命名当前线程\n\n" +
-		"[2]  Codex · 执行能力\n22  线程模型\n\n" +
-		"[3]  WeClaw · 请求队列\n31  查看执行状态\n\n" +
-		"[4]  WeClaw · 回复呈现\n41  自适应回答 · 当前\n\n" +
-		"[5]  WeClaw · 内容与自动化\n51  素材与交付\n\n" +
-		"[6]  WeClaw · 运行与安全\n63  使用说明\n\n回复编号直接操作，0 退出；总览 30 分钟内有效。"
+	reply := "WeClaw 操作总览\n\n能力边界：Codex 工作能力与 WeClaw 管理能力分层\n版本：v2\nWeClaw 项目入口：主项目\nCodex 线程：移动端开发\nWeClaw 执行：运行中\nWeClaw 回复：自适应\nWeClaw 视觉：构筑\n\n" +
+		"[1]  Codex · 工作台\n11  当前线程\n12  新建线程\n\n" +
+		"[2]  WeClaw · 请求\n21  执行状态\n\n" +
+		"[3]  WeClaw · 回复\n31  回答方式\n\n" +
+		"[4]  WeClaw · 功能\n41  提示词模板 · 2 项\n\n" +
+		"[5]  WeClaw · 设置\n51  有效配置状态\n\n" +
+		"[6]  WeClaw · 诊断\n63  使用说明\n\n回复编号直接操作，0 退出；首页 30 分钟内有效。"
 	directory, ok := controlDirectoryFromText(reply)
-	if !ok || directory.Subtitle != "Codex 原生与 WeClaw 增强已分区" || len(directory.Facts) != 6 || len(directory.Sections) != 6 {
+	if !ok || directory.Subtitle != "Codex 工作能力与 WeClaw 管理能力分层" || len(directory.Facts) != 6 || len(directory.Sections) != 6 {
 		t.Fatalf("directory = %#v, ok=%v", directory, ok)
 	}
 	if directory.Facts[1].Label != "WeClaw 项目入口" || directory.Facts[1].Value != "主项目" {
 		t.Fatalf("directory facts = %#v", directory.Facts)
 	}
-	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "messages-square" || first.Items[0].Code != "11" || first.Items[0].Label != "新建线程" {
+	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "messages-square" || first.Items[0].Code != "11" || first.Items[0].Label != "当前线程" {
 		t.Fatalf("first directory section = %#v", first)
 	}
-	if current := directory.Sections[3].Items[0]; current.Label != "自适应回答" || current.Meta != "当前" {
+	if current := directory.Sections[3].Items[0]; current.Label != "提示词模板" || current.Meta != "2 项" {
 		t.Fatalf("directory item metadata = %#v", current)
 	}
 }
@@ -251,7 +251,7 @@ func TestVisualRenderFailureFallsBackToFullText(t *testing.T) {
 		MessageState: ilink.MessageStateFinish,
 		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
 	})
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "11  新建线程") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "11  当前线程") {
 		t.Fatalf("fallback message = %#v", sent.Msg.ItemList)
 	}
 }

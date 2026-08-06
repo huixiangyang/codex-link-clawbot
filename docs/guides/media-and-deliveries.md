@@ -43,7 +43,7 @@ Codex 接收的提示中明确包含文件名、探测到的内容类型、大�
 
 ## 确定性自动化
 
-`automations` 中每项绑定一个 `project_id`，按 `daily_at` 或 `every_minutes` 运行。调度器每分钟检查计划，不把检查交给 Codex。
+`weclaw.features.automations` 中每项绑定一个 `project_id`，按 `daily_at` 或 `every_minutes` 运行。调度器每分钟检查计划，不把检查交给 Codex。
 
 可组合的检查：
 

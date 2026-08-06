@@ -14,13 +14,15 @@ v2.6 删除项目、线程、偏好、自动化、素材、交付、远程锁、
 
 账号凭据是 v2.6 唯一需要改变磁盘 schema 的现存领域：无版本账号文件一次性升级为严格 v1。运行时只接受 `version: 1`，不会猜测或静默跳过损坏凭据。
 
-v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。大菜单重构曾升级为严格 v2，Codex 概念对齐曾升级为 v3；本次能力分层破坏性升级为严格 v4：Codex 线程使用 `thread.*`，真实轮次操作使用 `turn.*`，WeClaw 请求队列使用 `queue.*`。离线迁移会直接丢弃 v1/v2/v3 的临时菜单与旧控制回执，写入空 v4；业务线程、请求队列、提示词模板、偏好和交付状态不会被删除。运行时不兼容读取旧版本。
+v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。大菜单重构、Codex 概念对齐和领域命名先后升级到 v4；本次功能与配置分层破坏性升级为严格 v5。离线迁移会直接丢弃 v1–v4 的临时菜单与旧控制回执，写入空 v5；业务线程、请求队列、提示词模板、偏好和交付状态不会被删除。运行时不翻译旧编号，也不兼容读取旧版本。
 
 `control-state.json` 不保存卡片正文、提示词、回答、路径、附件名、令牌或 `context_token`；损坏、重复编号或未知 schema 会阻止启动。
 
 v2.6 同时删除共享 TCP `api_addr`、`WECLAW_API_ADDR`、`start --api-addr`、TCP 健康/管理端点和无认证发送。管理面固定迁移到 `~/.weclaw/control.sock`；主动发送默认关闭，启用后使用独立 `send_api` 哈希 token 配置与严格 v1 无正文回执。
 
 v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独占状态锁时，把每个旧提示词模板复制到每个已绑定者对应项目的严格 v1 `~/.weclaw/workflows.json`，确认全部写入后才原子删除配置字段。工作流保存原始提示模板和参数槽，不保存 Codex 回答；没有可确定绑定者时迁移直接失败，不会把任务变成无归属的共享数据。运行时不读取或兼容旧字段。
+
+当前配置升级为严格 `schema_version: 2`。顶层只保留 `schema_version`、`codex` 和 `weclaw`；旧扁平字段在提取提示词模板后被原子重组到 `weclaw.project_entries`、`weclaw.reply`、`weclaw.features`、`weclaw.security` 和 `weclaw.send_api`。运行时只接受版本 2，没有双写或旧字段读取。
 
 ## 自动离线迁移
 
@@ -30,9 +32,9 @@ v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独�
 2. 将已知无版本 `accounts/*.json` 凭据原子转换为严格 v1；非法或未知结构立即失败。
 3. 已是合法 v1 的同步与凭据文件保持不变；未知字段、非法回执或尾随 JSON 立即失败。
 4. 删除已进入事务快照的 `task-history.json` 与 `weclaw.pid`。
-5. 从 `config.json` 删除旧 `api_addr` 并加入 `"send_api":{"enabled":false}`；已有新发送配置保持原样，未知配置字段仍由新运行时严格拒绝。
+5. 先把旧 `projects[].quick_tasks` 写入绑定者工作流，再将已知扁平配置原子重组为配置版本 2；未知字段立即失败。
 6. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
-7. 将 `control-state.json` v1/v2/v3 破坏性替换为空 v4；合法 v4 保持不变，未知版本立即失败。
+7. 将 `control-state.json` v1–v4 破坏性替换为空 v5；合法 v5 保持不变，未知版本立即失败。
 
 迁移命令不是日常修复工具，也不会在 `weclaw start` 中自动运行。服务生命周期持有 `~/.weclaw/.state.lock`；服务仍在运行时迁移必须以 `conflict` 失败，部署器停服后才可获取迁移锁。
 

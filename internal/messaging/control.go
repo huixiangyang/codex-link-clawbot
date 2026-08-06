@@ -67,6 +67,7 @@ const (
 	actionPromptThreadGoal      controlAction = "thread_goal_prompt"
 	actionClearThreadGoal       controlAction = "thread_goal_clear"
 	actionReviewThread          controlAction = "thread_review"
+	actionCodexCapabilities     controlAction = "codex_capabilities"
 	actionConfirmDeleteThread   controlAction = "thread_delete_confirm"
 	actionDeleteThread          controlAction = "thread_delete"
 	actionThreadModels          controlAction = "thread_models"
@@ -92,7 +93,10 @@ const (
 	actionQueueClear            controlAction = "queue_clear"
 	actionRuntimeInfo           controlAction = "runtime_info"
 	actionNoReplyDiagnostic     controlAction = "no_reply_diagnostic"
-	actionMore                  controlAction = "more"
+	actionFeatureCenter         controlAction = "feature_center"
+	actionSettingsCenter        controlAction = "settings_center"
+	actionConfigurationStatus   controlAction = "configuration_status"
+	actionDiagnosticsCenter     controlAction = "diagnostics_center"
 	actionProjectCenter         controlAction = "project_center"
 	actionSelectProject         controlAction = "select_project"
 	actionProjectQuickTasks     controlAction = "project_quick_tasks"
@@ -534,35 +538,118 @@ func (h *Handler) confirmCancelTask(userID string) string {
 func (h *Handler) openRuntimeInfo(userID string) string {
 	options := []controlOption{
 		{Label: "为什么没回复", Action: actionNoReplyDiagnostic},
-		{Label: "Codex 执行环境", Action: actionProjectCenter},
+		{Label: "有效配置状态", Action: actionConfigurationStatus},
 		{Label: "刷新 WeClaw 状态", Action: actionRuntimeInfo},
 	}
 	prompt := h.buildStatus() + "\n\n" + renderControlOptions(options)
-	if !h.storeChoice(userID, viewSystemRuntime, options, actionMain) {
+	if !h.storeChoice(userID, viewSystemRuntime, options, actionDiagnosticsCenter) {
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字操作，0 返回。"
 }
 
-func (h *Handler) openMoreMenu(userID string) string {
-	options := []controlOption{
-		{Label: "WeClaw 运行与安全", Action: actionRuntimeInfo},
-		{Label: "自动化中心", Action: actionAutomations, Page: 1},
-		{Label: "素材与交付", Action: actionLibraryCenter},
-		{Label: "远程锁定", Action: actionRemoteLock},
+func (h *Handler) openFeatureCenter(userID string) string {
+	projectID := ""
+	workflowCount := 0
+	if h.projects != nil {
+		projectID = h.projects.Current(userID).ID
+		if h.workflows != nil {
+			workflowCount = len(h.workflows.List(userID, projectID))
+		}
 	}
-	if h.preferences != nil {
-		options = append(options, controlOption{Label: "偏好设置", Action: actionResponseModes})
+	options := []controlOption{
+		{Label: fmt.Sprintf("提示词模板 · %d 项", workflowCount), Action: actionProjectQuickTasks, Query: projectID, Page: 1},
+		{Label: "保存最近成功结果", Action: actionSaveRecentWorkflow},
+		{Label: "素材与交付", Action: actionLibraryCenter},
+		{Label: fmt.Sprintf("自动化检查 · %d 项", len(h.automationStatuses(userID))), Action: actionAutomations, Page: 1},
 	}
 	if h.voice != nil {
 		options = append(options, controlOption{Label: "语音简报", Action: actionVoiceBriefing})
 	}
-	options = append(options, controlOption{Label: "使用说明", Action: actionGuide})
-	prompt := "WeClaw 内容与自动化\n\n" + renderControlOptions(options)
-	if !h.storeChoice(userID, viewSystemMore, options, actionMain) {
+	prompt := strings.Join([]string{
+		"WeClaw 功能中心", "",
+		"这里只放 WeClaw 增强能力，不包含 Codex 线程和模型设置。", "",
+		renderControlOptions(options),
+	}, "\n")
+	if !h.storeChoice(userID, viewSystemFeatures, options, actionMain) {
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字操作，0 返回。"
+}
+
+func (h *Handler) openSettingsCenter(userID string) string {
+	options := []controlOption{
+		{Label: "有效配置状态", Action: actionConfigurationStatus},
+		{Label: "WeClaw 项目入口", Action: actionProjectCenter},
+		{Label: "回复方式与视觉", Action: actionResponseModes},
+		{Label: "WeClaw 请求队列", Action: actionActivityPage, Page: 1},
+		{Label: "远程锁定", Action: actionConfirmRemoteLock},
+	}
+	prompt := strings.Join([]string{
+		"WeClaw 设置中心", "",
+		"个人偏好可在微信即时修改；机器级配置中的目录、密钥、服务和网络监听只允许在本机修改。", "",
+		renderControlOptions(options),
+	}, "\n")
+	if !h.storeChoice(userID, viewSystemSettings, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
+	return prompt + "\n\n回复数字操作，0 返回。"
+}
+
+func (h *Handler) openConfigurationStatus(userID string) string {
+	currentProject := "未配置"
+	projectCount := 0
+	if h.projects != nil {
+		currentProject = h.projects.Current(userID).Name
+		projectCount = len(h.projects.List())
+	}
+	preference := h.currentResponseMode(userID)
+	style := h.currentVisualStyle(userID)
+	options := []controlOption{
+		{Label: "切换项目入口", Action: actionProjectCenter},
+		{Label: "修改回复偏好", Action: actionResponseModes},
+		{Label: "返回设置中心", Action: actionSettingsCenter},
+	}
+	prompt := strings.Join([]string{
+		"WeClaw 有效配置", "",
+		fmt.Sprintf("项目入口：%s · 共 %d 项", currentProject, projectCount),
+		"回答方式：" + preference.Definition().Name,
+		"视觉风格：" + style.Definition().Name,
+		"视觉渲染：" + enabledText(h.visual != nil),
+		"语音交付：" + enabledText(h.voice != nil),
+		"进度提示：" + enabledText(h.progress.Enabled),
+		fmt.Sprintf("自动化检查：%d 项", len(h.automationStatuses(userID))),
+		"链接归档：" + enabledText(strings.TrimSpace(h.saveDir) != ""),
+		"主动发送接口：" + enabledText(h.sendAPIEnabled),
+		"远程锁定：" + enabledText(h.remoteLock != nil && h.remoteLock.Enabled()),
+		"", "机器级配置只读。本机执行 weclaw config 查看脱敏后的完整状态。", "",
+		renderControlOptions(options),
+	}, "\n")
+	if !h.storeChoice(userID, viewSystemSettings, options, actionSettingsCenter) {
+		return controlStateFailureResult().Text
+	}
+	return prompt + "\n\n回复数字操作，0 返回设置中心。"
+}
+
+func (h *Handler) openDiagnosticsCenter(userID string) string {
+	options := []controlOption{
+		{Label: "为什么没回复", Action: actionNoReplyDiagnostic},
+		{Label: "运行状态", Action: actionRuntimeInfo},
+		{Label: "有效配置状态", Action: actionConfigurationStatus},
+		{Label: "使用说明", Action: actionGuide},
+	}
+	prompt := "WeClaw 诊断中心\n\n故障判断只读取确定性运行状态，不把诊断问题交给 Codex。\n\n" + renderControlOptions(options)
+	if !h.storeChoice(userID, viewSystemDiagnostics, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
+	return prompt + "\n\n回复数字操作，0 返回。"
+}
+
+func enabledText(enabled bool) string {
+	if enabled {
+		return "已启用"
+	}
+	return "未启用"
 }
 
 func (h *Handler) openGuide(userID string) string {
@@ -731,6 +818,7 @@ func (h *Handler) openSessionMenu(ctx context.Context, userID string) string {
 		{Label: "压缩上下文", Action: actionCompactThread},
 		{Label: "设置线程目标", Action: actionPromptThreadGoal},
 		{Label: "线程模型与推理", Action: actionThreadModels},
+		{Label: "Codex 能力", Action: actionCodexCapabilities},
 		{Label: "归档当前线程", Action: actionConfirmArchive},
 		{Label: "恢复已归档线程", Action: actionPickArchivedSession},
 	}
@@ -1365,6 +1453,7 @@ func controlGuide() string {
 		"发送“回答方式”可选择自适应、阅读或语音；语音会配套发送阅读卡和 MP3。",
 		"阅读卡回复支持发送“文字版”获取可复制原文。",
 		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
+		"设置中心只修改个人偏好；目录、命令、密钥和网络监听必须在本机配置。",
 		"发送“视觉风格”可在五套完整模板间切换，选择会自动保存。",
 		"也可以直接说“切换项目”“新建线程”“搜索线程”“切换线程 登录”或“运行中心”。",
 		"WeClaw 请求开始执行后，发送“状态”查看投递进度，发送“取消”可中止当前执行。",

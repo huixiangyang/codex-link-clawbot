@@ -5,92 +5,46 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
 	"strings"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
 	"github.com/huixiangyang/weclaw/internal/ilink"
 	"github.com/huixiangyang/weclaw/internal/project"
 	"github.com/huixiangyang/weclaw/internal/session"
 )
 
-func (h *Handler) openProjectCenter(ctx context.Context, userID string) string {
+func (h *Handler) openProjectCenter(_ context.Context, userID string) string {
 	if h.projects == nil {
 		return "WeClaw 项目入口未初始化。"
 	}
 	current := h.projects.Current(userID)
-	stats := sessionStats(h, userID)
-	options := make([]controlOption, 0, len(h.projects.List())+3)
-	options = append(options,
-		controlOption{Label: "当前线程", Action: actionCurrentSession},
-		controlOption{Label: "模型与推理强度", Action: actionThreadModels},
-		controlOption{Label: "代码审查", Action: actionReviewThread},
-	)
-	for _, definition := range h.projects.List() {
+	entries := h.projects.List()
+	options := make([]controlOption, 0, len(entries)+1)
+	for _, definition := range entries {
 		label := definition.Name
 		if definition.ID == current.ID {
 			label += " · 当前"
 		}
 		options = append(options, controlOption{Label: label, Action: actionSelectProject, Value: definition.ID})
 	}
+	options = append(options, controlOption{Label: "有效配置状态", Action: actionConfigurationStatus})
 	lines := []string{
-		"Codex 执行环境",
+		"WeClaw 项目入口",
 		"",
-		"边界：项目入口属于 WeClaw；线程、模型、审查和工具能力来自 Codex。",
-		"WeClaw 项目入口：" + current.Name,
+		"边界：这里只管理 Codex 可以进入的受信任本机目录，不管理 Codex 线程和能力。",
+		"当前：" + current.Name,
 		"标识：" + current.ID,
-		"工作目录：" + current.Root,
-		fmt.Sprintf("线程：%d 个活跃 · %d 个归档", stats.Active, stats.Archived),
-	}
-	if threadClient, err := h.sessionContext(); err == nil {
-		if active, currentErr := h.sessions.Current(ctx, userID, threadClient); currentErr == nil {
-			if active.Info.GitInfo != nil && active.Info.GitInfo.Branch != "" {
-				lines = append(lines, "Git 分支："+active.Info.GitInfo.Branch)
-			}
-			if len(active.Info.InstructionSources) > 0 {
-				names := make([]string, 0, len(active.Info.InstructionSources))
-				for _, source := range active.Info.InstructionSources {
-					names = append(names, filepath.Base(source))
-				}
-				lines = append(lines, "指令来源："+strings.Join(names, " · "))
-			} else {
-				lines = append(lines, "指令来源：当前线程未返回")
-			}
-		}
-	}
-	if capabilityClient, ok := h.codex.(codex.CapabilityClient); ok {
-		if capabilities, capabilityErr := capabilityClient.InspectProject(ctx, current.Root); capabilityErr == nil {
-			enabled := make([]string, 0, len(capabilities.Skills))
-			for _, skill := range capabilities.Skills {
-				if skill.Enabled {
-					name := strings.TrimSpace(skill.Interface.DisplayName)
-					if name == "" {
-						name = skill.Name
-					}
-					enabled = append(enabled, name)
-				}
-			}
-			lines = append(lines, fmt.Sprintf("技能：%d 个启用", len(enabled)))
-			if len(enabled) > 0 {
-				if len(enabled) > 5 {
-					enabled = enabled[:5]
-				}
-				lines = append(lines, "技能列表："+strings.Join(enabled, " · "))
-			}
-			lines = append(lines, fmt.Sprintf("外部工具连接：%d / %d 就绪", capabilities.MCPReady, capabilities.MCPServers))
-		} else {
-			lines = append(lines, "Codex 能力：暂不可读")
-		}
+		"目录：" + current.Root,
+		fmt.Sprintf("入口数量：%d", len(entries)),
 	}
 	if current.ServiceName != "" {
-		lines = append(lines, "服务："+current.ServiceName)
+		lines = append(lines, "服务检查：已配置")
 	}
 	if current.HealthURL != "" {
 		lines = append(lines, "健康检查：已配置")
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	prompt := strings.Join(lines, "\n")
-	if !h.storeChoice(userID, viewProjectCenter, options, actionMain) {
+	if !h.storeChoice(userID, viewProjectCenter, options, actionSettingsCenter) {
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字管理或切换 WeClaw 项目入口，0 返回。"
@@ -151,7 +105,7 @@ func (h *Handler) selectProject(userID, reference string) string {
 	}
 	options := []controlOption{
 		{Label: "进入 Codex 线程", Action: actionSessionMenu},
-		{Label: "返回 Codex 执行环境", Action: actionProjectCenter},
+		{Label: "返回项目入口", Action: actionProjectCenter},
 	}
 	prompt := strings.Join([]string{
 		"WeClaw 项目入口已切换",

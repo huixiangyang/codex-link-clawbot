@@ -165,7 +165,7 @@ func (h *Handler) openWorkflowCenter(userID, projectID string, page int) string 
 	if !h.storeChoiceWithBack(userID, viewProjectQuickTasks, options, back) {
 		return controlStateFailureResult().Text
 	}
-	return strings.Join(lines, "\n") + "\n\n回复数字管理，0 返回 Codex 执行环境。"
+	return strings.Join(lines, "\n") + "\n\n回复数字管理，0 返回 WeClaw 项目入口。"
 }
 
 func (h *Handler) openWorkflowDetail(userID string, source controlOption) string {
@@ -402,7 +402,7 @@ func (h *Handler) deleteWorkflow(userID, projectID, workflowID string, page int)
 	if !h.storeChoiceWithBack(userID, viewWorkflowResult, options, controlOption{Action: actionProjectCenter}) {
 		return controlStateFailureResult().Text
 	}
-	return prompt + "\n\n回复数字继续，0 返回 Codex 执行环境。"
+	return prompt + "\n\n回复数字继续，0 返回 WeClaw 项目入口。"
 }
 
 func (h *Handler) saveTaskAsWorkflow(userID, projectID, taskID, name string, page int) string {

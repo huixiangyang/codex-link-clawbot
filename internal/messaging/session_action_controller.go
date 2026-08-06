@@ -93,6 +93,8 @@ func (h *Handler) executeSessionControlAction(ctx context.Context, userID string
 		} else {
 			text = h.reviewCurrentThread(ctx, userID)
 		}
+	case actionCodexCapabilities:
+		text = h.openCodexCapabilities(ctx, userID)
 	case actionConfirmDeleteThread:
 		text = h.confirmDeleteCurrentThread(ctx, userID)
 	case actionDeleteThread:

@@ -19,8 +19,8 @@ func TestVisualStyleMenuSwitchesPersistsAndIsolatesOwners(t *testing.T) {
 	handler := newTestHandler(t)
 	handler.SetVisualRenderer(&fakeControlVisualRenderer{})
 	handler.SetPreferenceStore(store)
-	mainMenu := handler.openMoreMenu("owner-1")
-	if !strings.Contains(mainMenu, "偏好设置") {
+	mainMenu := handler.openSettingsCenter("owner-1")
+	if !strings.Contains(mainMenu, "回复方式与视觉") {
 		t.Fatalf("main menu missing preferences: %q", mainMenu)
 	}
 
@@ -71,7 +71,7 @@ func TestVisualStyleMenuRequiresVisualRendererAndStore(t *testing.T) {
 	}
 }
 
-func TestCommandDirectoryStyleCodeSwitchesDirectly(t *testing.T) {
+func TestCommandDirectoryOpensVisualStyleManagement(t *testing.T) {
 	store, err := preference.NewStore(filepath.Join(t.TempDir(), "preferences.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -81,8 +81,12 @@ func TestCommandDirectoryStyleCodeSwitchesDirectly(t *testing.T) {
 	handler.SetPreferenceStore(store)
 	handler.openMainMenu(context.Background(), "owner-1")
 
-	result, handled := handler.handleControlInput(context.Background(), "owner-1", "48", false, nextTestControlSource())
+	result, handled := handler.handleControlInput(context.Background(), "owner-1", "32", false, nextTestControlSource())
+	if !handled || !strings.Contains(result.Text, "视觉风格") {
+		t.Fatalf("directory style center = %#v handled=%v", result, handled)
+	}
+	result, handled = handler.handleControlInput(context.Background(), "owner-1", "5", false, nextTestControlSource())
 	if !handled || !strings.Contains(result.Text, "当前：简洁") || store.Get("owner-1").Style != visual.StyleMinimal {
-		t.Fatalf("directory style switch = %#v handled=%v style=%q", result, handled, store.Get("owner-1").Style)
+		t.Fatalf("style switch = %#v handled=%v style=%q", result, handled, store.Get("owner-1").Style)
 	}
 }

@@ -61,15 +61,15 @@ func runSend(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if !cfg.SendAPI.Enabled {
+	if !cfg.WeClaw.SendAPI.Enabled {
 		return fmt.Errorf("send API is disabled")
 	}
 	endpoint := strings.TrimSpace(sendEndpoint)
 	if endpoint == "" {
-		if cfg.SendAPI.ProxyMode {
+		if cfg.WeClaw.SendAPI.ProxyMode {
 			return fmt.Errorf("--endpoint is required when send API proxy mode is enabled")
 		}
-		endpoint = "http://" + cfg.SendAPI.ListenAddr
+		endpoint = "http://" + cfg.WeClaw.SendAPI.ListenAddr
 	}
 	parsedEndpoint, err := validateSendEndpoint(endpoint)
 	if err != nil {

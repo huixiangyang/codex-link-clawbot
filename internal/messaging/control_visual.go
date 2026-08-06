@@ -78,8 +78,8 @@ func controlDirectoryFromText(reply string) (visual.Directory, bool) {
 		Footer: "回复编号直接操作 · 0 退出 · 总览 30 分钟内有效",
 	}
 	icons := map[string]string{
-		"1": "messages-square", "2": "folder-kanban", "3": "list-todo",
-		"4": "palette", "5": "package-open", "6": "shield-check",
+		"1": "messages-square", "2": "list-todo", "3": "palette",
+		"4": "package-open", "5": "settings-2", "6": "activity",
 	}
 	sectionIndex := -1
 	for _, line := range lines[1:] {
@@ -144,7 +144,8 @@ func controlCardFromText(reply string) visual.Card {
 	switch {
 	case first == "WeClaw":
 		card.Title = first
-	case first == "WeClaw 运行与安全", first == "Codex 执行环境", first == "WeClaw 内容与自动化", first == "自动化中心",
+	case first == "WeClaw 运行与安全", first == "WeClaw 项目入口", first == "Codex 能力",
+		first == "WeClaw 功能中心", first == "WeClaw 设置中心", first == "WeClaw 有效配置", first == "WeClaw 诊断中心", first == "自动化中心",
 		first == "素材与交付", first == "链接素材", first == "交付记录", first == "提示词模板",
 		first == "WeClaw 请求队列", first == "WeClaw 执行记录":
 		card.Title = first
@@ -224,7 +225,10 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantHome
 	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消") || strings.HasPrefix(text, "准备清空"):
 		return visual.VariantWarning
-	case strings.HasPrefix(text, "WeClaw 运行与安全") || strings.HasPrefix(text, "WeClaw 内容与自动化") || strings.HasPrefix(text, "Codex 执行环境") ||
+	case strings.HasPrefix(text, "WeClaw 运行与安全") || strings.HasPrefix(text, "WeClaw 功能中心") ||
+		strings.HasPrefix(text, "WeClaw 设置中心") || strings.HasPrefix(text, "WeClaw 有效配置") ||
+		strings.HasPrefix(text, "WeClaw 诊断中心") || strings.HasPrefix(text, "WeClaw 项目入口") ||
+		strings.HasPrefix(text, "Codex 能力") ||
 		strings.HasPrefix(text, "自动化") || strings.HasPrefix(text, "素材与交付"):
 		return visual.VariantSystem
 	case strings.HasPrefix(text, "视觉风格已切换"):

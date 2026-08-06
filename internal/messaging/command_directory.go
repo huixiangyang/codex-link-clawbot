@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/huixiangyang/weclaw/internal/session"
-	"github.com/huixiangyang/weclaw/internal/visual"
 )
 
 type commandDirectorySection struct {
@@ -78,23 +77,6 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 
 	preference := h.currentResponseMode(userID)
 	style := h.currentVisualStyle(userID)
-	styleOptions := make([]controlOption, 0, len(visual.Styles()))
-	for index, definition := range visual.Styles() {
-		label := definition.Name + "风格"
-		if definition.ID == style {
-			label += " · 当前"
-		}
-		styleOptions = append(styleOptions, controlOption{
-			Code: fmt.Sprintf("%d", 44+index), Label: label,
-			Action: actionSetVisualStyle, Value: string(definition.ID),
-		})
-	}
-	modeOption := func(code, label string, modeValue string) controlOption {
-		if string(preference) == modeValue {
-			label += " · 当前"
-		}
-		return controlOption{Code: code, Label: label, Action: actionSetResponseMode, Value: modeValue}
-	}
 
 	voiceLabel := "语音简报"
 	if h.voice == nil {
@@ -108,72 +90,68 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 
 	sections := []commandDirectorySection{
 		{
-			Code: "1", Title: "Codex · 线程",
-			Category: controlOption{Code: "1", Label: "Codex · 线程", Action: actionSessionMenu},
+			Code: "1", Title: "Codex · 工作台",
+			Category: controlOption{Code: "1", Label: "Codex · 工作台", Action: actionSessionMenu},
 			Items: []controlOption{
-				{Code: "11", Label: "新建线程", Action: actionPromptNewSession},
-				{Code: "12", Label: "当前线程", Action: actionCurrentSession},
+				{Code: "11", Label: "当前线程", Action: actionCurrentSession},
+				{Code: "12", Label: "新建线程", Action: actionPromptNewSession},
 				{Code: "13", Label: "切换线程", Action: actionPickSession},
-				{Code: "14", Label: "搜索线程", Action: actionPromptSessionSearch},
-				{Code: "15", Label: "分叉当前线程", Action: actionForkThread},
-				{Code: "16", Label: "压缩上下文", Action: actionCompactThread},
-				{Code: "17", Label: "设置线程目标", Action: actionPromptThreadGoal},
-				{Code: "18", Label: "归档当前线程", Action: actionConfirmArchive},
-				{Code: "19", Label: "恢复归档线程", Action: actionPickArchivedSession},
+				{Code: "14", Label: "线程中心", Action: actionSessionMenu},
+				{Code: "15", Label: "模型与推理", Action: actionThreadModels},
+				{Code: "16", Label: "设置线程目标", Action: actionPromptThreadGoal},
+				{Code: "17", Label: "审查未提交改动", Action: actionReviewThread},
+				{Code: "18", Label: "Codex 能力", Action: actionCodexCapabilities},
 			},
 		},
 		{
-			Code: "2", Title: "Codex · 执行能力",
-			Category: controlOption{Code: "2", Label: "Codex · 执行能力", Action: actionProjectCenter},
+			Code: "2", Title: "WeClaw · 请求",
+			Category: controlOption{Code: "2", Label: "WeClaw · 请求", Action: actionActivityPage, Page: 1},
 			Items: []controlOption{
-				{Code: "21", Label: "WeClaw 项目入口", Action: actionProjectCenter},
-				{Code: "22", Label: "线程模型", Action: actionThreadModels},
-				{Code: "23", Label: "推理强度", Action: actionThreadEfforts},
-				{Code: "24", Label: "审查未提交改动", Action: actionReviewThread},
-				{Code: "25", Label: "刷新 Codex 能力", Action: actionProjectCenter},
+				{Code: "21", Label: "执行状态", Action: actionTaskStatus},
+				{Code: "22", Label: "执行记录", Action: actionActivityPage, Page: 1},
+				{Code: "23", Label: "最近结果", Action: actionRecentResult},
+				{Code: "24", Label: cancelLabel, Action: actionConfirmCancelTask},
+				{Code: "25", Label: queueToggle.Label, Action: queueToggle.Action},
 			},
 		},
 		{
-			Code: "3", Title: "WeClaw · 请求队列",
-			Category: controlOption{Code: "3", Label: "WeClaw · 请求队列", Action: actionActivityPage, Page: 1},
+			Code: "3", Title: "WeClaw · 回复",
+			Category: controlOption{Code: "3", Label: "WeClaw · 回复", Action: actionResponseModes},
 			Items: []controlOption{
-				{Code: "31", Label: "查看执行状态", Action: actionTaskStatus},
-				{Code: "32", Label: "最近执行结果", Action: actionRecentResult},
-				queueToggle,
-				{Code: "34", Label: cancelLabel, Action: actionConfirmCancelTask},
-				{Code: "35", Label: clearLabel, Action: actionConfirmQueueClear},
+				{Code: "31", Label: "回答方式", Action: actionResponseModes},
+				{Code: "32", Label: "视觉风格", Action: actionVisualStyles},
+				{Code: "33", Label: voiceLabel, Action: actionVoiceBriefing},
 			},
 		},
 		{
-			Code: "4", Title: "WeClaw · 回复呈现",
-			Category: controlOption{Code: "4", Label: "WeClaw · 回复呈现", Action: actionResponseModes},
-			Items: append([]controlOption{
-				modeOption("41", "自适应回答", "adaptive"),
-				modeOption("42", "阅读卡回答", "reading"),
-				modeOption("43", "语音回答", "voice"),
-			}, styleOptions...),
-		},
-		{
-			Code: "5", Title: "WeClaw · 内容与自动化",
-			Category: controlOption{Code: "5", Label: "WeClaw · 内容与自动化", Action: actionMore},
+			Code: "4", Title: "WeClaw · 功能",
+			Category: controlOption{Code: "4", Label: "WeClaw · 功能", Action: actionFeatureCenter},
 			Items: []controlOption{
-				{Code: "51", Label: "素材与交付", Action: actionLibraryCenter},
-				{Code: "52", Label: "链接素材", Action: actionLibraryPage, Query: string(LibraryLink), Page: 1},
-				{Code: "53", Label: "交付记录", Action: actionLibraryPage, Query: string(LibraryDelivery), Page: 1},
-				{Code: "54", Label: automationLabel, Action: actionAutomations, Page: 1},
-				{Code: "55", Label: voiceLabel, Action: actionVoiceBriefing},
-				{Code: "56", Label: fmt.Sprintf("提示词模板 · WeClaw · %d 项", workflowCount), Action: actionProjectQuickTasks, Query: projectID, Page: 1},
-				{Code: "57", Label: saveRecentLabel, Action: actionSaveRecentWorkflow},
+				{Code: "41", Label: fmt.Sprintf("提示词模板 · %d 项", workflowCount), Action: actionProjectQuickTasks, Query: projectID, Page: 1},
+				{Code: "42", Label: saveRecentLabel, Action: actionSaveRecentWorkflow},
+				{Code: "43", Label: "素材与交付", Action: actionLibraryCenter},
+				{Code: "44", Label: automationLabel, Action: actionAutomations, Page: 1},
 			},
 		},
 		{
-			Code: "6", Title: "WeClaw · 运行与安全",
-			Category: controlOption{Code: "6", Label: "WeClaw · 运行与安全", Action: actionRuntimeInfo},
+			Code: "5", Title: "WeClaw · 设置",
+			Category: controlOption{Code: "5", Label: "WeClaw · 设置", Action: actionSettingsCenter},
+			Items: []controlOption{
+				{Code: "51", Label: "有效配置状态", Action: actionConfigurationStatus},
+				{Code: "52", Label: "WeClaw 项目入口", Action: actionProjectCenter},
+				{Code: "53", Label: "回复方式与视觉", Action: actionResponseModes},
+				{Code: "54", Label: clearLabel, Action: actionConfirmQueueClear},
+				{Code: "55", Label: lockLabel, Action: actionConfirmRemoteLock},
+			},
+		},
+		{
+			Code: "6", Title: "WeClaw · 诊断",
+			Category: controlOption{Code: "6", Label: "WeClaw · 诊断", Action: actionDiagnosticsCenter},
 			Items: []controlOption{
 				{Code: "61", Label: "为什么没回复", Action: actionNoReplyDiagnostic},
-				{Code: "62", Label: lockLabel, Action: actionConfirmRemoteLock},
+				{Code: "62", Label: "运行状态", Action: actionRuntimeInfo},
 				{Code: "63", Label: "使用说明", Action: actionGuide},
-				{Code: "64", Label: "刷新操作总览", Action: actionMain},
+				{Code: "64", Label: "刷新首页", Action: actionMain},
 			},
 		},
 	}
@@ -181,13 +159,13 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 	options := make([]controlOption, 0, 48)
 	lines := []string{
 		"WeClaw 操作总览", "",
-		"能力边界：Codex 原生与 WeClaw 增强已分区",
+		"能力边界：Codex 工作能力与 WeClaw 管理能力分层",
 		"版本：" + h.bridgeVersion,
 		"WeClaw 项目入口：" + projectName,
 		"Codex 线程：" + currentSession,
 		"WeClaw 执行：" + taskState,
 		"WeClaw 回复：" + preference.Definition().Name,
-		fmt.Sprintf("WeClaw 队列：%d 项等待", queued),
+		"WeClaw 视觉：" + style.Definition().Name,
 	}
 	for _, section := range sections {
 		options = append(options, section.Category)
@@ -197,5 +175,5 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 	if !h.storeChoiceWithTTL(userID, viewSystemMain, options, controlOption{Action: actionExit}, controlDirectoryTTL) {
 		return controlStateFailureResult().Text
 	}
-	return strings.Join(lines, "\n") + "\n\n回复编号直接操作，0 退出；总览 30 分钟内有效。"
+	return strings.Join(lines, "\n") + "\n\n回复编号直接操作，0 退出；首页 30 分钟内有效。"
 }

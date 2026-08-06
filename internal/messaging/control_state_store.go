@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	controlStateVersion  = 4
+	controlStateVersion  = 5
 	controlStateMaxBytes = 256 << 10
 	controlStateMaxOwner = 64
 	controlStateMaxItems = 48
@@ -29,7 +29,9 @@ type controlView string
 const (
 	viewSystemMain          controlView = "system.main"
 	viewSystemRuntime       controlView = "system.runtime"
-	viewSystemMore          controlView = "system.more"
+	viewSystemFeatures      controlView = "system.features"
+	viewSystemSettings      controlView = "system.settings"
+	viewSystemDiagnostics   controlView = "system.diagnostics"
 	viewSystemGuide         controlView = "system.guide"
 	viewTaskStatus          controlView = "queue.status"
 	viewTaskCancelConfirm   controlView = "queue.cancel_confirm"
@@ -617,14 +619,15 @@ func (action controlAction) valid() bool {
 		actionUseSession, actionPromptNewSession, actionPromptRenameSession, actionConfirmArchive,
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem, actionPickArchivedSession,
 		actionRestoreSession, actionForkThread, actionToggleThreadPin, actionCompactThread,
-		actionPromptThreadGoal, actionClearThreadGoal, actionReviewThread,
+		actionPromptThreadGoal, actionClearThreadGoal, actionReviewThread, actionCodexCapabilities,
 		actionConfirmDeleteThread, actionDeleteThread, actionThreadModels,
 		actionSelectThreadModel, actionThreadEfforts, actionSelectThreadEffort,
 		actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
 		actionActivityPage, actionActivityDetail, actionTaskMoveFront, actionTaskDelete,
 		actionTaskRetry, actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume,
-		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic, actionMore,
+		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic,
+		actionFeatureCenter, actionSettingsCenter, actionConfigurationStatus, actionDiagnosticsCenter,
 		actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
 		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit, actionWorkflowEdit,

@@ -4,7 +4,7 @@
 
 当前实现已经删除共享 TCP 服务中的无认证发送、健康和管理路由。默认配置不会创建任何 TCP 监听；健康、排空、恢复和部署通知固定通过 `~/.weclaw/control.sock`。主动发送只有在配置显式启用后才启动独立 TCP 服务。
 
-旧 `api_addr`、`WECLAW_API_ADDR`、`start --api-addr` 以及直接读取微信账号凭据发送的旧 `weclaw send` 均已删除。离线迁移会删除配置中的 `api_addr`、写入关闭状态的 `send_api`，并从 systemd `ExecStart` 中移除旧 `--api-addr` 参数；运行时没有旧接口兼容、双写或降级分支。
+旧 `api_addr`、`WECLAW_API_ADDR`、`start --api-addr` 以及直接读取微信账号凭据发送的旧 `weclaw send` 均已删除。旧 v2.6 离线迁移已经删除 `api_addr`；当前配置使用 `weclaw.send_api`，运行时没有旧接口兼容、双写或降级分支。
 
 ## 本机管理面
 
@@ -24,7 +24,7 @@
 默认值是：
 
 ```json
-"send_api": {"enabled": false}
+{"weclaw": {"send_api": {"enabled": false}}}
 ```
 
 生成 token：
@@ -36,16 +36,20 @@ weclaw send-token --caller local-cli
 命令在离线状态生成 32 个随机字节，输出一次明文 token 和一个只含 SHA-256 哈希的配置项。明文应立即进入调用方的 secret 管理；不能写入 `config.json`、systemd 单元、命令参数或回执。启用回环发送面的完整结构为：
 
 ```json
-"send_api": {
-  "enabled": true,
-  "listen_addr": "127.0.0.1:18011",
-  "tokens": [
-    {
-      "caller_id": "local-cli",
-      "token_sha256": "64位小写十六进制SHA-256",
-      "scopes": ["send:text", "send:media"]
+{
+  "weclaw": {
+    "send_api": {
+      "enabled": true,
+      "listen_addr": "127.0.0.1:18011",
+      "tokens": [
+        {
+          "caller_id": "local-cli",
+          "token_sha256": "64位小写十六进制SHA-256",
+          "scopes": ["send:text", "send:media"]
+        }
+      ]
     }
-  ]
+  }
 }
 ```
 

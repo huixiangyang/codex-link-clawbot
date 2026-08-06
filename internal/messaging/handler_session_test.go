@@ -304,12 +304,12 @@ func TestMutatingIntentRejectsMissingStableSource(t *testing.T) {
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"WeClaw 操作总览", "能力边界：Codex 原生与 WeClaw 增强已分区", "版本：dev", "[1]  Codex · 线程", "11  新建线程", "[3]  WeClaw · 请求队列", "[6]  WeClaw · 运行与安全", "回复编号直接操作"} {
+	for _, want := range []string{"WeClaw 操作总览", "能力边界：Codex 工作能力与 WeClaw 管理能力分层", "版本：dev", "[1]  Codex · 工作台", "12  新建线程", "[2]  WeClaw · 请求", "[5]  WeClaw · 设置", "[6]  WeClaw · 诊断", "回复编号直接操作"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
 	}
-	prompt := controlReply(t, handler, "owner-1", "11")
+	prompt := controlReply(t, handler, "owner-1", "12")
 	if !strings.Contains(prompt, "发送线程名称") {
 		t.Fatalf("new session prompt = %q", prompt)
 	}

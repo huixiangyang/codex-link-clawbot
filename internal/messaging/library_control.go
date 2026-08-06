@@ -23,7 +23,7 @@ func (h *Handler) openLibraryCenter(userID string) string {
 		"Codex 新交付物会保存私有副本，之后可从微信再次发送。",
 		"", renderControlOptions(options),
 	}, "\n")
-	if !h.storeChoice(userID, viewLibraryCenter, options, actionMore) {
+	if !h.storeChoice(userID, viewLibraryCenter, options, actionFeatureCenter) {
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字查看，0 返回 WeClaw 内容与自动化。"

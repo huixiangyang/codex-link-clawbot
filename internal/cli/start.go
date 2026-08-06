@@ -87,12 +87,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if len(cfg.Projects) == 1 && cfg.Projects[0].ID == "workspace" {
-		if err := os.MkdirAll(cfg.Projects[0].Root, 0o700); err != nil {
+	entries := cfg.WeClaw.ProjectEntries
+	replyConfig := cfg.WeClaw.Reply
+	featureConfig := cfg.WeClaw.Features
+	if len(entries) == 1 && entries[0].ID == "workspace" {
+		if err := os.MkdirAll(entries[0].Root, 0o700); err != nil {
 			return fmt.Errorf("create default project root: %w", err)
 		}
 	}
-	projectManager, err := project.NewManager(cfg.Projects, "")
+	projectManager, err := project.NewManager(entries, "")
 	if err != nil {
 		return fmt.Errorf("initialize project manager: %w", err)
 	}
@@ -115,8 +118,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetControlStateStore(controlStateStore)
 	handler.SetProjectManager(projectManager)
-	projectIDs := make([]string, 0, len(cfg.Projects))
-	for _, configuredProject := range cfg.Projects {
+	projectIDs := make([]string, 0, len(entries))
+	for _, configuredProject := range entries {
 		projectIDs = append(projectIDs, configuredProject.ID)
 	}
 	workflowStore, err := workflow.NewStore("", projectIDs)
@@ -129,13 +132,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize owner preferences: %w", preferenceErr)
 	}
 	handler.SetPreferenceStore(preferenceStore)
-	if cfg.Visual.Enabled {
-		visualRenderer, visualErr := visual.NewRenderer(visual.Config{BrowserCommand: cfg.Visual.BrowserCommand})
+	if replyConfig.Visual.Enabled {
+		visualRenderer, visualErr := visual.NewRenderer(visual.Config{BrowserCommand: replyConfig.Visual.BrowserCommand})
 		if visualErr != nil {
 			return fmt.Errorf("initialize visual control cards: %w", visualErr)
 		}
 		handler.SetVisualRenderer(visualRenderer)
-		handler.SetVisualReplyConfig(cfg.Visual.LongReplies, cfg.Visual.LongReplyMinRunes)
+		handler.SetVisualReplyConfig(replyConfig.Visual.LongReplies, replyConfig.Visual.LongReplyMinRunes)
 		log.Printf("Visual control cards enabled (browser=%s)", visualRenderer.BrowserCommand())
 	}
 	sessionManager, err := session.NewManager("")
@@ -168,15 +171,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initialize material and delivery library: %w", err)
 	}
 	handler.SetLibraryStore(libraryStore)
-	remoteLock, err := messaging.NewRemoteLock("", cfg.Security.RemoteLockCode)
+	remoteLock, err := messaging.NewRemoteLock("", cfg.WeClaw.Security.RemoteLockCode)
 	if err != nil {
 		return fmt.Errorf("initialize remote lock: %w", err)
 	}
 	handler.SetRemoteLock(remoteLock)
-	if cfg.Voice.Enabled {
-		providers := make([]messaging.VoiceProviderEntry, 0, len(cfg.Voice.Providers))
-		providerIDs := make([]string, 0, len(cfg.Voice.Providers))
-		for _, providerConfig := range cfg.Voice.Providers {
+	if replyConfig.Voice.Enabled {
+		providers := make([]messaging.VoiceProviderEntry, 0, len(replyConfig.Voice.Providers))
+		providerIDs := make([]string, 0, len(replyConfig.Voice.Providers))
+		for _, providerConfig := range replyConfig.Voice.Providers {
 			var provider messaging.VoiceProvider
 			switch providerConfig.Type {
 			case "piper":
@@ -201,21 +204,21 @@ func runStart(cmd *cobra.Command, args []string) error {
 			})
 			providerIDs = append(providerIDs, providerConfig.ID)
 		}
-		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(cfg.Voice.FFmpegCommand, providers))
+		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(replyConfig.Voice.FFmpegCommand, providers))
 		log.Printf("Voice briefing enabled (providers=%s, delivery=mp3-file)", strings.Join(providerIDs, ","))
 	}
 
 	handler.SetProgressConfig(messaging.ProgressConfig{
-		Enabled:           cfg.Progress.Enabled,
-		TypingInterval:    time.Duration(cfg.Progress.TypingIntervalSeconds) * time.Second,
-		FirstMessageDelay: time.Duration(cfg.Progress.FirstMessageDelaySeconds) * time.Second,
-		MessageInterval:   time.Duration(cfg.Progress.MessageIntervalSeconds) * time.Second,
+		Enabled:           replyConfig.Progress.Enabled,
+		TypingInterval:    time.Duration(replyConfig.Progress.TypingIntervalSeconds) * time.Second,
+		FirstMessageDelay: time.Duration(replyConfig.Progress.FirstMessageDelaySeconds) * time.Second,
+		MessageInterval:   time.Duration(replyConfig.Progress.MessageIntervalSeconds) * time.Second,
 	})
 
-	// 可选的 Linkhoard 网页归档目录，与 turn 附件沙箱无关。
-	if cfg.SaveDir != "" {
-		handler.SetSaveDir(cfg.SaveDir)
-		log.Printf("Linkhoard archive directory: %s", cfg.SaveDir)
+	// 可选的链接归档目录，与 Codex 轮次附件沙箱无关。
+	if featureConfig.LinkArchive.Enabled {
+		handler.SetSaveDir(featureConfig.LinkArchive.Directory)
+		log.Printf("Link archive directory: %s", featureConfig.LinkArchive.Directory)
 	}
 
 	// 复用同一组已登录客户端启动本机管理面，并按配置决定是否启动主动发送面。
@@ -263,7 +266,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	handler.SetBridgeInfo(Version, false)
 	var sendAPIErr <-chan error
-	if cfg.SendAPI.Enabled {
+	if cfg.WeClaw.SendAPI.Enabled {
 		delivery, err := api.NewWeChatDelivery(sendTargets)
 		if err != nil {
 			return fmt.Errorf("initialize send API delivery: %w", err)
@@ -272,13 +275,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("initialize send API receipts: %w", err)
 		}
-		tokens := make([]api.AccessToken, 0, len(cfg.SendAPI.Tokens))
-		for _, token := range cfg.SendAPI.Tokens {
+		tokens := make([]api.AccessToken, 0, len(cfg.WeClaw.SendAPI.Tokens))
+		for _, token := range cfg.WeClaw.SendAPI.Tokens {
 			tokens = append(tokens, api.AccessToken{CallerID: token.CallerID, TokenSHA256: token.TokenSHA256, Scopes: token.Scopes})
 		}
 		sendServer, err := api.NewServer(delivery, api.ServerConfig{
-			ListenAddr: cfg.SendAPI.ListenAddr, ProxyMode: cfg.SendAPI.ProxyMode,
-			TrustedProxyCIDRs: cfg.SendAPI.TrustedProxyCIDRs, Tokens: tokens,
+			ListenAddr: cfg.WeClaw.SendAPI.ListenAddr, ProxyMode: cfg.WeClaw.SendAPI.ProxyMode,
+			TrustedProxyCIDRs: cfg.WeClaw.SendAPI.TrustedProxyCIDRs, Tokens: tokens,
 		}, receipts)
 		if err != nil {
 			return fmt.Errorf("initialize send API: %w", err)
@@ -299,7 +302,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// 确定性自动化复用已登录账号主动通知，状态按计划和绑定者隔离。
-	reportScheduler, err := reporting.NewScheduler(cfg.Automations, cfg.Projects, clients)
+	reportScheduler, err := reporting.NewScheduler(featureConfig.Automations, entries, clients)
 	if err != nil {
 		return fmt.Errorf("initialize scheduled reports: %w", err)
 	}

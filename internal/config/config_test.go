@@ -10,7 +10,10 @@ import (
 
 func TestCodexConfigMarshalRoundTrip(t *testing.T) {
 	cfg := Config{
-		Projects: []ProjectConfig{{ID: "project", Name: "Project", Root: "/srv/project"}},
+		SchemaVersion: CurrentSchemaVersion,
+		WeClaw: WeClawConfig{
+			ProjectEntries: []ProjectConfig{{ID: "project", Name: "Project", Root: "/srv/project"}},
+		},
 		Codex: CodexConfig{
 			Command: "/usr/local/bin/codex",
 			Model:   "gpt-test",
@@ -42,17 +45,22 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if cfg.Codex.Command != "codex" {
 		t.Fatalf("default codex command = %q", cfg.Codex.Command)
 	}
-	if len(cfg.Projects) != 1 || cfg.Projects[0].ID != "workspace" || !filepath.IsAbs(cfg.Projects[0].Root) {
-		t.Fatalf("unexpected default projects: %#v", cfg.Projects)
+	if cfg.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("unexpected schema version: %d", cfg.SchemaVersion)
 	}
-	if !cfg.Progress.Enabled || cfg.Progress.TypingIntervalSeconds != 8 || cfg.Progress.FirstMessageDelaySeconds != 15 || cfg.Progress.MessageIntervalSeconds != 45 {
-		t.Fatalf("unexpected default progress config: %#v", cfg.Progress)
+	entries := cfg.WeClaw.ProjectEntries
+	reply := cfg.WeClaw.Reply
+	if len(entries) != 1 || entries[0].ID != "workspace" || !filepath.IsAbs(entries[0].Root) {
+		t.Fatalf("unexpected default project entries: %#v", entries)
 	}
-	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
-		t.Fatalf("unexpected default visual config: %#v", cfg.Visual)
+	if !reply.Progress.Enabled || reply.Progress.TypingIntervalSeconds != 8 || reply.Progress.FirstMessageDelaySeconds != 15 || reply.Progress.MessageIntervalSeconds != 45 {
+		t.Fatalf("unexpected default progress config: %#v", reply.Progress)
 	}
-	if cfg.Voice.Enabled || cfg.Voice.FFmpegCommand != "" || len(cfg.Voice.Providers) != 0 {
-		t.Fatalf("unexpected default voice config: %#v", cfg.Voice)
+	if !reply.Visual.Enabled || !reply.Visual.LongReplies || reply.Visual.LongReplyMinRunes != 900 {
+		t.Fatalf("unexpected default visual config: %#v", reply.Visual)
+	}
+	if reply.Voice.Enabled || reply.Voice.FFmpegCommand != "" || len(reply.Voice.Providers) != 0 {
+		t.Fatalf("unexpected default voice config: %#v", reply.Voice)
 	}
 }
 
@@ -63,7 +71,7 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	t.Setenv("WECLAW_MIMO_API_KEY", "mimo-test-key")
 
 	cfg := DefaultConfig()
-	cfg.Voice.Providers = []VoiceProviderConfig{{
+	cfg.WeClaw.Reply.Voice.Providers = []VoiceProviderConfig{{
 		ID: "mimo", Type: "mimo", TimeoutSeconds: 90,
 		MiMo: &MiMoVoiceProviderConfig{BaseURL: "https://api.xiaomimimo.com/v1", Model: "mimo-v2.5-tts", Voice: "茉莉"},
 	}}
@@ -71,18 +79,18 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	if cfg.Codex.Command != "/opt/codex" || cfg.Codex.Model != "gpt-test" {
 		t.Fatalf("codex env overrides = %#v", cfg.Codex)
 	}
-	if cfg.Visual.BrowserCommand != "/opt/chromium" {
-		t.Fatalf("visual browser override = %q", cfg.Visual.BrowserCommand)
+	if cfg.WeClaw.Reply.Visual.BrowserCommand != "/opt/chromium" {
+		t.Fatalf("visual browser override = %q", cfg.WeClaw.Reply.Visual.BrowserCommand)
 	}
-	if cfg.Voice.Providers[0].MiMo.APIKey != "mimo-test-key" {
+	if cfg.WeClaw.Reply.Voice.Providers[0].MiMo.APIKey != "mimo-test-key" {
 		t.Fatalf("MiMo API key override was not applied")
 	}
 }
 
 func TestSendAPIDefaultsToDisabled(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.SendAPI.Enabled || cfg.SendAPI.ListenAddr != "" || len(cfg.SendAPI.Tokens) != 0 {
-		t.Fatalf("unexpected default send API config: %#v", cfg.SendAPI)
+	if cfg.WeClaw.SendAPI.Enabled || cfg.WeClaw.SendAPI.ListenAddr != "" || len(cfg.WeClaw.SendAPI.Tokens) != 0 {
+		t.Fatalf("unexpected default send API config: %#v", cfg.WeClaw.SendAPI)
 	}
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("default config validation: %v", err)
@@ -110,7 +118,7 @@ func TestSendAPIRequiresExplicitSecurityBoundary(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := DefaultConfig()
-			cfg.SendAPI = test.config
+			cfg.WeClaw.SendAPI = test.config
 			if err := cfg.validate(); err == nil {
 				t.Fatal("unsafe send API config was accepted")
 			}
@@ -122,7 +130,7 @@ func TestSendAPIRequiresExplicitSecurityBoundary(t *testing.T) {
 		{Enabled: true, ListenAddr: "0.0.0.0:18012", ProxyMode: true, TrustedProxyCIDRs: []string{"10.10.0.0/16"}, Tokens: []SendAPITokenConfig{validToken}},
 	} {
 		cfg := DefaultConfig()
-		cfg.SendAPI = valid
+		cfg.WeClaw.SendAPI = valid
 		if err := cfg.validate(); err != nil {
 			t.Fatalf("valid send API config rejected: %v", err)
 		}
@@ -131,7 +139,7 @@ func TestSendAPIRequiresExplicitSecurityBoundary(t *testing.T) {
 
 func TestVisualConfigRejectsRelativeBrowserCommand(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Visual.BrowserCommand = "chromium"
+	cfg.WeClaw.Reply.Visual.BrowserCommand = "chromium"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("visual validation error = %v", err)
 	}
@@ -140,7 +148,7 @@ func TestVisualConfigRejectsRelativeBrowserCommand(t *testing.T) {
 func TestVisualConfigRejectsUnsafeLongReplyThreshold(t *testing.T) {
 	for _, threshold := range []int{299, 5001} {
 		cfg := DefaultConfig()
-		cfg.Visual.LongReplyMinRunes = threshold
+		cfg.WeClaw.Reply.Visual.LongReplyMinRunes = threshold
 		if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "long_reply_min_runes") {
 			t.Fatalf("threshold %d validation error = %v", threshold, err)
 		}
@@ -156,9 +164,17 @@ func TestLoadKeepsVisualDefaultWhenSectionIsOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := []byte(`{
-  "progress": {"enabled": true, "typing_interval_seconds": 8, "first_message_delay_seconds": 15, "message_interval_seconds": 45},
-  "projects": [{"id": "project", "name": "Project", "root": "/srv/project"}],
-  "codex": {"command": "codex", "model": ""}
+  "schema_version": 2,
+  "codex": {"command": "codex", "model": ""},
+  "weclaw": {
+    "project_entries": [{"id": "project", "name": "Project", "root": "/srv/project"}],
+    "reply": {
+      "progress": {"enabled": true, "typing_interval_seconds": 8, "first_message_delay_seconds": 15, "message_interval_seconds": 45}
+    },
+    "features": {"link_archive": {"enabled": false}},
+    "security": {},
+    "send_api": {"enabled": false}
+  }
 }`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
@@ -167,8 +183,47 @@ func TestLoadKeepsVisualDefaultWhenSectionIsOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Visual.Enabled || !cfg.Visual.LongReplies || cfg.Visual.LongReplyMinRunes != 900 {
-		t.Fatalf("omitted visual section should preserve defaults: %#v", cfg.Visual)
+	if !cfg.WeClaw.Reply.Visual.Enabled || !cfg.WeClaw.Reply.Visual.LongReplies || cfg.WeClaw.Reply.Visual.LongReplyMinRunes != 900 {
+		t.Fatalf("omitted visual section should preserve defaults: %#v", cfg.WeClaw.Reply.Visual)
+	}
+}
+
+func TestLoadRejectsFlatConfigurationSchema(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".weclaw", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("Load() error = %v, want flat schema rejection", err)
+	}
+}
+
+func TestDecodeRequiresExplicitSchemaVersion(t *testing.T) {
+	if _, err := decodeConfig([]byte(`{"codex":{"command":"codex"},"weclaw":{}}`)); err == nil || !strings.Contains(err.Error(), "schema_version is required") {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+}
+
+func TestLinkArchiveConfigurationIsExplicit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.WeClaw.Features.LinkArchive.Directory = "/srv/archive"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "requires enabled") {
+		t.Fatalf("disabled archive validation = %v", err)
+	}
+	cfg.WeClaw.Features.LinkArchive.Enabled = true
+	cfg.WeClaw.Features.LinkArchive.Directory = "relative/archive"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("relative archive validation = %v", err)
+	}
+	cfg.WeClaw.Features.LinkArchive.Directory = "/srv/archive"
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("valid archive configuration = %v", err)
 	}
 }
 
@@ -283,24 +338,24 @@ func TestValidateAutomationsRejectsImplicitOrUnsafeValues(t *testing.T) {
 
 func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Security.RemoteLockCode = "short"
+	cfg.WeClaw.Security.RemoteLockCode = "short"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "remote_lock_code") {
 		t.Fatalf("short lock code error = %v", err)
 	}
-	cfg.Security.RemoteLockCode = "secure-code"
-	cfg.Voice.Enabled = true
-	cfg.Voice.FFmpegCommand = "/usr/bin/ffmpeg"
+	cfg.WeClaw.Security.RemoteLockCode = "secure-code"
+	cfg.WeClaw.Reply.Voice.Enabled = true
+	cfg.WeClaw.Reply.Voice.FFmpegCommand = "/usr/bin/ffmpeg"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "voice.providers") {
 		t.Fatalf("missing providers error = %v", err)
 	}
-	cfg.Voice.Providers = []VoiceProviderConfig{{
+	cfg.WeClaw.Reply.Voice.Providers = []VoiceProviderConfig{{
 		ID: "mimo", Type: "mimo", TimeoutSeconds: 90,
 		MiMo: &MiMoVoiceProviderConfig{BaseURL: "http://example.com/v1", APIKey: "test-key", Model: "mimo-v2.5-tts", Voice: "茉莉"},
 	}}
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("insecure base URL error = %v", err)
 	}
-	mimo := cfg.Voice.Providers[0].MiMo
+	mimo := cfg.WeClaw.Reply.Voice.Providers[0].MiMo
 	mimo.BaseURL = "https://api.xiaomimimo.com/v1"
 	mimo.Model = "mimo-v2.5-tts-voiceclone"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), ".model") {
@@ -312,17 +367,17 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 		t.Fatalf("unsupported voice error = %v", err)
 	}
 	mimo.Voice = "茉莉"
-	cfg.Voice.Providers = append([]VoiceProviderConfig{{
+	cfg.WeClaw.Reply.Voice.Providers = append([]VoiceProviderConfig{{
 		ID: "local", Type: "piper", TimeoutSeconds: 30,
 		Piper: &PiperVoiceProviderConfig{
 			Command: "/opt/piper/bin/piper", Model: "/opt/piper/voice.onnx", ModelConfig: "/opt/piper/voice.onnx.json",
 			LengthScale: 1,
 		},
-	}}, cfg.Voice.Providers...)
+	}}, cfg.WeClaw.Reply.Voice.Providers...)
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("valid security and voice config: %v", err)
 	}
-	cfg.Voice.Providers[1].ID = "local"
+	cfg.WeClaw.Reply.Voice.Providers[1].ID = "local"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("duplicate provider error = %v", err)
 	}
@@ -330,8 +385,8 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 
 func TestVoiceRequiresVisualDelivery(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Visual.Enabled = false
-	cfg.Voice = VoiceConfig{
+	cfg.WeClaw.Reply.Visual.Enabled = false
+	cfg.WeClaw.Reply.Voice = VoiceConfig{
 		Enabled: true, FFmpegCommand: "/usr/bin/ffmpeg",
 		Providers: []VoiceProviderConfig{{
 			ID: "local", Type: "piper", TimeoutSeconds: 30,

@@ -99,9 +99,9 @@ func TestMigrateStateV26RejectsRunningStateLease(t *testing.T) {
 	}
 }
 
-func TestMigrateStateV26DisablesLegacyUnauthenticatedAPI(t *testing.T) {
+func TestMigrateStateReorganizesFlatConfiguration(t *testing.T) {
 	root := t.TempDir()
-	legacy := `{"api_addr":"127.0.0.1:18011","progress":{"enabled":true}}`
+	legacy := `{"codex":{"command":"codex"},"projects":[{"id":"app","name":"App","root":"/srv/app"}],"progress":{"enabled":true},"save_dir":"/srv/archive"}`
 	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
@@ -113,12 +113,17 @@ func TestMigrateStateV26DisablesLegacyUnauthenticatedAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "api_addr") || !strings.Contains(string(data), `"send_api"`) || !strings.Contains(string(data), `"enabled": false`) {
+	for _, want := range []string{`"schema_version": 2`, `"weclaw"`, `"project_entries"`, `"link_archive"`, `"directory": "/srv/archive"`, `"send_api"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("migrated config missing %s: %s", want, data)
+		}
+	}
+	if strings.Contains(string(data), `"projects"`) || strings.Contains(string(data), `"save_dir"`) {
 		t.Fatalf("migrated config=%s", data)
 	}
 }
 
-func TestMigrateStateReplacesLegacyControlStateWithEmptyV4(t *testing.T) {
+func TestMigrateStateReplacesLegacyControlStateWithEmptyV5(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"session.new"}}}`
@@ -132,7 +137,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 4,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 5,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
@@ -140,7 +145,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV4(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesV2ControlStateWithEmptyV4(t *testing.T) {
+func TestMigrateStateReplacesV2ControlStateWithEmptyV5(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":2,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
@@ -154,15 +159,15 @@ func TestMigrateStateReplacesV2ControlStateWithEmptyV4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 4,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 5,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }
 
-func TestMigrateStateReplacesV3ControlStateWithEmptyV4(t *testing.T) {
+func TestMigrateStateReplacesV4ControlStateWithEmptyV5(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":3,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
+	legacy := `{"version":4,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +178,7 @@ func TestMigrateStateReplacesV3ControlStateWithEmptyV4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 4,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 5,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }

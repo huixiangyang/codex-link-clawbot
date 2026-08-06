@@ -50,7 +50,7 @@ func controlActionDomain(action controlAction) ActionDomain {
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem,
 		actionPickArchivedSession, actionRestoreSession, actionForkThread,
 		actionToggleThreadPin, actionCompactThread, actionPromptThreadGoal,
-		actionClearThreadGoal, actionReviewThread, actionConfirmDeleteThread,
+		actionClearThreadGoal, actionReviewThread, actionCodexCapabilities, actionConfirmDeleteThread,
 		actionDeleteThread, actionThreadModels, actionSelectThreadModel,
 		actionThreadEfforts, actionSelectThreadEffort:
 		return DomainSession
@@ -106,8 +106,14 @@ func (h *Handler) executeSystemControlAction(ctx context.Context, userID string,
 		text = h.openRuntimeInfo(userID)
 	case actionNoReplyDiagnostic:
 		text = h.buildNoReplyDiagnostic(userID)
-	case actionMore:
-		text = h.openMoreMenu(userID)
+	case actionFeatureCenter:
+		text = h.openFeatureCenter(userID)
+	case actionSettingsCenter:
+		text = h.openSettingsCenter(userID)
+	case actionConfigurationStatus:
+		text = h.openConfigurationStatus(userID)
+	case actionDiagnosticsCenter:
+		text = h.openDiagnosticsCenter(userID)
 	case actionGuide:
 		text = h.openGuide(userID)
 	default:

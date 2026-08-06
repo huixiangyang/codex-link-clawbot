@@ -18,17 +18,76 @@ import (
 	"github.com/huixiangyang/weclaw/internal/statefile"
 )
 
-// Config holds the application configuration.
+const CurrentSchemaVersion = 2
+
+// Config 明确分隔 Codex 本身与 WeClaw 接入层配置。
 type Config struct {
-	SaveDir     string             `json:"save_dir,omitempty"` // Linkhoard archive directory
-	SendAPI     SendAPIConfig      `json:"send_api"`
-	Progress    ProgressConfig     `json:"progress"`
-	Projects    []ProjectConfig    `json:"projects"`
+	SchemaVersion int          `json:"schema_version"`
+	Codex         CodexConfig  `json:"codex"`
+	WeClaw        WeClawConfig `json:"weclaw"`
+}
+
+// UnmarshalJSON 要求磁盘配置显式声明版本，同时保留调用方预置的默认值。
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type configWire Config
+	decoded := configWire(*c)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("trailing data")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, exists := fields["schema_version"]; !exists {
+		return fmt.Errorf("schema_version is required")
+	}
+	*c = Config(decoded)
+	return nil
+}
+
+// WeClawConfig 只描述微信接入层、机器能力和确定性功能，不承载 Codex 线程偏好。
+type WeClawConfig struct {
+	ProjectEntries []ProjectConfig `json:"project_entries"`
+	Reply          ReplyConfig     `json:"reply"`
+	Features       FeatureConfig   `json:"features"`
+	Security       SecurityConfig  `json:"security"`
+	SendAPI        SendAPIConfig   `json:"send_api"`
+}
+
+// ReplyConfig 统一管理从等待提示到最终媒体交付的微信回复体验。
+type ReplyConfig struct {
+	Progress ProgressConfig `json:"progress"`
+	Visual   VisualConfig   `json:"visual"`
+	Voice    VoiceConfig    `json:"voice"`
+}
+
+// FeatureConfig 汇总不属于 Codex 的可选 WeClaw 功能。
+type FeatureConfig struct {
+	LinkArchive LinkArchiveConfig  `json:"link_archive"`
 	Automations []AutomationConfig `json:"automations,omitempty"`
-	Codex       CodexConfig        `json:"codex"`
-	Visual      VisualConfig       `json:"visual"`
-	Security    SecurityConfig     `json:"security"`
-	Voice       VoiceConfig        `json:"voice"`
+}
+
+type LinkArchiveConfig struct {
+	Enabled   bool   `json:"enabled"`
+	Directory string `json:"directory,omitempty"`
+}
+
+func (c LinkArchiveConfig) validate() error {
+	if !c.Enabled {
+		if strings.TrimSpace(c.Directory) != "" {
+			return fmt.Errorf("weclaw.features.link_archive.directory requires enabled")
+		}
+		return nil
+	}
+	if !filepath.IsAbs(c.Directory) || filepath.Clean(c.Directory) != c.Directory {
+		return fmt.Errorf("weclaw.features.link_archive.directory must be a clean absolute path when enabled")
+	}
+	return nil
 }
 
 type SendAPIConfig struct {
@@ -47,45 +106,45 @@ type SendAPITokenConfig struct {
 
 func (c SendAPIConfig) validate() error {
 	if c.Enabled && strings.TrimSpace(c.ListenAddr) == "" {
-		return fmt.Errorf("send_api.listen_addr is required when enabled")
+		return fmt.Errorf("weclaw.send_api.listen_addr is required when enabled")
 	}
 	if c.ListenAddr != "" {
 		host, portText, err := net.SplitHostPort(c.ListenAddr)
 		if err != nil {
-			return fmt.Errorf("send_api.listen_addr must use an IP address and explicit port")
+			return fmt.Errorf("weclaw.send_api.listen_addr must use an IP address and explicit port")
 		}
 		ip := net.ParseIP(host)
 		port, portErr := strconv.Atoi(portText)
 		if ip == nil || portErr != nil || port < 1 || port > 65535 {
-			return fmt.Errorf("send_api.listen_addr must use an IP address and explicit port")
+			return fmt.Errorf("weclaw.send_api.listen_addr must use an IP address and explicit port")
 		}
 		if !c.ProxyMode && !ip.IsLoopback() {
-			return fmt.Errorf("send_api.listen_addr must be loopback unless proxy_mode is enabled")
+			return fmt.Errorf("weclaw.send_api.listen_addr must be loopback unless proxy_mode is enabled")
 		}
 	}
 	if c.ProxyMode {
 		if len(c.TrustedProxyCIDRs) == 0 || len(c.TrustedProxyCIDRs) > 16 {
-			return fmt.Errorf("send_api.trusted_proxy_cidrs must contain between 1 and 16 networks in proxy mode")
+			return fmt.Errorf("weclaw.send_api.trusted_proxy_cidrs must contain between 1 and 16 networks in proxy mode")
 		}
 	} else if len(c.TrustedProxyCIDRs) != 0 {
-		return fmt.Errorf("send_api.trusted_proxy_cidrs requires proxy_mode")
+		return fmt.Errorf("weclaw.send_api.trusted_proxy_cidrs requires proxy_mode")
 	}
 	seenNetworks := make(map[string]bool, len(c.TrustedProxyCIDRs))
 	for _, raw := range c.TrustedProxyCIDRs {
 		_, network, err := net.ParseCIDR(raw)
 		prefixLength, _ := networkMaskSize(network)
 		if err != nil || network.String() != raw || prefixLength == 0 || seenNetworks[raw] {
-			return fmt.Errorf("send_api.trusted_proxy_cidrs contains an invalid or duplicate canonical network")
+			return fmt.Errorf("weclaw.send_api.trusted_proxy_cidrs contains an invalid or duplicate canonical network")
 		}
 		seenNetworks[raw] = true
 	}
 	if c.Enabled && (len(c.Tokens) == 0 || len(c.Tokens) > 16) {
-		return fmt.Errorf("send_api.tokens must contain between 1 and 16 tokens when enabled")
+		return fmt.Errorf("weclaw.send_api.tokens must contain between 1 and 16 tokens when enabled")
 	}
 	seenCallers := make(map[string]bool, len(c.Tokens))
 	seenHashes := make(map[string]bool, len(c.Tokens))
 	for index, token := range c.Tokens {
-		prefix := fmt.Sprintf("send_api.tokens[%d]", index)
+		prefix := fmt.Sprintf("weclaw.send_api.tokens[%d]", index)
 		if !projectIDPattern.MatchString(token.CallerID) || seenCallers[token.CallerID] {
 			return fmt.Errorf("%s.caller_id is invalid or duplicated", prefix)
 		}
@@ -126,7 +185,7 @@ func (c SecurityConfig) validate() error {
 	}
 	length := len([]rune(c.RemoteLockCode))
 	if length < 6 || length > 64 || strings.ContainsAny(c.RemoteLockCode, "\r\n") {
-		return fmt.Errorf("security.remote_lock_code must be a single line with 6 to 64 characters")
+		return fmt.Errorf("weclaw.security.remote_lock_code must be a single line with 6 to 64 characters")
 	}
 	return nil
 }
@@ -165,19 +224,19 @@ func (c VoiceConfig) validate() error {
 		return nil
 	}
 	if !filepath.IsAbs(c.FFmpegCommand) || filepath.Clean(c.FFmpegCommand) != c.FFmpegCommand {
-		return fmt.Errorf("voice.ffmpeg_command must be a clean absolute path")
+		return fmt.Errorf("weclaw.reply.voice.ffmpeg_command must be a clean absolute path")
 	}
 	if len(c.Providers) == 0 || len(c.Providers) > 4 {
-		return fmt.Errorf("voice.providers must contain between 1 and 4 providers")
+		return fmt.Errorf("weclaw.reply.voice.providers must contain between 1 and 4 providers")
 	}
 	ids := make(map[string]struct{}, len(c.Providers))
 	for index, provider := range c.Providers {
-		prefix := fmt.Sprintf("voice.providers[%d]", index)
+		prefix := fmt.Sprintf("weclaw.reply.voice.providers[%d]", index)
 		if !projectIDPattern.MatchString(provider.ID) {
 			return fmt.Errorf("%s.id is invalid", prefix)
 		}
 		if _, exists := ids[provider.ID]; exists {
-			return fmt.Errorf("voice provider id %q is duplicated", provider.ID)
+			return fmt.Errorf("weclaw.reply.voice provider id %q is duplicated", provider.ID)
 		}
 		ids[provider.ID] = struct{}{}
 		if provider.TimeoutSeconds < 5 || provider.TimeoutSeconds > 180 {
@@ -301,12 +360,12 @@ func defaultProjects() []ProjectConfig {
 
 func validateProjects(projects []ProjectConfig) error {
 	if len(projects) == 0 {
-		return fmt.Errorf("projects must contain at least one project")
+		return fmt.Errorf("weclaw.project_entries must contain at least one project entry")
 	}
 	ids := make(map[string]struct{}, len(projects))
 	names := make(map[string]struct{}, len(projects))
 	for index, project := range projects {
-		prefix := fmt.Sprintf("projects[%d]", index)
+		prefix := fmt.Sprintf("weclaw.project_entries[%d]", index)
 		if !projectIDPattern.MatchString(project.ID) {
 			return fmt.Errorf("%s.id is invalid", prefix)
 		}
@@ -356,10 +415,10 @@ func defaultVisualConfig() VisualConfig {
 
 func (c VisualConfig) validate() error {
 	if c.BrowserCommand != "" && !filepath.IsAbs(c.BrowserCommand) {
-		return fmt.Errorf("visual.browser_command must be an absolute path")
+		return fmt.Errorf("weclaw.reply.visual.browser_command must be an absolute path")
 	}
 	if c.Enabled && c.LongReplies && (c.LongReplyMinRunes < 300 || c.LongReplyMinRunes > 5000) {
-		return fmt.Errorf("visual.long_reply_min_runes must be between 300 and 5000")
+		return fmt.Errorf("weclaw.reply.visual.long_reply_min_runes must be between 300 and 5000")
 	}
 	return nil
 }
@@ -386,7 +445,7 @@ func validateAutomations(automations []AutomationConfig, projects []ProjectConfi
 	}
 	ids := make(map[string]struct{}, len(automations))
 	for index, automation := range automations {
-		prefix := fmt.Sprintf("automations[%d]", index)
+		prefix := fmt.Sprintf("weclaw.features.automations[%d]", index)
 		if !projectIDPattern.MatchString(automation.ID) {
 			return fmt.Errorf("%s.id is invalid", prefix)
 		}
@@ -475,13 +534,13 @@ func (c ProgressConfig) validate() error {
 		return nil
 	}
 	if c.TypingIntervalSeconds < 3 || c.TypingIntervalSeconds > 30 {
-		return fmt.Errorf("progress.typing_interval_seconds must be between 3 and 30")
+		return fmt.Errorf("weclaw.reply.progress.typing_interval_seconds must be between 3 and 30")
 	}
 	if c.FirstMessageDelaySeconds < 5 || c.FirstMessageDelaySeconds > 120 {
-		return fmt.Errorf("progress.first_message_delay_seconds must be between 5 and 120")
+		return fmt.Errorf("weclaw.reply.progress.first_message_delay_seconds must be between 5 and 120")
 	}
 	if c.MessageIntervalSeconds < 15 || c.MessageIntervalSeconds > 300 {
-		return fmt.Errorf("progress.message_interval_seconds must be between 15 and 300")
+		return fmt.Errorf("weclaw.reply.progress.message_interval_seconds must be between 15 and 300")
 	}
 	return nil
 }
@@ -489,10 +548,15 @@ func (c ProgressConfig) validate() error {
 // DefaultConfig returns an empty configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Progress: defaultProgressConfig(),
-		Projects: defaultProjects(),
-		Codex:    defaultCodexConfig(),
-		Visual:   defaultVisualConfig(),
+		SchemaVersion: CurrentSchemaVersion,
+		Codex:         defaultCodexConfig(),
+		WeClaw: WeClawConfig{
+			ProjectEntries: defaultProjects(),
+			Reply: ReplyConfig{
+				Progress: defaultProgressConfig(),
+				Visual:   defaultVisualConfig(),
+			},
+		},
 	}
 }
 
@@ -544,36 +608,43 @@ func decodeConfig(data []byte) (*Config, error) {
 }
 
 func (c *Config) validate() error {
-	if err := c.SendAPI.validate(); err != nil {
-		return err
-	}
-	if err := c.Progress.validate(); err != nil {
-		return err
+	if c.SchemaVersion != CurrentSchemaVersion {
+		return fmt.Errorf("schema_version must be %d", CurrentSchemaVersion)
 	}
 	if err := c.Codex.validate(); err != nil {
 		return err
 	}
-	if err := validateProjects(c.Projects); err != nil {
+	if err := validateProjects(c.WeClaw.ProjectEntries); err != nil {
 		return err
 	}
-	if err := c.Visual.validate(); err != nil {
+	if err := c.WeClaw.Reply.Progress.validate(); err != nil {
 		return err
 	}
-	if c.Voice.Enabled && !c.Visual.Enabled {
-		return fmt.Errorf("voice.enabled requires visual.enabled for paired image and audio delivery")
-	}
-	if err := c.Security.validate(); err != nil {
+	if err := c.WeClaw.Reply.Visual.validate(); err != nil {
 		return err
 	}
-	if err := c.Voice.validate(); err != nil {
+	if c.WeClaw.Reply.Voice.Enabled && !c.WeClaw.Reply.Visual.Enabled {
+		return fmt.Errorf("weclaw.reply.voice.enabled requires weclaw.reply.visual.enabled for paired image and audio delivery")
+	}
+	if err := c.WeClaw.Reply.Voice.validate(); err != nil {
 		return err
 	}
-	return validateAutomations(c.Automations, c.Projects)
+	if err := c.WeClaw.Features.LinkArchive.validate(); err != nil {
+		return err
+	}
+	if err := validateAutomations(c.WeClaw.Features.Automations, c.WeClaw.ProjectEntries); err != nil {
+		return err
+	}
+	if err := c.WeClaw.Security.validate(); err != nil {
+		return err
+	}
+	return c.WeClaw.SendAPI.validate()
 }
 
 func loadEnv(cfg *Config) {
 	if v := os.Getenv("WECLAW_SAVE_DIR"); v != "" {
-		cfg.SaveDir = v
+		cfg.WeClaw.Features.LinkArchive.Enabled = true
+		cfg.WeClaw.Features.LinkArchive.Directory = v
 	}
 	if v := os.Getenv("WECLAW_CODEX_COMMAND"); v != "" {
 		cfg.Codex.Command = v
@@ -582,12 +653,12 @@ func loadEnv(cfg *Config) {
 		cfg.Codex.Model = v
 	}
 	if v := os.Getenv("WECLAW_VISUAL_BROWSER"); v != "" {
-		cfg.Visual.BrowserCommand = v
+		cfg.WeClaw.Reply.Visual.BrowserCommand = v
 	}
 	if v := os.Getenv("WECLAW_MIMO_API_KEY"); v != "" {
-		for index := range cfg.Voice.Providers {
-			if cfg.Voice.Providers[index].Type == "mimo" && cfg.Voice.Providers[index].MiMo != nil {
-				cfg.Voice.Providers[index].MiMo.APIKey = v
+		for index := range cfg.WeClaw.Reply.Voice.Providers {
+			if cfg.WeClaw.Reply.Voice.Providers[index].Type == "mimo" && cfg.WeClaw.Reply.Voice.Providers[index].MiMo != nil {
+				cfg.WeClaw.Reply.Voice.Providers[index].MiMo.APIKey = v
 			}
 		}
 	}

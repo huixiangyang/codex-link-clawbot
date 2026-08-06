@@ -87,7 +87,7 @@ func TestCommandDirectoryOpensPromptTemplateManagement(t *testing.T) {
 	}
 	environment.handler.openMainMenu(context.Background(), "owner-1")
 	management, handled := environment.handler.handleControlInput(
-		context.Background(), "owner-1", "56", false, nextTestControlSource(),
+		context.Background(), "owner-1", "41", false, nextTestControlSource(),
 	)
 	if !handled || !strings.HasPrefix(management.Text, "提示词模板\n") || !strings.Contains(management.Text, "2  发布检查") {
 		t.Fatalf("workflow management = %#v handled=%v", management, handled)
@@ -256,9 +256,9 @@ func TestWorkflowParametersResumeAfterRestartAndEnqueueOnce(t *testing.T) {
 		t.Fatalf("menu during parameters = %#v, handled=%v", menu, handled)
 	}
 	projectCenter, handled := environment.handler.handleControlInput(
-		context.Background(), "owner-1", "2", false, nextTestControlSource(),
+		context.Background(), "owner-1", "52", false, nextTestControlSource(),
 	)
-	if !handled || !strings.Contains(projectCenter.Text, "Codex 执行环境") {
+	if !handled || !strings.Contains(projectCenter.Text, "WeClaw 项目入口") {
 		t.Fatalf("menu choice during parameters = %#v, handled=%v", projectCenter, handled)
 	}
 	resumed, handled := environment.handler.handleControlInput(

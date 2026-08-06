@@ -19,7 +19,7 @@ WeClaw is Codex-only. It is not a general bot framework and does not provide Cla
 | WeClaw | Adaptive text, five reading-card systems, artifacts, and paired image + MP3 voice |
 | WeClaw | Deterministic checks, remote lock, no-reply diagnosis, draining, and transactional deployment |
 
-Codex owns threads, turns, models, review, skills, and external tools. WeClaw owns the WeChat transport, allowlisted directory selection, request queue, presentation, templates, automation, and operations. The 44-action `/` directory labels every section as Codex or WeClaw.
+Codex owns threads, turns, models, review, skills, and external tools. WeClaw owns the WeChat transport, allowlisted directory selection, request queue, presentation, templates, automation, and operations. The `/` home card provides 35 stable entries grouped into a Codex workbench and WeClaw request, reply, feature, settings, and diagnostics areas.
 
 Codex App Server has no WeClaw project object: a WeClaw project entry is an allowlisted directory used as the Codex working directory. A WeChat message is first a WeClaw request and becomes a Codex turn only after dispatch. See the [capability boundary](docs/guides/capability-boundary.md).
 
@@ -49,7 +49,7 @@ weclaw login
 weclaw start
 ```
 
-Configuration lives at `~/.weclaw/config.json`. At minimum, define an absolute project path Codex may enter. See the Chinese [configuration reference](docs/guides/configuration.md) for projects, visual rendering, Piper, MiMo, automations, and proactive sending.
+Configuration lives at `~/.weclaw/config.json`, uses schema version 2, and separates `codex` from `weclaw`. At minimum, define an absolute project path Codex may enter. Run `weclaw config` for a redacted effective summary. See the Chinese [configuration and settings reference](docs/guides/configuration.md) for projects, visual rendering, Piper, MiMo, automations, and proactive sending.
 
 Production runs as a systemd user service. Runtime control uses an owner-only Unix socket:
 
@@ -63,7 +63,7 @@ See [getting started](docs/guides/getting-started.md) and [deployment](docs/oper
 
 ## WeChat interaction
 
-Send `/` to open the context-aware home card. Direct Chinese phrases cover projects, threads, turns, model and reasoning selection, thread goals, review, prompt templates, response mode, visual style, automations, deliveries, voice briefings, deterministic diagnosis, and remote locking.
+Send `/` to open the context-aware home card. Machine configuration is read-only from WeChat, while owner preferences such as the active project entry, thread, response mode, and visual style take effect immediately. Direct Chinese phrases cover projects, threads, turns, model and reasoning selection, thread goals, review, prompt templates, response mode, visual style, automations, deliveries, voice briefings, deterministic diagnosis, and remote locking.
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected and never forwarded to Codex.
 

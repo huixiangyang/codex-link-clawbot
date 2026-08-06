@@ -32,6 +32,7 @@
 | [架构总览](architecture/overview.md) | 代码目录、依赖层次、输入与交付主链路 |
 | [持久任务队列](architecture/task-queue.md) | FIFO、冻结结果、投递事务和重启恢复 |
 | [可靠控制面](architecture/control-plane.md) | 控制领域、Presenter 和状态边界 |
+| [功能与配置模型](architecture/feature-and-configuration.md) | 分层首页、功能中心、设置中心、诊断中心和配置归属 |
 | [类型化控制路由](architecture/control-routing.md) | Intent Registry、ActionResult 和副作用入口 |
 | [持久交互](architecture/persistent-interactions.md) | revision、待输入状态和幂等回执 |
 | [统一状态内核](architecture/state-kernel.md) | 原子写入、严格 schema、租约和备份 |

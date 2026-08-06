@@ -168,16 +168,16 @@ func TestTaskContinuationSwitchesBackToFrozenProjectAndUpdatesStableDirectory(t 
 		t.Fatal(err)
 	}
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"56  提示词模板 · WeClaw · 1 项", "57  保存最近结果", "32  最近执行结果", "[2]  Codex · 执行能力"} {
+	for _, want := range []string{"41  提示词模板 · 1 项", "42  保存最近结果", "23  最近结果", "[2]  WeClaw · 请求"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("stable directory missing %q: %q", want, main)
 		}
 	}
 	state, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || state == nil || len(state.Options) != 44 {
+	if err != nil || status != controlStateActive || state == nil || len(state.Options) != 35 {
 		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
 	}
-	workflowOption, hasWorkflowCode := controlOptionByCode("56", state.Options)
+	workflowOption, hasWorkflowCode := controlOptionByCode("41", state.Options)
 	if !hasWorkflowCode || workflowOption.Action != actionProjectQuickTasks || workflowOption.AutoUse {
 		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
 	}

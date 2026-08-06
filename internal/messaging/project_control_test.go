@@ -72,6 +72,27 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	}
 }
 
+func TestProjectEntryAndCodexCapabilityViewsHaveSeparateOwnership(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	projects, err := project.NewManager([]config.ProjectConfig{{
+		ID: "workspace", Name: "Workspace", Root: t.TempDir(),
+	}}, filepath.Join(t.TempDir(), "project-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.SetProjectManager(projects)
+	entryView := handler.openProjectCenter(context.Background(), "owner-1")
+	if !strings.HasPrefix(entryView, "WeClaw 项目入口\n") || strings.Contains(entryView, "技能：") || strings.Contains(entryView, "外部工具连接：") {
+		t.Fatalf("project entry view mixed Codex capabilities: %q", entryView)
+	}
+	capabilityView := handler.openCodexCapabilities(context.Background(), "owner-1")
+	for _, want := range []string{"Codex 能力", "来源：Codex 应用服务", "技能：1 个启用", "外部工具连接：1 / 1 就绪"} {
+		if !strings.Contains(capabilityView, want) {
+			t.Fatalf("Codex capability view missing %q: %q", want, capabilityView)
+		}
+	}
+}
+
 func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *testing.T) {
 	handler, runtime := newSessionHandler(t)
 	projects, err := project.NewManager([]config.ProjectConfig{
@@ -157,13 +178,13 @@ func TestRunningMenuUsesPersistentTaskCenter(t *testing.T) {
 	handler, cancel := testHandlerWithRunningTask(t, "owner-1")
 	defer cancel()
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"[3]  WeClaw · 请求队列", "31  查看执行状态", "33  暂停队列", "34  取消当前执行"} {
+	for _, want := range []string{"[2]  WeClaw · 请求", "21  执行状态", "25  暂停队列", "24  取消当前执行"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("active menu missing %q: %q", want, main)
 		}
 	}
 	state, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || len(state.Options) != 44 {
+	if err != nil || status != controlStateActive || len(state.Options) != 35 {
 		t.Fatalf("persistent command directory = %#v status=%v err=%v", state, status, err)
 	}
 }

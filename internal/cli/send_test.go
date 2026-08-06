@@ -54,7 +54,7 @@ func TestRunSendUsesAuthenticatedAPIWithoutCredentialFiles(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("WECLAW_SEND_TOKEN", token)
 	cfg := config.DefaultConfig()
-	cfg.SendAPI = config.SendAPIConfig{
+	cfg.WeClaw.SendAPI = config.SendAPIConfig{
 		Enabled: true, ListenAddr: "127.0.0.1:18011",
 		Tokens: []config.SendAPITokenConfig{{CallerID: "local-cli", TokenSHA256: strings.Repeat("a", 64), Scopes: []string{api.ScopeSendText}}},
 	}

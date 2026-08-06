@@ -19,11 +19,11 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	first.SetControlStateStore(firstStore)
 	attachTestSessionManager(t, first)
 	menu, handled := first.handleControlInput(context.Background(), "owner-1", "/", false, nextTestControlSource())
-	if !handled || !strings.Contains(menu.Text, "WeClaw 操作总览") || !strings.Contains(menu.Text, "11  新建线程") {
+	if !handled || !strings.Contains(menu.Text, "WeClaw 操作总览") || !strings.Contains(menu.Text, "12  新建线程") {
 		t.Fatalf("main menu = %#v, handled=%v", menu, handled)
 	}
 	before, status, err := firstStore.Load("owner-1")
-	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 44 || before.Options[1].Code != "11" {
+	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 35 || before.Options[1].Code != "11" {
 		t.Fatalf("stored main menu = %#v, status=%v, err=%v", before, status, err)
 	}
 

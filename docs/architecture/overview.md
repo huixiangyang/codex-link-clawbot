@@ -49,7 +49,7 @@ cmd/weclaw/main.go
 | --- | --- |
 | `cmd/weclaw` | 只创建 CLI 入口，不包含业务逻辑 |
 | `internal/cli` | Cobra 命令、进程装配、部署和离线迁移 |
-| `internal/config` | 严格配置解析、默认值和安全校验 |
+| `internal/config` | 严格版本 2 配置、Codex/WeClaw 分层、默认值和安全校验 |
 | `internal/codex` | App Server 进程、JSON-RPC 与事件归一化 |
 | `internal/ilink` | 微信登录、长轮询、协议客户端和游标 |
 | `internal/messaging` | 入站、控制、Coordinator、投递和媒体编排 |
@@ -81,6 +81,7 @@ cmd/weclaw
 ## 核心不变量
 
 - 只有配置中的项目绝对路径可以成为 Codex 工作目录。
+- 机器级配置只从本机版本 2 配置与受控环境读取；微信只修改绑定者偏好。
 - 普通输入先成为 WeClaw 请求并落盘再确认；执行与投递使用入队时冻结的项目入口、Codex 线程和偏好。
 - Codex 最终回复先冻结，再选择文字、图片、文件或语音交付，不能边生成边产生不可恢复副作用。
 - 多媒体在任何内容可见前完成整批 CDN 预上传；响应不确定时不盲目重复正文。

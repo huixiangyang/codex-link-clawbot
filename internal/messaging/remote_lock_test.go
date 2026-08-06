@@ -40,7 +40,7 @@ func TestCommandDirectoryRemoteLockRequiresConfirmation(t *testing.T) {
 	handler.SetRemoteLock(lock)
 	handler.openMainMenu(context.Background(), "owner-1")
 
-	prompt, handled := handler.handleControlInput(context.Background(), "owner-1", "62", false, nextTestControlSource())
+	prompt, handled := handler.handleControlInput(context.Background(), "owner-1", "55", false, nextTestControlSource())
 	if !handled || !strings.Contains(prompt.Text, "准备远程锁定") || lock.IsLocked("owner-1") {
 		t.Fatalf("lock confirmation = %#v handled=%v locked=%v", prompt, handled, lock.IsLocked("owner-1"))
 	}

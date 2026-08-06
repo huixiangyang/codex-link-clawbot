@@ -45,7 +45,7 @@ func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 		"WeClaw 运行与安全", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
 		"主动发送：已启用", "Codex：运行中", "协议：Codex 应用服务",
 		"模型：使用 Codex 默认配置", "Codex 工作目录：/workspace", "Codex PID：4242",
-		"1  为什么没回复", "2  Codex 执行环境", "3  刷新 WeClaw 状态",
+		"1  为什么没回复", "2  有效配置状态", "3  刷新 WeClaw 状态",
 	} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("runtime center missing %q: %q", want, status)
@@ -54,6 +54,22 @@ func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 	diagnostic := controlReply(t, handler, "owner-1", "1")
 	if !strings.Contains(diagnostic, "为什么没回复") || strings.Contains(diagnostic, "操作已经失效") {
 		t.Fatalf("runtime diagnostic action = %q", diagnostic)
+	}
+}
+
+func TestSettingsCenterSeparatesPreferencesFromMachineConfiguration(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	settings := handler.openSettingsCenter("owner-1")
+	for _, want := range []string{"WeClaw 设置中心", "个人偏好可在微信即时修改", "机器级配置", "有效配置状态", "WeClaw 项目入口", "回复方式与视觉"} {
+		if !strings.Contains(settings, want) {
+			t.Fatalf("settings center missing %q: %q", want, settings)
+		}
+	}
+	status := handler.openConfigurationStatus("owner-1")
+	for _, want := range []string{"WeClaw 有效配置", "项目入口：", "回答方式：", "视觉渲染：", "进度提示：已启用", "机器级配置只读", "weclaw config"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("configuration status missing %q: %q", want, status)
+		}
 	}
 }
 

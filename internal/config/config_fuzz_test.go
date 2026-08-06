@@ -5,6 +5,7 @@ import "testing"
 func FuzzDecodeConfig(f *testing.F) {
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"}}`))
+	f.Add([]byte(`{"schema_version":2,"codex":{"command":"codex"},"weclaw":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}]}}`))
 	f.Add([]byte(`{"unknown":true}`))
 	f.Add([]byte(`{} trailing`))
 	f.Add([]byte{})

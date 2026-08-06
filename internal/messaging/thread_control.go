@@ -116,6 +116,54 @@ func (h *Handler) reviewCurrentThread(ctx context.Context, userID string) string
 	})
 }
 
+func (h *Handler) openCodexCapabilities(ctx context.Context, userID string) string {
+	capabilityClient, ok := h.codex.(codex.CapabilityClient)
+	if !ok || h.projects == nil {
+		return "Codex 能力目录当前不可用。"
+	}
+	entry := h.projects.Current(userID)
+	capabilities, err := capabilityClient.InspectProject(ctx, entry.Root)
+	if err != nil {
+		return "读取 Codex 能力目录失败：" + err.Error()
+	}
+	enabledSkills := make([]string, 0, len(capabilities.Skills))
+	for _, skill := range capabilities.Skills {
+		if !skill.Enabled {
+			continue
+		}
+		name := strings.TrimSpace(skill.Interface.DisplayName)
+		if name == "" {
+			name = skill.Name
+		}
+		enabledSkills = append(enabledSkills, name)
+	}
+	displayedSkills := enabledSkills
+	if len(displayedSkills) > 5 {
+		displayedSkills = displayedSkills[:5]
+	}
+	lines := []string{
+		"Codex 能力",
+		"",
+		"来源：Codex 应用服务",
+		"工作入口：" + entry.Name,
+		fmt.Sprintf("技能：%d 个启用", len(enabledSkills)),
+		fmt.Sprintf("外部工具连接：%d / %d 就绪", capabilities.MCPReady, capabilities.MCPServers),
+	}
+	if len(displayedSkills) > 0 {
+		lines = append(lines, "技能列表："+strings.Join(displayedSkills, " · "))
+	}
+	options := []controlOption{
+		{Label: "模型与推理", Action: actionThreadModels},
+		{Label: "当前线程", Action: actionCurrentSession},
+		{Label: "返回 Codex 工作台", Action: actionSessionMenu},
+	}
+	lines = append(lines, "", renderControlOptions(options))
+	if !h.storeChoice(userID, viewSessionCenter, options, actionSessionMenu) {
+		return controlStateFailureResult().Text
+	}
+	return strings.Join(lines, "\n") + "\n\n回复数字操作，0 返回 Codex 工作台。"
+}
+
 func (h *Handler) steerCurrentTurn(ctx context.Context, userID, instruction string) string {
 	instruction = strings.TrimSpace(instruction)
 	if instruction == "" {

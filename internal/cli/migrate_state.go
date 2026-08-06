@@ -109,15 +109,15 @@ func migrateState(root string) error {
 			return fmt.Errorf("remove legacy %s: %w", legacyName, err)
 		}
 	}
-	if err := migrateSendAPIConfig(filepath.Join(root, "config.json")); err != nil {
-		return fmt.Errorf("migrate config: %w", err)
-	}
 	ownerIDs, err := migratedOwnerIDs(accountsPath)
 	if err != nil {
 		return fmt.Errorf("resolve workflow owners: %w", err)
 	}
 	if err := migrateProjectWorkflows(filepath.Join(root, "config.json"), filepath.Join(root, "workflows.json"), ownerIDs); err != nil {
 		return fmt.Errorf("migrate project workflows: %w", err)
+	}
+	if err := migrateConfigurationV2(filepath.Join(root, "config.json")); err != nil {
+		return fmt.Errorf("migrate config: %w", err)
 	}
 	if err := migrateControlState(filepath.Join(root, "control-state.json")); err != nil {
 		return fmt.Errorf("migrate control state: %w", err)
@@ -153,14 +153,14 @@ func migrateControlState(path string) error {
 		return fmt.Errorf("control state schema is invalid")
 	}
 	switch state.Version {
-	case 4:
+	case 5:
 		return os.Chmod(path, 0o600)
-	case 1, 2, 3:
+	case 1, 2, 3, 4:
 		return writePrivateJSONAtomic(path, struct {
 			Version  int                        `json:"version"`
 			Owners   map[string]json.RawMessage `json:"owners"`
 			Receipts map[string]json.RawMessage `json:"receipts"`
-		}{Version: 4, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
+		}{Version: 5, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
 	default:
 		return fmt.Errorf("unsupported control state version %d", state.Version)
 	}
@@ -299,7 +299,8 @@ func migrateProjectWorkflows(configPath, workflowPath string, ownerIDs []string)
 	return writePrivateJSONAtomic(configPath, fields)
 }
 
-func migrateSendAPIConfig(path string) error {
+// migrateConfigurationV2 将扁平旧配置一次性重组为 Codex 与 WeClaw 两层；运行时不读取旧结构。
+func migrateConfigurationV2(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -321,19 +322,84 @@ func migrateSendAPIConfig(path string) error {
 	if fields == nil {
 		return fmt.Errorf("config must be a JSON object")
 	}
-	changed := false
-	if _, exists := fields["api_addr"]; exists {
-		delete(fields, "api_addr")
-		changed = true
-	}
-	if _, exists := fields["send_api"]; !exists {
-		fields["send_api"] = json.RawMessage(`{"enabled":false}`)
-		changed = true
-	}
-	if !changed {
+	if rawVersion, exists := fields["schema_version"]; exists {
+		var version int
+		if err := json.Unmarshal(rawVersion, &version); err != nil || version != 2 {
+			return fmt.Errorf("unsupported configuration schema version")
+		}
 		return os.Chmod(path, 0o600)
 	}
-	return writePrivateJSONAtomic(path, fields)
+	allowed := map[string]bool{
+		"save_dir": true, "send_api": true, "progress": true, "projects": true,
+		"automations": true, "codex": true, "visual": true, "security": true, "voice": true,
+	}
+	for name := range fields {
+		if !allowed[name] {
+			return fmt.Errorf("unknown field %q", name)
+		}
+	}
+
+	reply := make(map[string]json.RawMessage)
+	for _, name := range []string{"progress", "visual", "voice"} {
+		if value, exists := fields[name]; exists {
+			reply[name] = value
+		}
+	}
+	features := make(map[string]json.RawMessage)
+	if value, exists := fields["automations"]; exists {
+		features["automations"] = value
+	}
+	linkArchive := struct {
+		Enabled   bool   `json:"enabled"`
+		Directory string `json:"directory,omitempty"`
+	}{}
+	if value, exists := fields["save_dir"]; exists {
+		if err := json.Unmarshal(value, &linkArchive.Directory); err != nil {
+			return fmt.Errorf("decode save_dir: %w", err)
+		}
+		linkArchive.Enabled = strings.TrimSpace(linkArchive.Directory) != ""
+	}
+	linkArchiveJSON, err := json.Marshal(linkArchive)
+	if err != nil {
+		return err
+	}
+	features["link_archive"] = linkArchiveJSON
+
+	weclaw := make(map[string]json.RawMessage)
+	if value, exists := fields["projects"]; exists {
+		weclaw["project_entries"] = value
+	}
+	if value, exists := fields["security"]; exists {
+		weclaw["security"] = value
+	}
+	if value, exists := fields["send_api"]; exists {
+		weclaw["send_api"] = value
+	} else {
+		weclaw["send_api"] = json.RawMessage(`{"enabled":false}`)
+	}
+	replyJSON, err := json.Marshal(reply)
+	if err != nil {
+		return err
+	}
+	featuresJSON, err := json.Marshal(features)
+	if err != nil {
+		return err
+	}
+	weclaw["reply"] = replyJSON
+	weclaw["features"] = featuresJSON
+	weclawJSON, err := json.Marshal(weclaw)
+	if err != nil {
+		return err
+	}
+
+	current := map[string]json.RawMessage{
+		"schema_version": json.RawMessage(`2`),
+		"weclaw":         weclawJSON,
+	}
+	if value, exists := fields["codex"]; exists {
+		current["codex"] = value
+	}
+	return writePrivateJSONAtomic(path, current)
 }
 
 func migrateCredentialFile(path string) error {
