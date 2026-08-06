@@ -55,13 +55,13 @@ weclaw restart
 `update`, `upgrade`, and host-specific cutover scripts are removed. Immutable releases and local builds use the same rollback-capable transaction:
 
 ```bash
-weclaw deploy v2.5.0
-weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.5.0-local.1
+weclaw deploy v2.7.0
+weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.7.0-local.1
 ```
 
 Deployment verifies candidate version, platform, and SHA-256; drains the old runtime; snapshots state after shutdown; runs an offline migration; atomically installs; and starts the candidate in drain mode. The queue is resumed only after the expected version, Codex, WeChat monitors, and sync cursors are healthy. Failure restores the binary, systemd unit, configuration, and task state together. Success writes a receipt under `~/.weclaw/deployments/` and sends a plain-text WeChat notice.
 
-The first v2.5-to-v2.6 cutover is intentionally a maintenance-window migration because the management transport changes from loopback TCP to an owner-only Unix socket and no compatibility client remains. Stop v2.5 with the installed v2.5 binary, take a complete binary/unit/state backup, then migrate and start v2.6. After that one cutover, transactional `weclaw deploy` is used again. See [the breaking migration guide](docs/migration-v2.md).
+The first production cutover from v2.5 to the current v2.7 line is intentionally a maintenance-window migration because the management transport changes from loopback TCP to an owner-only Unix socket and no compatibility client remains. Stop v2.5 with the installed v2.5 binary, take a complete binary/unit/state backup, then migrate and start v2.7. After that one cutover, transactional `weclaw deploy` is used again. See [the dedicated v2.7 cutover checklist](docs/release-v2.7-cutover.md) and [the breaking migration guide](docs/migration-v2.md).
 
 ## Configuration
 
@@ -245,6 +245,7 @@ More details:
 - [v2.6 local management and proactive-send security](docs/v2.6-api-security.md)
 - [v2.6 deterministic no-reply diagnostics](docs/v2.6-diagnostics.md)
 - [v2.7 persistent quick workflows](docs/v2.7-workflows.md)
+- [v2.7 first production cutover and real-WeChat acceptance](docs/release-v2.7-cutover.md)
 - [Acceptance checklist](docs/acceptance.md)
 
 ## License
