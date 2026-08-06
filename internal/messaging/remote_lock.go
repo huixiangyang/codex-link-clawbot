@@ -147,6 +147,20 @@ func (h *Handler) lockRemote(userID string) string {
 	return "WeClaw 已远程锁定。后续消息和附件不会进入 Codex。发送“解锁 解锁码”恢复。"
 }
 
+func (h *Handler) confirmRemoteLock(userID string) string {
+	if h.remoteLock == nil || !h.remoteLock.Enabled() {
+		return "远程锁定未配置。请先在 security.remote_lock_code 设置解锁码并重启服务。"
+	}
+	if h.remoteLock.IsLocked(userID) {
+		return "WeClaw 已处于远程锁定。发送“解锁 解锁码”恢复。"
+	}
+	options := []controlOption{{Code: "1", Label: "确认远程锁定", Action: actionRemoteLock}}
+	if !h.storeChoiceWithBack(userID, viewSecurityLockConfirm, options, controlOption{Action: actionMain}) {
+		return controlStateFailureResult().Text
+	}
+	return "准备远程锁定\n\n锁定会取消当前任务、暂停队列，并阻止后续内容进入 Codex。\n\n" + renderControlOptions(options) + "\n\n回复 1 确认，0 返回操作总览。"
+}
+
 func (h *Handler) handleLockedInput(userID, text string) string {
 	argument, matched := intentArgument(text, []string{"解锁"})
 	if !matched || strings.TrimSpace(argument) == "" {

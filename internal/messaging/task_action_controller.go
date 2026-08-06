@@ -29,6 +29,12 @@ func (h *Handler) executeTaskControlAction(ctx context.Context, userID string, o
 		return h.requestSuccessfulTaskRerun(userID, option.Value, true).withIdentity(string(option.Action), DomainTask)
 	case actionTaskFrozenText:
 		return h.requestFrozenTaskText(userID, option.Value).withIdentity(string(option.Action), DomainTask)
+	case actionRecentResult:
+		if task, exists := h.latestSuccessfulTask(userID, false); exists {
+			text = h.openActivityDetail(userID, task.ID, 1)
+		} else {
+			text = "最近还没有成功任务。直接发送内容即可开始。"
+		}
 	case actionQueuePause:
 		text = h.setQueuePaused(userID, true)
 	case actionQueueResume:

@@ -35,14 +35,14 @@ func controlActionDomain(action controlAction) ActionDomain {
 	case actionTaskStatus, actionConfirmCancelTask, actionCancelTask, actionActivityPage,
 		actionActivityDetail, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
 		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
-		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionConfirmQueueClear,
+		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume, actionConfirmQueueClear,
 		actionQueueClear:
 		return DomainTask
 	case actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
 		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit,
 		actionWorkflowEdit, actionConfirmWorkflowDelete, actionWorkflowDelete,
-		actionPromptWorkflowSave, actionWorkflowSave:
+		actionPromptWorkflowSave, actionWorkflowSave, actionSaveRecentWorkflow:
 		return DomainProject
 	case actionSessionMenu, actionCurrentSession, actionPickSession, actionBrowseSessions,
 		actionPromptSessionSearch, actionSessionPage, actionSessionDetail, actionUseSession,
@@ -56,7 +56,7 @@ func controlActionDomain(action controlAction) ActionDomain {
 		return DomainAutomation
 	case actionVisualStyles, actionSetVisualStyle, actionResponseModes, actionSetResponseMode:
 		return DomainPreference
-	case actionRemoteLock:
+	case actionRemoteLock, actionConfirmRemoteLock:
 		return DomainSecurity
 	default:
 		return DomainSystem

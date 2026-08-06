@@ -118,6 +118,50 @@ func TestMigrateStateV26DisablesLegacyUnauthenticatedAPI(t *testing.T) {
 	}
 }
 
+func TestMigrateStateReplacesV1ControlStateWithEmptyV2(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "control-state.json")
+	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"session.new"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{\n  \"version\": 2,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+		t.Fatalf("migrated control state = %s", data)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("control state mode = %v, %v", info.Mode().Perm(), err)
+	}
+}
+
+func TestMigrateStateRejectsUnknownControlStateVersion(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "control-state.json")
+	if err := os.WriteFile(path, []byte(`{"version":99,"owners":{},"receipts":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "unsupported control state version") {
+		t.Fatalf("migrateState() error = %v", err)
+	}
+}
+
+func TestMigrateStateRejectsUnknownControlStateField(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "control-state.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"owners":{},"receipts":{},"legacy":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("migrateState() error = %v", err)
+	}
+}
+
 func TestMigrateStateMovesConfiguredQuickTasksIntoOwnerWorkflows(t *testing.T) {
 	root := t.TempDir()
 	accounts := filepath.Join(root, "accounts")

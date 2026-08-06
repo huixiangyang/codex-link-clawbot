@@ -22,6 +22,7 @@ import (
 
 const (
 	controlStateTTL        = 10 * time.Minute
+	controlDirectoryTTL    = 30 * time.Minute
 	controlSessionPageSize = 6
 )
 
@@ -71,6 +72,7 @@ const (
 	actionTaskRerun             controlAction = "task_rerun"
 	actionTaskRerunNewSession   controlAction = "task_continue_in_new_thread"
 	actionTaskFrozenText        controlAction = "task_frozen_text"
+	actionRecentResult          controlAction = "recent_result"
 	actionQueuePause            controlAction = "queue_pause"
 	actionQueueResume           controlAction = "queue_resume"
 	actionConfirmQueueClear     controlAction = "confirm_queue_clear"
@@ -92,12 +94,14 @@ const (
 	actionConfirmWorkflowDelete controlAction = "confirm_workflow_delete"
 	actionWorkflowDelete        controlAction = "workflow_delete"
 	actionPromptWorkflowSave    controlAction = "prompt_workflow_save_from_task"
+	actionSaveRecentWorkflow    controlAction = "save_recent_as_workflow"
 	actionWorkflowSave          controlAction = "workflow_save_from_task"
 	actionLibraryCenter         controlAction = "library_center"
 	actionLibraryPage           controlAction = "library_page"
 	actionLibraryDetail         controlAction = "library_detail"
 	actionResendDelivery        controlAction = "resend_delivery"
 	actionRemoteLock            controlAction = "remote_lock"
+	actionConfirmRemoteLock     controlAction = "confirm_remote_lock"
 	actionVoiceBriefing         controlAction = "voice_briefing"
 	actionAutomations           controlAction = "automations"
 	actionAutomation            controlAction = "automation"
@@ -110,6 +114,7 @@ const (
 )
 
 type controlOption struct {
+	Code     string
 	Label    string
 	Action   controlAction
 	Value    string
@@ -324,8 +329,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 
 	switch state.Mode {
 	case controlChoice:
-		choice, err := strconv.Atoi(text)
-		if err != nil {
+		if _, err := strconv.Atoi(text); err != nil {
 			if option, ok := controlNavigationOption(text, state.Options); ok {
 				if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !consumed {
 					return failure, true
@@ -338,16 +342,16 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			}
 			return ActionResult{}, false
 		}
-		if choice == 0 {
+		if text == "0" {
 			if consumed, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !consumed {
 				return failure, true
 			}
 			return h.executeControlAction(ctx, userID, state.Back), true
 		}
-		if choice < 1 || choice > len(state.Options) {
-			return systemResult(fmt.Sprintf("请输入 1-%d，或回复 0 返回。", len(state.Options))), true
+		option, exists := controlOptionByCode(text, state.Options)
+		if !exists {
+			return systemResult("这个编号不在当前菜单中。请回复图片中的编号，或回复 0 返回。"), true
 		}
-		option := state.Options[choice-1]
 		if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), controlActionRequiresReceipt(option.Action), "这个选项已经处理。发送 / 重新打开菜单。"); !consumed {
 			return failure, true
 		}
@@ -471,91 +475,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 }
 
 func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
-	currentName := "未创建"
-	if threadAgent, err := h.sessionContext(); err == nil {
-		if current, currentErr := h.sessions.Current(ctx, userID, threadAgent); currentErr == nil {
-			currentName = threadTitle(current.Info)
-		} else if !errors.Is(currentErr, session.ErrNoActive) {
-			currentName = "暂不可读"
-		}
-	}
-	taskState := "空闲"
-	running := h.hasActiveTask(userID)
-	if running {
-		taskState = "运行中"
-	}
-	statuses := h.automationStatuses(userID)
-	currentProjectID := ""
-	projectName := "未配置"
-	workflowCount := 0
-	if h.projects != nil {
-		currentProject := h.projects.Current(userID)
-		currentProjectID = currentProject.ID
-		projectName = currentProject.Name
-		if h.workflows != nil {
-			workflowCount = len(h.workflows.List(userID, currentProject.ID))
-		}
-	}
-	var options []controlOption
-	if running {
-		options = append(options,
-			controlOption{Label: "任务状态", Action: actionTaskStatus},
-			controlOption{Label: "任务中心", Action: actionActivityPage, Page: 1},
-			controlOption{Label: "当前会话", Action: actionCurrentSession},
-		)
-	} else if h.tasks != nil && h.tasks.Status(userID).Queued > 0 {
-		queued := h.tasks.Status(userID).Queued
-		options = append(options,
-			controlOption{Label: fmt.Sprintf("任务中心 · %d 项等待", queued), Action: actionActivityPage, Page: 1},
-			controlOption{Label: "项目", Action: actionProjectCenter},
-			controlOption{Label: "会话", Action: actionSessionMenu},
-		)
-	} else {
-		if recent, exists := h.latestSuccessfulTask(userID, false); exists {
-			options = append(options, controlOption{
-				Label: "最近结果", Action: actionActivityDetail, Value: recent.ID, Page: 1,
-			})
-		}
-		if workflowCount > 0 {
-			options = append(options, controlOption{
-				Label: fmt.Sprintf("快捷任务 · %d 项", workflowCount), Action: actionProjectQuickTasks,
-				Query: currentProjectID, Page: 1,
-			})
-		}
-		for _, fallback := range []controlOption{
-			{Label: "项目", Action: actionProjectCenter},
-			{Label: "会话", Action: actionSessionMenu},
-			{Label: "任务中心", Action: actionActivityPage, Page: 1},
-		} {
-			if len(options) >= 3 {
-				break
-			}
-			options = append(options, fallback)
-		}
-	}
-	options = append(options, controlOption{Label: "更多功能", Action: actionMore})
-	lines := []string{
-		"WeClaw",
-		"",
-		"版本：" + h.bridgeVersion,
-		"项目：" + projectName,
-		"会话：" + currentName,
-		"状态：" + taskState,
-		"回答：" + h.currentResponseMode(userID).Definition().Name,
-	}
-	if h.tasks != nil {
-		status := h.tasks.Status(userID)
-		lines = append(lines, fmt.Sprintf("队列：%d 项等待", status.Queued))
-	}
-	if len(statuses) > 0 {
-		lines = append(lines, fmt.Sprintf("自动化：%d 项", len(statuses)))
-	}
-	lines = append(lines, "", renderControlOptions(options))
-	prompt := strings.Join(lines, "\n")
-	if !h.storeChoice(userID, viewSystemMain, options, actionExit) {
-		return controlStateFailureResult().Text
-	}
-	return prompt + "\n\n回复数字即可，0 退出。"
+	return h.openCommandDirectory(ctx, userID)
 }
 
 func (h *Handler) openTaskStatus(userID string) string {
@@ -1264,6 +1184,11 @@ func (h *Handler) storeChoice(userID string, view controlView, options []control
 
 // storeChoiceWithBack 为分页详情保留完整返回位置，避免移动端反复翻页。
 func (h *Handler) storeChoiceWithBack(userID string, view controlView, options []controlOption, back controlOption) bool {
+	return h.storeChoiceWithTTL(userID, view, options, back, controlStateTTL)
+}
+
+// storeChoiceWithTTL 只允许总目录延长有效期；具体对象列表和输入仍保持十分钟边界。
+func (h *Handler) storeChoiceWithTTL(userID string, view controlView, options []controlOption, back controlOption, ttl time.Duration) bool {
 	if h.controlStates == nil {
 		log.Printf("[control] persistent state store is unavailable for %s", ilink.LogLabel(userID))
 		return false
@@ -1271,7 +1196,7 @@ func (h *Handler) storeChoiceWithBack(userID string, view controlView, options [
 	state := controlState{
 		View: view,
 		Mode: controlChoice, Options: append([]controlOption(nil), options...),
-		Back: back, ExpiresAt: time.Now().Add(controlStateTTL),
+		Back: back, ExpiresAt: time.Now().Add(ttl),
 	}
 	if _, err := h.controlStates.Put(userID, state); err != nil {
 		logControlStateError(userID, err)
@@ -1356,9 +1281,26 @@ func (h *Handler) hasActiveTask(userID string) bool {
 func renderControlOptions(options []controlOption) string {
 	lines := make([]string, 0, len(options))
 	for index, option := range options {
-		lines = append(lines, fmt.Sprintf("%d  %s", index+1, option.Label))
+		lines = append(lines, fmt.Sprintf("%s  %s", resolvedControlCode(option, index), option.Label))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func resolvedControlCode(option controlOption, index int) string {
+	if code := strings.TrimSpace(option.Code); code != "" {
+		return code
+	}
+	return strconv.Itoa(index + 1)
+}
+
+func controlOptionByCode(code string, options []controlOption) (controlOption, bool) {
+	code = strings.TrimSpace(code)
+	for index, option := range options {
+		if resolvedControlCode(option, index) == code {
+			return option, true
+		}
+	}
+	return controlOption{}, false
 }
 
 func controlNavigationOption(text string, options []controlOption) (controlOption, bool) {

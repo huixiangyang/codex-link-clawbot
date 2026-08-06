@@ -12,7 +12,11 @@ func (h *Handler) executeProjectControlAction(userID string, option controlOptio
 		if projectID == "" && h.projects != nil {
 			projectID = h.projects.Current(userID).ID
 		}
-		text = h.openWorkflowCenter(userID, projectID, option.Page)
+		if option.AutoUse {
+			text = h.openWorkflowRunPicker(userID, projectID, option.Page)
+		} else {
+			text = h.openWorkflowCenter(userID, projectID, option.Page)
+		}
 	case actionWorkflowDetail:
 		text = h.openWorkflowDetail(userID, option)
 	case actionPromptWorkflowCreate:
@@ -27,6 +31,15 @@ func (h *Handler) executeProjectControlAction(userID string, option controlOptio
 		text = h.deleteWorkflow(userID, option.Query, option.Value, option.Page)
 	case actionPromptWorkflowSave:
 		text = h.promptWorkflowSaveFromTask(userID, option)
+	case actionSaveRecentWorkflow:
+		task, exists := h.latestSuccessfulTask(userID, true)
+		if !exists {
+			text = "最近没有仍可保存的成功纯文字任务。"
+		} else {
+			text = h.promptWorkflowSaveFromTask(userID, controlOption{
+				Action: actionPromptWorkflowSave, Value: task.ID, Query: task.ProjectID, Page: 1,
+			})
+		}
 	case actionRunQuickTask:
 		return h.runProjectQuickTask(userID, option.Query, option.Value).withIdentity(string(option.Action), DomainProject)
 	default:

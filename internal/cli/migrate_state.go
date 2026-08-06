@@ -119,7 +119,51 @@ func migrateState(root string) error {
 	if err := migrateProjectWorkflows(filepath.Join(root, "config.json"), filepath.Join(root, "workflows.json"), ownerIDs); err != nil {
 		return fmt.Errorf("migrate project workflows: %w", err)
 	}
+	if err := migrateControlState(filepath.Join(root, "control-state.json")); err != nil {
+		return fmt.Errorf("migrate control state: %w", err)
+	}
 	return syncDirectoryPath(root)
+}
+
+// migrateControlState 丢弃旧版短期菜单和回执；业务会话、任务与工作流不依赖这些临时选择。
+func migrateControlState(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("control state must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var state struct {
+		Version  int                        `json:"version"`
+		Owners   map[string]json.RawMessage `json:"owners"`
+		Receipts map[string]json.RawMessage `json:"receipts"`
+	}
+	if err := decodeStrictJSONBytes(data, &state); err != nil {
+		return err
+	}
+	if state.Version <= 0 || state.Owners == nil || state.Receipts == nil {
+		return fmt.Errorf("control state schema is invalid")
+	}
+	switch state.Version {
+	case 2:
+		return os.Chmod(path, 0o600)
+	case 1:
+		return writePrivateJSONAtomic(path, struct {
+			Version  int                        `json:"version"`
+			Owners   map[string]json.RawMessage `json:"owners"`
+			Receipts map[string]json.RawMessage `json:"receipts"`
+		}{Version: 2, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
+	default:
+		return fmt.Errorf("unsupported control state version %d", state.Version)
+	}
 }
 
 type legacyQuickTaskConfig struct {

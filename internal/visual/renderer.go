@@ -127,7 +127,7 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	tmpl, err := template.New("visual").ParseFS(assets, "assets/*.html")
+	tmpl, err := template.New("visual").Funcs(template.FuncMap{"lucide": lucideIcon}).ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse visual card template: %w", err)
 	}

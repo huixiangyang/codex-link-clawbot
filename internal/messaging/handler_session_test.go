@@ -208,18 +208,12 @@ func TestMutatingIntentRejectsMissingStableSource(t *testing.T) {
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"WeClaw", "版本：dev", "1  项目", "2  会话", "3  任务中心", "4  更多功能", "回复数字"} {
+	for _, want := range []string{"WeClaw 操作总览", "版本：dev", "[1]  会话管理", "11  新建会话", "[3]  任务管理", "[6]  运行与安全", "回复编号直接操作"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
 	}
-	sessions := controlReply(t, handler, "owner-1", "2")
-	for _, want := range []string{"会话", "会话列表", "搜索会话", "新建会话", "归档当前会话"} {
-		if !strings.Contains(sessions, want) {
-			t.Fatalf("session menu missing %q: %q", want, sessions)
-		}
-	}
-	prompt := controlReply(t, handler, "owner-1", "4")
+	prompt := controlReply(t, handler, "owner-1", "11")
 	if !strings.Contains(prompt, "发送会话名称") {
 		t.Fatalf("new session prompt = %q", prompt)
 	}
@@ -419,7 +413,7 @@ func TestHandleMessageRoutesSingleSlashToMenuWithoutStartingCodexTurn(t *testing
 	if runtime.chatThreadID != "" {
 		t.Fatalf("single slash unexpectedly started Codex thread %s", runtime.chatThreadID)
 	}
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复数字即可") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复编号直接操作") {
 		t.Fatalf("sent menu = %#v", sent.Msg.ItemList)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +16,10 @@ import (
 )
 
 const (
-	controlStateVersion  = 1
+	controlStateVersion  = 2
 	controlStateMaxBytes = 256 << 10
 	controlStateMaxOwner = 64
-	controlStateMaxItems = 16
+	controlStateMaxItems = 48
 	controlReceiptLimit  = 512
 	controlReceiptTTL    = 24 * time.Hour
 )
@@ -26,44 +27,46 @@ const (
 type controlView string
 
 const (
-	viewSystemMain         controlView = "system.main"
-	viewSystemRuntime      controlView = "system.runtime"
-	viewSystemMore         controlView = "system.more"
-	viewSystemGuide        controlView = "system.guide"
-	viewTaskStatus         controlView = "task.status"
-	viewTaskCancelConfirm  controlView = "task.cancel_confirm"
-	viewTaskCenter         controlView = "task.center"
-	viewTaskDetail         controlView = "task.detail"
-	viewTaskResult         controlView = "task.result"
-	viewTaskClearConfirm   controlView = "task.clear_confirm"
-	viewProjectCenter      controlView = "project.center"
-	viewProjectQuickTasks  controlView = "project.quick_tasks"
-	viewWorkflowDetail     controlView = "project.workflow_detail"
-	viewWorkflowCreate     controlView = "project.workflow_create"
-	viewWorkflowRename     controlView = "project.workflow_rename"
-	viewWorkflowEdit       controlView = "project.workflow_edit"
-	viewWorkflowDelete     controlView = "project.workflow_delete"
-	viewWorkflowSave       controlView = "project.workflow_save"
-	viewWorkflowResult     controlView = "project.workflow_result"
-	viewProjectResult      controlView = "project.result"
-	viewSessionCenter      controlView = "session.center"
-	viewSessionCurrent     controlView = "session.current"
-	viewSessionList        controlView = "session.list"
-	viewSessionDetail      controlView = "session.detail"
-	viewSessionSearchInput controlView = "session.search_input"
-	viewSessionNewInput    controlView = "session.new_input"
-	viewSessionRenameInput controlView = "session.rename_input"
-	viewSessionArchive     controlView = "session.archive_confirm"
-	viewSessionResult      controlView = "session.result"
-	viewPreferenceResponse controlView = "preference.response"
-	viewPreferenceVisual   controlView = "preference.visual"
-	viewLibraryCenter      controlView = "library.center"
-	viewLibraryPage        controlView = "library.page"
-	viewLibraryDetail      controlView = "library.detail"
-	viewLibraryResult      controlView = "library.result"
-	viewAutomationCenter   controlView = "automation.center"
-	viewAutomationDetail   controlView = "automation.detail"
-	viewAutomationResult   controlView = "automation.result"
+	viewSystemMain          controlView = "system.main"
+	viewSystemRuntime       controlView = "system.runtime"
+	viewSystemMore          controlView = "system.more"
+	viewSystemGuide         controlView = "system.guide"
+	viewTaskStatus          controlView = "task.status"
+	viewTaskCancelConfirm   controlView = "task.cancel_confirm"
+	viewTaskCenter          controlView = "task.center"
+	viewTaskDetail          controlView = "task.detail"
+	viewTaskResult          controlView = "task.result"
+	viewTaskClearConfirm    controlView = "task.clear_confirm"
+	viewProjectCenter       controlView = "project.center"
+	viewProjectQuickTasks   controlView = "project.quick_tasks"
+	viewProjectQuickRun     controlView = "project.quick_run"
+	viewWorkflowDetail      controlView = "project.workflow_detail"
+	viewWorkflowCreate      controlView = "project.workflow_create"
+	viewWorkflowRename      controlView = "project.workflow_rename"
+	viewWorkflowEdit        controlView = "project.workflow_edit"
+	viewWorkflowDelete      controlView = "project.workflow_delete"
+	viewWorkflowSave        controlView = "project.workflow_save"
+	viewWorkflowResult      controlView = "project.workflow_result"
+	viewProjectResult       controlView = "project.result"
+	viewSessionCenter       controlView = "session.center"
+	viewSessionCurrent      controlView = "session.current"
+	viewSessionList         controlView = "session.list"
+	viewSessionDetail       controlView = "session.detail"
+	viewSessionSearchInput  controlView = "session.search_input"
+	viewSessionNewInput     controlView = "session.new_input"
+	viewSessionRenameInput  controlView = "session.rename_input"
+	viewSessionArchive      controlView = "session.archive_confirm"
+	viewSessionResult       controlView = "session.result"
+	viewPreferenceResponse  controlView = "preference.response"
+	viewPreferenceVisual    controlView = "preference.visual"
+	viewLibraryCenter       controlView = "library.center"
+	viewLibraryPage         controlView = "library.page"
+	viewLibraryDetail       controlView = "library.detail"
+	viewLibraryResult       controlView = "library.result"
+	viewAutomationCenter    controlView = "automation.center"
+	viewAutomationDetail    controlView = "automation.detail"
+	viewAutomationResult    controlView = "automation.result"
+	viewSecurityLockConfirm controlView = "security.lock_confirm"
 )
 
 type controlNavigation string
@@ -82,6 +85,7 @@ const (
 )
 
 type persistedControlOption struct {
+	Code     string            `json:"code,omitempty"`
 	Action   controlAction     `json:"action"`
 	Subject  string            `json:"subject,omitempty"`
 	Page     int               `json:"page,omitempty"`
@@ -428,10 +432,19 @@ func (store *ControlStateStore) validate() error {
 		if err := validatePersistedControlOption(state.Back); err != nil {
 			return err
 		}
-		for _, option := range state.Options {
+		codes := make(map[string]bool, len(state.Options))
+		for index, option := range state.Options {
 			if err := validatePersistedControlOption(option); err != nil {
 				return err
 			}
+			code := option.Code
+			if code == "" {
+				code = strconv.Itoa(index + 1)
+			}
+			if codes[code] {
+				return fmt.Errorf("duplicated control option code")
+			}
+			codes[code] = true
 		}
 	}
 	for sourceKey, receipt := range store.state.Receipts {
@@ -446,7 +459,7 @@ func (store *ControlStateStore) validate() error {
 }
 
 func validatePersistedControlOption(option persistedControlOption) error {
-	if !option.Action.valid() || len(option.Subject) > 160 || len(option.Filter) > 120 || option.Page < 0 || option.Page > 1_000_000 {
+	if !option.Action.valid() || !validControlCode(option.Code) || len(option.Subject) > 160 || len(option.Filter) > 120 || option.Page < 0 || option.Page > 1_000_000 {
 		return fmt.Errorf("invalid control option")
 	}
 	if strings.ContainsAny(option.Subject, "\r\n\x00") || strings.ContainsAny(option.Filter, "\r\n\x00") {
@@ -491,6 +504,7 @@ func encodeControlOption(option controlOption) persistedControlOption {
 		}
 	}
 	return persistedControlOption{
+		Code:   option.Code,
 		Action: option.Action, Subject: option.Value, Page: option.Page, Archived: option.Archived,
 		Filter: option.Query, AutoUse: option.AutoUse, Navigate: navigation,
 	}
@@ -498,9 +512,25 @@ func encodeControlOption(option controlOption) persistedControlOption {
 
 func decodeControlOption(option persistedControlOption) controlOption {
 	return controlOption{
+		Code:   option.Code,
 		Action: option.Action, Value: option.Subject, Page: option.Page, Archived: option.Archived,
 		Query: option.Filter, AutoUse: option.AutoUse, Navigate: option.Navigate,
 	}
+}
+
+func validControlCode(code string) bool {
+	if code == "" {
+		return true
+	}
+	if len(code) > 2 || code[0] < '1' || code[0] > '9' {
+		return false
+	}
+	for _, character := range code[1:] {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func newControlRevision() (string, error) {
@@ -587,15 +617,15 @@ func (action controlAction) valid() bool {
 		actionRestoreSession, actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
 		actionActivityPage, actionActivityDetail, actionTaskMoveFront, actionTaskDelete,
 		actionTaskRetry, actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
-		actionTaskFrozenText, actionQueuePause, actionQueueResume,
+		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume,
 		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic, actionMore,
 		actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
 		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit, actionWorkflowEdit,
 		actionConfirmWorkflowDelete, actionWorkflowDelete,
-		actionPromptWorkflowSave, actionWorkflowSave,
+		actionPromptWorkflowSave, actionWorkflowSave, actionSaveRecentWorkflow,
 		actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery,
-		actionRemoteLock, actionVoiceBriefing, actionAutomations, actionAutomation,
+		actionRemoteLock, actionConfirmRemoteLock, actionVoiceBriefing, actionAutomations, actionAutomation,
 		actionRunAutomation, actionVisualStyles, actionSetVisualStyle, actionResponseModes,
 		actionSetResponseMode, actionGuide:
 		return true

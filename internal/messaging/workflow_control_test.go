@@ -77,6 +77,36 @@ func TestReadableWorkflowTemplateCompilesStableSlots(t *testing.T) {
 	}
 }
 
+func TestCommandDirectorySeparatesWorkflowRunAndManagement(t *testing.T) {
+	environment := newWorkflowTestEnvironment(t)
+	definition, err := environment.workflows.Create(workflow.CreateInput{
+		OwnerID: "owner-1", ProjectID: "alpha", Name: "发布检查", PromptTemplate: "检查发布", Slots: []workflow.Slot{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment.handler.openMainMenu(context.Background(), "owner-1")
+	runPicker, handled := environment.handler.handleControlInput(
+		context.Background(), "owner-1", "22", false, nextTestControlSource(),
+	)
+	if !handled || !strings.Contains(runPicker.Text, "运行快捷任务") || !strings.Contains(runPicker.Text, "1  发布检查") {
+		t.Fatalf("workflow run picker = %#v handled=%v", runPicker, handled)
+	}
+	state, status, err := environment.handler.controlStates.Load("owner-1")
+	if err != nil || status != controlStateActive || state.View != viewProjectQuickRun || len(state.Options) != 1 ||
+		state.Options[0].Action != actionRunQuickTask || state.Options[0].Value != definition.ID {
+		t.Fatalf("workflow run state = %#v status=%v err=%v", state, status, err)
+	}
+
+	environment.handler.openMainMenu(context.Background(), "owner-1")
+	management, handled := environment.handler.handleControlInput(
+		context.Background(), "owner-1", "24", false, nextTestControlSource(),
+	)
+	if !handled || !strings.HasPrefix(management.Text, "快捷任务\n") || !strings.Contains(management.Text, "2  发布检查") {
+		t.Fatalf("workflow management = %#v handled=%v", management, handled)
+	}
+}
+
 func TestWorkflowCRUDCompletesInsideWeChatControlFlow(t *testing.T) {
 	environment := newWorkflowTestEnvironment(t)
 	handler := environment.handler

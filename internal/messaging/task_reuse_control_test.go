@@ -151,7 +151,7 @@ func TestSuccessfulTaskOffersContinueRerunNewSessionAndWorkflowSave(t *testing.T
 	_ = controlReply(t, handler, "owner-1", "0")
 }
 
-func TestTaskContinuationSwitchesBackToFrozenProjectAndDynamicMainStaysCompact(t *testing.T) {
+func TestTaskContinuationSwitchesBackToFrozenProjectAndUpdatesStableDirectory(t *testing.T) {
 	environment := newTaskReuseTestEnvironment(t)
 	handler := environment.handler
 	if _, err := handler.projects.Select("owner-1", "beta"); err != nil {
@@ -168,14 +168,18 @@ func TestTaskContinuationSwitchesBackToFrozenProjectAndDynamicMainStaysCompact(t
 		t.Fatal(err)
 	}
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"1  最近结果", "2  快捷任务 · 1 项", "3  项目", "4  更多功能"} {
+	for _, want := range []string{"22  运行快捷任务 · 1 项", "25  保存最近结果", "32  最近结果", "[2]  项目与工作流"} {
 		if !strings.Contains(main, want) {
-			t.Fatalf("dynamic main missing %q: %q", want, main)
+			t.Fatalf("stable directory missing %q: %q", want, main)
 		}
 	}
 	state, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || len(state.Options) != 4 {
-		t.Fatalf("dynamic main options = %#v status=%v err=%v", state, status, err)
+	if err != nil || status != controlStateActive || state == nil || len(state.Options) != 40 {
+		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
+	}
+	workflowOption, hasWorkflowCode := controlOptionByCode("22", state.Options)
+	if !hasWorkflowCode || workflowOption.Action != actionProjectQuickTasks || !workflowOption.AutoUse {
+		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
 	}
 }
 

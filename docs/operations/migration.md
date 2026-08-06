@@ -14,7 +14,9 @@ v2.6 删除项目、会话、偏好、自动化、素材、交付、远程锁、
 
 账号凭据是 v2.6 唯一需要改变磁盘 schema 的现存领域：无版本账号文件一次性升级为严格 v1。运行时只接受 `version: 1`，不会猜测或静默跳过损坏凭据。
 
-v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。旧内存菜单没有可迁移格式，也不会双写。该文件不保存卡片正文、提示词、回答、路径、附件名、令牌或 `context_token`；损坏或未知 schema 会阻止启动。
+v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。后续大菜单重构把该文件破坏性升级为严格 v2，为每个动作保存显式稳定编号，并把单菜单容量提高到 48。离线迁移会直接丢弃 v1 的临时菜单与旧控制回执，写入空 v2；业务会话、任务、工作流、偏好和交付状态不会被删除。运行时不兼容读取 v1。
+
+`control-state.json` 不保存卡片正文、提示词、回答、路径、附件名、令牌或 `context_token`；损坏、重复编号或未知 schema 会阻止启动。
 
 v2.6 同时删除共享 TCP `api_addr`、`WECLAW_API_ADDR`、`start --api-addr`、TCP 健康/管理端点和无认证发送。管理面固定迁移到 `~/.weclaw/control.sock`；主动发送默认关闭，启用后使用独立 `send_api` 哈希 token 配置与严格 v1 无正文回执。
 
@@ -30,6 +32,7 @@ v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独�
 4. 删除已进入事务快照的 `task-history.json` 与 `weclaw.pid`。
 5. 从 `config.json` 删除旧 `api_addr` 并加入 `"send_api":{"enabled":false}`；已有新发送配置保持原样，未知配置字段仍由新运行时严格拒绝。
 6. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
+7. 将 `control-state.json` v1 破坏性替换为空 v2；合法 v2 保持不变，未知版本立即失败。
 
 迁移命令不是日常修复工具，也不会在 `weclaw start` 中自动运行。服务生命周期持有 `~/.weclaw/.state.lock`；服务仍在运行时迁移必须以 `conflict` 失败，部署器停服后才可获取迁移锁。
 

@@ -19,11 +19,11 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	first.SetControlStateStore(firstStore)
 	attachTestSessionManager(t, first)
 	menu, handled := first.handleControlInput(context.Background(), "owner-1", "/", false, nextTestControlSource())
-	if !handled || !strings.Contains(menu.Text, "更多功能") {
+	if !handled || !strings.Contains(menu.Text, "WeClaw 操作总览") || !strings.Contains(menu.Text, "11  新建会话") {
 		t.Fatalf("main menu = %#v, handled=%v", menu, handled)
 	}
 	before, status, err := firstStore.Load("owner-1")
-	if err != nil || status != controlStateActive || before.View != viewSystemMain {
+	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 40 || before.Options[1].Code != "11" {
 		t.Fatalf("stored main menu = %#v, status=%v, err=%v", before, status, err)
 	}
 
@@ -33,12 +33,12 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	}
 	restarted := NewHandler(newHandlerThreadClient())
 	restarted.SetControlStateStore(restartedStore)
-	result, handled := restarted.handleControlInput(context.Background(), "owner-1", "4", false, nextTestControlSource())
-	if !handled || result.Domain != DomainSystem || !strings.Contains(result.Text, "更多功能") {
+	result, handled := restarted.handleControlInput(context.Background(), "owner-1", "63", false, nextTestControlSource())
+	if !handled || result.Domain != DomainSystem || !strings.Contains(result.Text, "使用说明") {
 		t.Fatalf("resumed menu action = %#v, handled=%v", result, handled)
 	}
 	after, status, err := restartedStore.Load("owner-1")
-	if err != nil || status != controlStateActive || after.View != viewSystemMore || after.Revision == before.Revision {
+	if err != nil || status != controlStateActive || after.View != viewSystemGuide || after.Revision == before.Revision {
 		t.Fatalf("next menu revision = %#v, status=%v, err=%v", after, status, err)
 	}
 }
@@ -86,8 +86,8 @@ func TestControlStateStoreSurvivesRestartWithoutDisplayContent(t *testing.T) {
 		View: "session.list", Mode: controlChoice,
 		ExpiresAt: expiresAt,
 		Options: []controlOption{
-			{Label: "下一页 · 2/3", Action: actionSessionPage, Page: 2, Query: "登录"},
-			{Label: "打开详情", Action: actionSessionDetail, Value: "thread-1", Page: 1},
+			{Code: "7", Label: "下一页 · 2/3", Action: actionSessionPage, Page: 2, Query: "登录"},
+			{Code: "15", Label: "打开详情", Action: actionSessionDetail, Value: "thread-1", Page: 1},
 		},
 		Back: controlOption{Action: actionSessionMenu},
 	})
@@ -118,7 +118,7 @@ func TestControlStateStoreSurvivesRestartWithoutDisplayContent(t *testing.T) {
 	if state.Revision != written.Revision || state.View != "session.list" || len(state.Options) != 2 {
 		t.Fatalf("reloaded state = %#v", state)
 	}
-	if state.Options[0].Label != "" || state.Options[0].Navigate != navigationNext {
+	if state.Options[0].Label != "" || state.Options[0].Navigate != navigationNext || state.Options[0].Code != "7" || state.Options[1].Code != "15" {
 		t.Fatalf("display-only fields survived reload: %#v", state)
 	}
 	if state.Options[0].Query != "登录" || state.Options[1].Value != "thread-1" {
@@ -286,9 +286,27 @@ func TestReservedControlReceiptRollbackRemovesDirectRerun(t *testing.T) {
 	}
 }
 
+func TestControlStateStoreRejectsDuplicateExplicitCodes(t *testing.T) {
+	store, err := NewControlStateStore(filepath.Join(t.TempDir(), "control-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Put("owner-1", controlState{
+		View: viewSystemMain, Mode: controlChoice,
+		Options: []controlOption{
+			{Code: "11", Action: actionPromptNewSession},
+			{Code: "11", Action: actionPromptRenameSession},
+		},
+		Back: controlOption{Action: actionExit},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicated control option code") {
+		t.Fatalf("duplicate explicit codes error = %v", err)
+	}
+}
+
 func TestControlStateStoreRejectsUnknownSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control-state.json")
-	if err := os.WriteFile(path, []byte(`{"version":1,"owners":{},"receipts":{},"legacy":true}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"version":2,"owners":{},"receipts":{},"legacy":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewControlStateStore(path); err == nil {

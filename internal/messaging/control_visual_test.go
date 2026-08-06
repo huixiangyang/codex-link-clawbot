@@ -19,14 +19,25 @@ import (
 )
 
 type fakeControlVisualRenderer struct {
-	path                string
-	err                 error
-	documentErr         error
-	card                visual.Card
-	documents           []visual.Document
-	cleanedUp           bool
-	renderCalls         int
-	documentRenderCalls int
+	path                 string
+	err                  error
+	documentErr          error
+	card                 visual.Card
+	directory            visual.Directory
+	documents            []visual.Document
+	cleanedUp            bool
+	renderCalls          int
+	directoryRenderCalls int
+	documentRenderCalls  int
+}
+
+func (r *fakeControlVisualRenderer) RenderDirectory(_ context.Context, directory visual.Directory) (*visual.Artifact, error) {
+	r.directoryRenderCalls++
+	r.directory = directory
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &visual.Artifact{Path: r.path, Width: 1080, Height: 2280, Cleanup: func() { r.cleanedUp = true }}, nil
 }
 
 func (r *fakeControlVisualRenderer) RenderDocument(_ context.Context, document visual.Document) (*visual.Artifact, error) {
@@ -60,6 +71,29 @@ func TestControlCardFromMainMenu(t *testing.T) {
 	}
 	if card.Footer != "回复数字即可，0 退出。" {
 		t.Fatalf("main card footer = %q", card.Footer)
+	}
+}
+
+func TestControlDirectoryFromTextBuildsSixStableSections(t *testing.T) {
+	reply := "WeClaw 操作总览\n\n版本：v2\n项目：主项目\n会话：移动端开发\n任务：运行中\n回答：自适应\n队列：2 项等待\n\n" +
+		"[1]  会话管理\n11  新建会话\n12  重命名当前会话\n\n" +
+		"[2]  项目与工作流\n22  快捷任务 · 3 项\n\n" +
+		"[3]  任务管理\n31  查看当前任务\n\n" +
+		"[4]  回答与视觉\n41  自适应回答 · 当前\n\n" +
+		"[5]  工具与内容\n51  素材与交付\n\n" +
+		"[6]  运行与安全\n63  使用说明\n\n回复编号直接操作，0 退出；总览 30 分钟内有效。"
+	directory, ok := controlDirectoryFromText(reply)
+	if !ok || len(directory.Facts) != 6 || len(directory.Sections) != 6 {
+		t.Fatalf("directory = %#v, ok=%v", directory, ok)
+	}
+	if directory.Facts[1].Label != "项目" || directory.Facts[1].Value != "主项目" {
+		t.Fatalf("directory facts = %#v", directory.Facts)
+	}
+	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "messages-square" || first.Items[0].Code != "11" || first.Items[0].Label != "新建会话" {
+		t.Fatalf("first directory section = %#v", first)
+	}
+	if workflow := directory.Sections[1].Items[0]; workflow.Label != "快捷任务" || workflow.Meta != "3 项" {
+		t.Fatalf("directory item metadata = %#v", workflow)
 	}
 }
 
@@ -130,7 +164,7 @@ func TestControlCardFromTaskHistory(t *testing.T) {
 	}
 }
 
-func TestHandleMessageSendsVisualControlCardAndCaption(t *testing.T) {
+func TestHandleMessageSendsSingleVisualCommandDirectory(t *testing.T) {
 	imagePath := filepath.Join(t.TempDir(), "card.png")
 	if err := os.WriteFile(imagePath, []byte("test-png"), 0o600); err != nil {
 		t.Fatal(err)
@@ -180,20 +214,17 @@ func TestHandleMessageSendsVisualControlCardAndCaption(t *testing.T) {
 	if runtime.chatThreadID != "" {
 		t.Fatalf("visual control unexpectedly started Codex thread %s", runtime.chatThreadID)
 	}
-	if renderer.renderCalls != 1 || renderer.card.Variant != visual.VariantHome || renderer.card.Style != visual.StyleNoir || !renderer.cleanedUp {
-		t.Fatalf("renderer state = calls:%d card:%#v cleanup:%v", renderer.renderCalls, renderer.card, renderer.cleanedUp)
+	if renderer.directoryRenderCalls != 1 || renderer.renderCalls != 0 || renderer.directory.Style != visual.StyleNoir || len(renderer.directory.Sections) != 6 || !renderer.cleanedUp {
+		t.Fatalf("renderer state = directory calls:%d card calls:%d directory:%#v cleanup:%v", renderer.directoryRenderCalls, renderer.renderCalls, renderer.directory, renderer.cleanedUp)
 	}
 	if len(uploaded) == 0 {
 		t.Fatal("visual card was not uploaded")
 	}
-	if len(sent) != 2 {
-		t.Fatalf("sent messages = %d, want image and caption", len(sent))
+	if len(sent) != 1 {
+		t.Fatalf("sent messages = %d, want exactly one directory image", len(sent))
 	}
 	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
-		t.Fatalf("first visual message = %#v", item)
-	}
-	if item := sent[1].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "回复数字") {
-		t.Fatalf("visual caption = %#v", item)
+		t.Fatalf("directory message = %#v", item)
 	}
 }
 
@@ -220,7 +251,7 @@ func TestVisualRenderFailureFallsBackToFullText(t *testing.T) {
 		MessageState: ilink.MessageStateFinish,
 		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
 	})
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "1  项目") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "11  新建会话") {
 		t.Fatalf("fallback message = %#v", sent.Msg.ItemList)
 	}
 }
@@ -258,7 +289,7 @@ func TestVisualUploadFailureFallsBackToFullTextAndCleansArtifact(t *testing.T) {
 	if !renderer.cleanedUp {
 		t.Fatal("visual artifact was not cleaned after upload failure")
 	}
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复数字") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复编号直接操作") {
 		t.Fatalf("upload fallback message = %#v", sent.Msg.ItemList)
 	}
 }

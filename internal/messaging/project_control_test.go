@@ -157,9 +157,13 @@ func TestRunningMenuUsesPersistentTaskCenter(t *testing.T) {
 	handler, cancel := testHandlerWithRunningTask(t, "owner-1")
 	defer cancel()
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"1  任务状态", "2  任务中心", "3  当前会话", "4  更多功能"} {
+	for _, want := range []string{"[3]  任务管理", "31  查看当前任务", "33  暂停队列", "34  取消当前任务"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("active menu missing %q: %q", want, main)
 		}
+	}
+	state, status, err := handler.controlStates.Load("owner-1")
+	if err != nil || status != controlStateActive || len(state.Options) != 40 {
+		t.Fatalf("persistent command directory = %#v status=%v err=%v", state, status, err)
 	}
 }

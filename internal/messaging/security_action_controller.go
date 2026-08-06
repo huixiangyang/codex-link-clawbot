@@ -2,6 +2,8 @@ package messaging
 
 func (h *Handler) executeSecurityControlAction(userID string, option controlOption) ActionResult {
 	switch option.Action {
+	case actionConfirmRemoteLock:
+		return controlTextResult(option.Action, DomainSecurity, h.confirmRemoteLock(userID))
 	case actionRemoteLock:
 		return controlTextResult(option.Action, DomainSecurity, h.lockRemote(userID))
 	default:

@@ -70,3 +70,19 @@ func TestVisualStyleMenuRequiresVisualRendererAndStore(t *testing.T) {
 		t.Fatalf("unavailable style menu = %q, handled=%v", reply.Text, handled)
 	}
 }
+
+func TestCommandDirectoryStyleCodeSwitchesDirectly(t *testing.T) {
+	store, err := preference.NewStore(filepath.Join(t.TempDir(), "preferences.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHandler(t)
+	handler.SetVisualRenderer(&fakeControlVisualRenderer{})
+	handler.SetPreferenceStore(store)
+	handler.openMainMenu(context.Background(), "owner-1")
+
+	result, handled := handler.handleControlInput(context.Background(), "owner-1", "48", false, nextTestControlSource())
+	if !handled || !strings.Contains(result.Text, "当前：简洁") || store.Get("owner-1").Style != visual.StyleMinimal {
+		t.Fatalf("directory style switch = %#v handled=%v style=%q", result, handled, store.Get("owner-1").Style)
+	}
+}

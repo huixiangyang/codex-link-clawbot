@@ -20,7 +20,7 @@ WeClaw is Codex-only. It is not a general bot framework and does not provide Cla
 | Delivery | Adaptive text, five reading-card systems, artifacts, and paired image + MP3 voice |
 | Operations | Deterministic checks, remote lock, no-reply diagnosis, draining, and transactional deployment |
 
-Ordinary messages go to Codex. Projects, sessions, tasks, preferences, and operational controls are handled by deterministic code. The home menu stays at four actions or fewer.
+Ordinary messages go to Codex. Projects, sessions, tasks, preferences, and operational controls are handled by deterministic code. Sending `/` returns one visual directory with six domains and 40 stable numeric actions.
 
 ## Data flow
 

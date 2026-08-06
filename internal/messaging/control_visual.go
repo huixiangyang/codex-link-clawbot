@@ -16,7 +16,12 @@ type controlVisualRenderer interface {
 	Render(context.Context, visual.Card) (*visual.Artifact, error)
 }
 
+type controlDirectoryRenderer interface {
+	RenderDirectory(context.Context, visual.Directory) (*visual.Artifact, error)
+}
+
 var controlOptionPattern = regexp.MustCompile(`^([1-9][0-9]?)\s{2,}(.+)$`)
+var controlDirectorySectionPattern = regexp.MustCompile(`^\[([1-6])\]\s{2,}(.+)$`)
 
 // sendControlReply 优先发送视觉卡片；任何渲染或图片上传错误都会回退为完整文字。
 func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string) error {
@@ -24,9 +29,17 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 		return SendTextReply(ctx, client, userID, reply, contextToken, clientID)
 	}
 
-	card := controlCardFromText(reply)
-	card.Style = h.currentVisualStyle(userID)
-	artifact, err := h.visual.Render(ctx, card)
+	directory, isDirectory := controlDirectoryFromText(reply)
+	var artifact *visual.Artifact
+	var err error
+	if renderer, supportsDirectory := h.visual.(controlDirectoryRenderer); isDirectory && supportsDirectory {
+		directory.Style = h.currentVisualStyle(userID)
+		artifact, err = renderer.RenderDirectory(ctx, directory)
+	} else {
+		card := controlCardFromText(reply)
+		card.Style = h.currentVisualStyle(userID)
+		artifact, err = h.visual.Render(ctx, card)
+	}
 	if err != nil {
 		log.Printf("[visual] render failed for %s, falling back to text: %v", ilink.LogLabel(userID), err)
 		return SendTextReply(ctx, client, userID, reply, contextToken, clientID)
@@ -43,12 +56,62 @@ func (h *Handler) sendControlReply(ctx context.Context, client *ilink.Client, us
 		log.Printf("[visual] image delivery failed for %s, falling back to text: %v", ilink.LogLabel(userID), err)
 		return SendTextReply(ctx, client, userID, reply, contextToken, clientID)
 	}
+	if isDirectory {
+		return nil
+	}
+	card := controlCardFromText(reply)
 	if caption := controlCaption(reply, card); caption != "" {
 		if err := SendTextReply(ctx, client, userID, caption, contextToken, clientID); err != nil {
 			return fmt.Errorf("send visual card caption: %w", err)
 		}
 	}
 	return nil
+}
+
+func controlDirectoryFromText(reply string) (visual.Directory, bool) {
+	lines := nonEmptyControlLines(strings.TrimSpace(strings.ReplaceAll(reply, "\r\n", "\n")))
+	if len(lines) == 0 || lines[0] != "WeClaw 操作总览" {
+		return visual.Directory{}, false
+	}
+	directory := visual.Directory{
+		Title: "操作总览", Subtitle: "稳定编号，一步直达",
+		Footer: "回复编号直接操作 · 0 退出 · 总览 30 分钟内有效",
+	}
+	icons := map[string]string{
+		"1": "messages-square", "2": "folder-kanban", "3": "list-todo",
+		"4": "palette", "5": "package-open", "6": "shield-check",
+	}
+	sectionIndex := -1
+	for _, line := range lines[1:] {
+		if matches := controlDirectorySectionPattern.FindStringSubmatch(line); len(matches) == 3 {
+			directory.Sections = append(directory.Sections, visual.DirectorySection{
+				Code: matches[1], Title: strings.TrimSpace(matches[2]), Icon: icons[matches[1]],
+			})
+			sectionIndex = len(directory.Sections) - 1
+			continue
+		}
+		if matches := controlOptionPattern.FindStringSubmatch(line); len(matches) == 3 && sectionIndex >= 0 {
+			label, meta := splitDirectoryLabel(strings.TrimSpace(matches[2]))
+			directory.Sections[sectionIndex].Items = append(directory.Sections[sectionIndex].Items, visual.DirectoryItem{
+				Code: matches[1], Label: label, Meta: meta,
+			})
+			continue
+		}
+		if sectionIndex < 0 {
+			if label, value, ok := controlFact(line); ok {
+				directory.Facts = append(directory.Facts, visual.Fact{Label: label, Value: value})
+			}
+		}
+	}
+	return directory, len(directory.Sections) == 6
+}
+
+func splitDirectoryLabel(label string) (string, string) {
+	parts := strings.SplitN(label, " · ", 2)
+	if len(parts) == 1 {
+		return strings.TrimSpace(label), ""
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 }
 
 func (h *Handler) currentVisualStyle(userID string) visual.Style {

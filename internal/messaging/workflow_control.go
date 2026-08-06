@@ -24,6 +24,78 @@ type compiledWorkflowContent struct {
 	Slots  []workflow.Slot
 }
 
+// openWorkflowRunPicker 只保留运行路径，避免用户为执行快捷任务先进入详情再选择运行。
+func (h *Handler) openWorkflowRunPicker(userID, projectID string, page int) string {
+	if h.projects == nil || h.workflows == nil {
+		return "快捷任务当前不可用。"
+	}
+	if pending, exists, err := h.workflows.PendingRun(userID); err != nil {
+		return workflowUnavailableText()
+	} else if exists {
+		return workflowParameterPrompt(pending)
+	}
+	projectInfo, exists := h.projects.Get(strings.TrimSpace(projectID))
+	if !exists {
+		return "这个项目已经不可用。发送“项目”刷新列表。"
+	}
+	definitions := h.workflows.List(userID, projectInfo.ID)
+	totalPages := (len(definitions) + workflowPageSize - 1) / workflowPageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * workflowPageSize
+	end := start + workflowPageSize
+	if end > len(definitions) {
+		end = len(definitions)
+	}
+	options := make([]controlOption, 0, workflowPageSize+2)
+	for _, definition := range definitions[start:end] {
+		label := definition.Name
+		if len(definition.Slots) > 0 {
+			label += fmt.Sprintf(" · %d 个参数", len(definition.Slots))
+		}
+		options = append(options, controlOption{
+			Label: label, Action: actionRunQuickTask, Value: definition.ID,
+			Query: projectInfo.ID, Page: page,
+		})
+	}
+	if page > 1 {
+		options = append(options, controlOption{
+			Label: fmt.Sprintf("上一页 · %d/%d", page-1, totalPages), Action: actionProjectQuickTasks,
+			Query: projectInfo.ID, Page: page - 1, AutoUse: true,
+		})
+	}
+	if page < totalPages {
+		options = append(options, controlOption{
+			Label: fmt.Sprintf("下一页 · %d/%d", page+1, totalPages), Action: actionProjectQuickTasks,
+			Query: projectInfo.ID, Page: page + 1, AutoUse: true,
+		})
+	}
+	if len(definitions) == 0 {
+		options = append(options, controlOption{
+			Label: "新建快捷任务", Action: actionPromptWorkflowCreate, Query: projectInfo.ID, Page: 1,
+		})
+	}
+	lines := []string{
+		"运行快捷任务", "", "项目：" + projectInfo.Name,
+		fmt.Sprintf("数量：%d 项", len(definitions)), fmt.Sprintf("页码：%d / %d", page, totalPages),
+	}
+	if len(definitions) == 0 {
+		lines = append(lines, "", "这里还没有快捷任务，可以直接创建第一项。")
+	}
+	lines = append(lines, "", renderControlOptions(options))
+	if !h.storeChoiceWithBack(userID, viewProjectQuickRun, options, controlOption{Action: actionMain}) {
+		return controlStateFailureResult().Text
+	}
+	return strings.Join(lines, "\n") + "\n\n回复数字直接运行，0 返回操作总览。"
+}
+
 func (h *Handler) openWorkflowCenter(userID, projectID string, page int) string {
 	if h.projects == nil || h.workflows == nil {
 		return "快捷任务当前不可用。"
