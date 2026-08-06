@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"image"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -97,8 +99,13 @@ type Renderer struct {
 	now     func() time.Time
 }
 
-//go:embed assets/*.html
+//go:embed assets/*.html assets/backgrounds/*.webp
 var assets embed.FS
+
+var (
+	backgroundOnce sync.Once
+	backgroundURLs map[Style]template.URL
+)
 
 func NewRenderer(cfg Config) (*Renderer, error) {
 	browser, err := ResolveBrowser(cfg.BrowserCommand)
@@ -127,7 +134,10 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	tmpl, err := template.New("visual").Funcs(template.FuncMap{"lucide": lucideIcon}).ParseFS(assets, "assets/*.html")
+	tmpl, err := template.New("visual").Funcs(template.FuncMap{
+		"lucide":     lucideIcon,
+		"background": backgroundDataURL,
+	}).ParseFS(assets, "assets/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse visual card template: %w", err)
 	}
@@ -138,6 +148,23 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 		sem:     make(chan struct{}, cfg.MaxConcurrent),
 		now:     cfg.Now,
 	}, nil
+}
+
+// backgroundDataURL 只允许读取编译进二进制的风格纹理，并转为离线 data URL。
+// 返回值由固定风格枚举决定，不接受用户路径，避免模板获得任意文件读取能力。
+func backgroundDataURL(style Style) template.URL {
+	style = NormalizeStyle(style)
+	backgroundOnce.Do(func() {
+		backgroundURLs = make(map[Style]template.URL, len(styleDefinitions))
+		for _, definition := range styleDefinitions {
+			data, err := assets.ReadFile("assets/backgrounds/" + string(definition.ID) + ".webp")
+			if err != nil {
+				continue
+			}
+			backgroundURLs[definition.ID] = template.URL("data:image/webp;base64," + base64.StdEncoding.EncodeToString(data))
+		}
+	})
+	return backgroundURLs[style]
 }
 
 func (r *Renderer) BrowserCommand() string {
@@ -478,6 +505,9 @@ func ResolveBrowser(explicit string) (string, error) {
 		patterns := []string{
 			filepath.Join(home, ".cache", "ms-playwright", "chromium-*", "chrome-linux*", "chrome"),
 			filepath.Join(home, ".cache", "ms-playwright", "chromium_headless_shell-*", "chrome-headless-shell-linux*", "chrome-headless-shell"),
+			filepath.Join(home, "Library", "Caches", "ms-playwright", "chromium-*", "chrome-mac*", "Chromium.app", "Contents", "MacOS", "Chromium"),
+			filepath.Join(home, "Library", "Caches", "ms-playwright", "chromium_headless_shell-*", "chrome-headless-shell-mac*", "chrome-headless-shell"),
+			filepath.Join(home, "Library", "Caches", "ms-playwright", "chromium_headless_shell-*", "chrome-mac*", "headless_shell"),
 		}
 		for _, pattern := range patterns {
 			matches, _ := filepath.Glob(pattern)

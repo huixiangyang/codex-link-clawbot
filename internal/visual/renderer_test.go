@@ -106,7 +106,9 @@ func TestNormalizeDocumentUsesDocumentHeightBounds(t *testing.T) {
 }
 
 func TestCardTemplateEscapesUntrustedText(t *testing.T) {
-	tmpl, err := template.New("card.html").ParseFS(assets, "assets/card.html")
+	tmpl, err := template.New("card.html").Funcs(template.FuncMap{
+		"lucide": lucideIcon, "background": backgroundDataURL,
+	}).ParseFS(assets, "assets/card.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,15 +236,20 @@ func TestEveryStyleProvidesEscapedCardAndDocumentTemplates(t *testing.T) {
 	}
 }
 
+func TestEveryStyleProvidesEmbeddedBackground(t *testing.T) {
+	for _, definition := range Styles() {
+		dataURL := string(backgroundDataURL(definition.ID))
+		if !strings.HasPrefix(dataURL, "data:image/webp;base64,") || len(dataURL) < 100 {
+			t.Fatalf("%s background was not embedded as WebP data", definition.ID)
+		}
+	}
+	if got := backgroundDataURL(Style("../../secret")); got != backgroundDataURL(DefaultStyle) {
+		t.Fatal("unknown style did not normalize to the fixed default background")
+	}
+}
+
 func TestEveryStyleProvidesEscapedDirectoryTemplate(t *testing.T) {
 	tmpl := newVisualTestTemplate(t)
-	styleMarkers := map[Style]string{
-		StyleEditorial: "MOBILE CONTROL EDITION",
-		StyleAtelier:   "OPERATIONS GRID",
-		StyleNoir:      "DIRECTORY 01 / 06",
-		StyleCute:      "MOBILE COMMAND BOOK",
-		StyleMinimal:   "CONTROL DIRECTORY / 01",
-	}
 	for _, definition := range Styles() {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			directory := testDirectory()
@@ -262,7 +269,7 @@ func TestEveryStyleProvidesEscapedDirectoryTemplate(t *testing.T) {
 				!strings.Contains(output, `&lt;script&gt;`) || !strings.Contains(output, `&lt;img`) {
 				t.Fatalf("%s directory template did not escape dynamic text", definition.ID)
 			}
-			if !strings.Contains(output, styleMarkers[definition.ID]) {
+			if !strings.Contains(output, `class="day `+string(definition.ID)+`"`) {
 				t.Fatalf("%s directory template did not expose its style identity", definition.ID)
 			}
 			if !strings.Contains(output, `<svg viewBox="0 0 24 24" aria-hidden="true">`) {
@@ -274,7 +281,9 @@ func TestEveryStyleProvidesEscapedDirectoryTemplate(t *testing.T) {
 
 func newVisualTestTemplate(t *testing.T) *template.Template {
 	t.Helper()
-	tmpl, err := template.New("visual").Funcs(template.FuncMap{"lucide": lucideIcon}).ParseFS(assets, "assets/*.html")
+	tmpl, err := template.New("visual").Funcs(template.FuncMap{
+		"lucide": lucideIcon, "background": backgroundDataURL,
+	}).ParseFS(assets, "assets/*.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,11 +402,13 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	if info, err := os.Stat(artifact.Path); err != nil || info.Size() == 0 {
 		t.Fatalf("rendered artifact is unavailable: info=%v err=%v", info, err)
 	}
+	saveVisualPreview(t, previewRoot, "card-atelier-day.png", artifact.Path)
 	nightArtifact, err := renderer.Render(context.Background(), Card{Theme: ThemeNight, Title: "夜间控制卡"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer nightArtifact.Cleanup()
+	saveVisualPreview(t, previewRoot, "card-atelier-night.png", nightArtifact.Path)
 	dayLuma := renderedCornerLuma(t, artifact.Path)
 	nightLuma := renderedCornerLuma(t, nightArtifact.Path)
 	if dayLuma < 180 || nightLuma > 70 || dayLuma-nightLuma < 120 {
@@ -410,6 +421,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer documentArtifact.Cleanup()
+	saveVisualPreview(t, previewRoot, "document-atelier-day.png", documentArtifact.Path)
 	if documentArtifact.Width != CanvasWidth || documentArtifact.Height != documents[0].Height {
 		t.Fatalf("document dimensions = %dx%d", documentArtifact.Width, documentArtifact.Height)
 	}
@@ -420,11 +432,8 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if previewRoot == "" {
-		defer directoryArtifact.Cleanup()
-	} else {
-		t.Logf("directory preview: %s", directoryArtifact.Path)
-	}
+	defer directoryArtifact.Cleanup()
+	saveVisualPreview(t, previewRoot, "directory-atelier-day.png", directoryArtifact.Path)
 	if directoryArtifact.Width != CanvasWidth || directoryArtifact.Height != directoryCanvasHeight {
 		t.Fatalf("directory dimensions = %dx%d", directoryArtifact.Width, directoryArtifact.Height)
 	}
@@ -438,11 +447,13 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer styledDay.Cleanup()
+		saveVisualPreview(t, previewRoot, "card-"+string(style)+"-day.png", styledDay.Path)
 		styledNight, err := renderer.Render(context.Background(), Card{Style: style, Theme: ThemeNight, Title: "风格预览"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer styledNight.Cleanup()
+		saveVisualPreview(t, previewRoot, "card-"+string(style)+"-night.png", styledNight.Path)
 		if day, night := renderedCornerLuma(t, styledDay.Path), renderedCornerLuma(t, styledNight.Path); day < 180 || night > 70 || day-night < 120 {
 			t.Fatalf("%s rendered luma = day:%d night:%d", style, day, night)
 		}
@@ -454,10 +465,27 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer styledDocumentArtifact.Cleanup()
+		saveVisualPreview(t, previewRoot, "document-"+string(style)+"-day.png", styledDocumentArtifact.Path)
 		if styledDocumentArtifact.Width != CanvasWidth || styledDocumentArtifact.Height != styledDocument.Height {
 			t.Fatalf("%s document dimensions = %dx%d", style, styledDocumentArtifact.Width, styledDocumentArtifact.Height)
 		}
 	}
+}
+
+func saveVisualPreview(t *testing.T, previewRoot, name, source string) {
+	t.Helper()
+	if previewRoot == "" {
+		return
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(previewRoot, name)
+	if err := os.WriteFile(destination, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("visual preview: %s", destination)
 }
 
 func renderedCornerLuma(t *testing.T, path string) uint32 {
