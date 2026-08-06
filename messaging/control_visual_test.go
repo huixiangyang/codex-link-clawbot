@@ -315,15 +315,11 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 			t.Fatalf("reading document style = %q", document.Style)
 		}
 	}
-	if len(sent) != renderer.documentRenderCalls+1 {
-		t.Fatalf("sent messages = %d, want %d pages and caption", len(sent), renderer.documentRenderCalls)
+	if len(sent) != renderer.documentRenderCalls {
+		t.Fatalf("sent messages = %d, want %d reading pages without a redundant caption", len(sent), renderer.documentRenderCalls)
 	}
 	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
 		t.Fatalf("reading page message = %#v", item)
-	}
-	caption := sent[len(sent)-1].Msg.ItemList[0].TextItem
-	if caption == nil || !strings.Contains(caption.Text, "文字版") {
-		t.Fatalf("reading caption = %#v", caption)
 	}
 	_ = controlReply(t, handler, "owner-1", "/")
 
@@ -338,7 +334,7 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 	if _, status, err := handler.controlStates.Load("owner-1"); err != nil || status != controlStateMissing {
 		t.Fatal("copyable text retrieval should clear the previous menu state")
 	}
-	if len(sent) != renderer.documentRenderCalls+2 {
+	if len(sent) != renderer.documentRenderCalls+1 {
 		t.Fatalf("sent messages after text retrieval = %d", len(sent))
 	}
 	copyItem := sent[len(sent)-1].Msg.ItemList[0].TextItem

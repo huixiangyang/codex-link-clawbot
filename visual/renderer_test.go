@@ -94,6 +94,17 @@ func TestPrepareDocumentSelectsNightTheme(t *testing.T) {
 	}
 }
 
+func TestNormalizeDocumentUsesDocumentHeightBounds(t *testing.T) {
+	short := normalizeDocument(Document{})
+	if short.Height != minDocumentHeight {
+		t.Fatalf("short document height = %d, want %d", short.Height, minDocumentHeight)
+	}
+	long := normalizeDocument(Document{Height: maxCanvasHeight})
+	if long.Height != maxDocumentHeight {
+		t.Fatalf("long document height = %d, want %d", long.Height, maxDocumentHeight)
+	}
+}
+
 func TestCardTemplateEscapesUntrustedText(t *testing.T) {
 	tmpl, err := template.New("card.html").ParseFS(assets, "assets/card.html")
 	if err != nil {
@@ -154,6 +165,46 @@ func TestDocumentTemplateEscapesUntrustedText(t *testing.T) {
 		if strings.Contains(got, redundant) {
 			t.Fatalf("document template still contains redundant element %q", redundant)
 		}
+	}
+}
+
+func TestDocumentTemplateUsesContentFirstChrome(t *testing.T) {
+	tmpl, err := template.New("visual").ParseFS(assets, "assets/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer := &Renderer{tmpl: tmpl}
+	for _, definition := range Styles() {
+		t.Run(string(definition.ID), func(t *testing.T) {
+			singleHTML, renderErr := renderer.renderDocumentHTML(normalizeDocument(Document{
+				Style: definition.ID, Blocks: []DocumentBlock{{Kind: "paragraph", Text: "正文直接开始"}},
+				PageNumber: 1, TotalPages: 1, Footer: "回复文字版获取原文",
+			}))
+			if renderErr != nil {
+				t.Fatal(renderErr)
+			}
+			single := string(singleHTML)
+			for _, unwanted := range []string{">1 / 1<", `<section class="hero">`, `<div class="progress"`} {
+				if strings.Contains(single, unwanted) {
+					t.Fatalf("single-page document contains %q", unwanted)
+				}
+			}
+			if !strings.Contains(single, "回复文字版获取原文") {
+				t.Fatal("final page footer is missing")
+			}
+
+			middleHTML, renderErr := renderer.renderDocumentHTML(normalizeDocument(Document{
+				Style: definition.ID, Title: "只应出现在第一页", Blocks: []DocumentBlock{{Kind: "paragraph", Text: "第二页正文"}},
+				PageNumber: 2, TotalPages: 3,
+			}))
+			if renderErr != nil {
+				t.Fatal(renderErr)
+			}
+			middle := string(middleHTML)
+			if !strings.Contains(middle, ">2 / 3<") || strings.Contains(middle, "只应出现在第一页") || strings.Contains(middle, "回复文字版") {
+				t.Fatalf("middle-page chrome is invalid")
+			}
+		})
 	}
 }
 

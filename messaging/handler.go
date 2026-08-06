@@ -558,6 +558,10 @@ func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, ms
 	case preference.ResponseVoice:
 		voiceDelivered, voiceErr := h.sendVoiceCodexReplySnapshot(ctx, client, msg.FromUserID, reply, msg.ContextToken, style, projectName)
 		delivered = voiceDelivered
+		if voiceDelivered {
+			// 语音批次可能包含多页阅读卡、伴随卡和 MP3；当前收据至少记录该批次已可见。
+			report.MediaSent++
+		}
 		if voiceErr != nil {
 			log.Printf("[voice] failed to send Codex voice response to %s: %v", ilink.LogLabel(msg.FromUserID), voiceErr)
 			if delivered {
@@ -565,7 +569,10 @@ func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, ms
 			}
 		}
 		if !delivered {
-			delivered, voiceErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true, style)
+			var visualCount int
+			visualCount, voiceErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, true, style)
+			delivered = visualCount > 0
+			report.MediaSent += visualCount
 			if voiceErr != nil {
 				log.Printf("[visual] failed to send voice fallback reading cards to %s: %v", ilink.LogLabel(msg.FromUserID), voiceErr)
 				if delivered {
@@ -575,7 +582,10 @@ func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, ms
 		}
 	case preference.ResponseReading:
 		var visualErr error
-		delivered, visualErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, true, style)
+		var visualCount int
+		visualCount, visualErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, true, style)
+		delivered = visualCount > 0
+		report.MediaSent += visualCount
 		if visualErr != nil {
 			log.Printf("[visual] failed to send forced reading reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
 			if delivered {
@@ -584,7 +594,10 @@ func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, ms
 		}
 	default:
 		var visualErr error
-		delivered, visualErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID, false, style)
+		var visualCount int
+		visualCount, visualErr = h.sendVisualReplyWithStyle(ctx, client, msg.FromUserID, reply, msg.ContextToken, false, style)
+		delivered = visualCount > 0
+		report.MediaSent += visualCount
 		if visualErr != nil {
 			log.Printf("[visual] failed to send long reply to %s: %v", ilink.LogLabel(msg.FromUserID), visualErr)
 			if delivered {
@@ -604,8 +617,6 @@ func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, ms
 		} else {
 			report.TextSent = true
 		}
-	} else {
-		report.MediaSent++
 	}
 
 	for _, imgURL := range imageURLs {

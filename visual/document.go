@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	documentPageUnits = 32
+	documentPageUnits = 40
 	documentMaxPages  = 10
 )
 
@@ -17,18 +17,22 @@ type DocumentBlock struct {
 	Text     string
 	Prefix   string
 	Language string
+	Columns  []string
+	Rows     [][]string
 }
 
 type Document struct {
-	Theme           Theme
-	Style           Style
-	Title           string
-	Blocks          []DocumentBlock
-	PageNumber      int
-	TotalPages      int
-	ProgressPercent int
-	Footer          string
-	Height          int
+	Theme      Theme
+	Style      Style
+	Title      string
+	Blocks     []DocumentBlock
+	PageNumber int
+	TotalPages int
+	FirstPage  bool
+	LastPage   bool
+	MultiPage  bool
+	Footer     string
+	Height     int
 }
 
 var orderedListPattern = regexp.MustCompile(`^([0-9]{1,3})[.)、]\s+(.+)$`)
@@ -41,13 +45,14 @@ func PaginateMarkdown(markdown string) []Document {
 	if len(blocks) == 0 {
 		return nil
 	}
-	title := "Codex 回复"
+	title := ""
 	if blocks[0].Kind == "heading" && utf8.RuneCountInString(blocks[0].Text) <= 36 {
 		title = blocks[0].Text
 		blocks = blocks[1:]
 	}
 	if len(blocks) == 0 {
 		blocks = []DocumentBlock{{Kind: "paragraph", Text: title}}
+		title = ""
 	}
 
 	pages := paginateDocumentBlocks(blocks, documentPageUnits)
@@ -56,30 +61,24 @@ func PaginateMarkdown(markdown string) []Document {
 	}
 	documents := make([]Document, 0, len(pages))
 	for index, page := range pages {
-		units := 0
-		for _, block := range page {
-			units += documentBlockUnits(block)
+		firstPage := index == 0
+		lastPage := index == len(pages)-1
+		// 高度按模板实际排版结构估算，兼顾内容密度与 overflow:hidden 的安全余量。
+		height := estimateDocumentHeight(title, page, firstPage, lastPage)
+		if height < minDocumentHeight {
+			height = minDocumentHeight
 		}
-		titleLines := (utf8.RuneCountInString(title) + 13) / 14
-		if titleLines < 1 {
-			titleLines = 1
+		if height > maxDocumentHeight {
+			height = maxDocumentHeight
 		}
-		// 页高按真实移动端字号与块间距估算，避免短文档出现大片无效留白。
-		height := 360 + units*32 + (titleLines-1)*68
-		if height < 900 {
-			height = 900
-		}
-		if height > 1900 {
-			height = 1900
+		footer := ""
+		if lastPage {
+			footer = "回复“文字版”获取可复制原文"
 		}
 		documents = append(documents, Document{
-			Title:           title,
-			Blocks:          page,
-			PageNumber:      index + 1,
-			TotalPages:      len(pages),
-			ProgressPercent: (index + 1) * 100 / len(pages),
-			Footer:          "回复“文字版”可获取完整可复制原文",
-			Height:          height,
+			Title: title, Blocks: page, PageNumber: index + 1, TotalPages: len(pages),
+			FirstPage: firstPage, LastPage: lastPage, MultiPage: len(pages) > 1,
+			Footer: footer, Height: height,
 		})
 	}
 	return documents
@@ -110,7 +109,9 @@ func parseMarkdownBlocks(markdown string) []DocumentBlock {
 		code = nil
 	}
 
-	for _, rawLine := range strings.Split(markdown, "\n") {
+	lines := strings.Split(markdown, "\n")
+	for lineIndex := 0; lineIndex < len(lines); lineIndex++ {
+		rawLine := lines[lineIndex]
 		trimmed := strings.TrimSpace(rawLine)
 		if strings.HasPrefix(trimmed, "```") {
 			if inCode {
@@ -132,6 +133,14 @@ func parseMarkdownBlocks(markdown string) []DocumentBlock {
 			flushParagraph()
 			continue
 		}
+		if lineIndex+1 < len(lines) {
+			if table, consumed, ok := parseMarkdownTable(lines[lineIndex:]); ok {
+				flushParagraph()
+				blocks = append(blocks, table)
+				lineIndex += consumed - 1
+				continue
+			}
+		}
 		if level, heading, ok := markdownHeading(trimmed); ok {
 			flushParagraph()
 			blocks = append(blocks, DocumentBlock{Kind: "heading", Prefix: level, Text: cleanInlineMarkdown(heading)})
@@ -145,6 +154,11 @@ func parseMarkdownBlocks(markdown string) []DocumentBlock {
 		if strings.HasPrefix(trimmed, ">") {
 			flushParagraph()
 			blocks = append(blocks, DocumentBlock{Kind: "quote", Text: cleanInlineMarkdown(strings.TrimSpace(strings.TrimPrefix(trimmed, ">")))})
+			continue
+		}
+		if state, text, ok := markdownTaskText(trimmed); ok {
+			flushParagraph()
+			blocks = append(blocks, DocumentBlock{Kind: "task", Prefix: state, Text: cleanInlineMarkdown(text)})
 			continue
 		}
 		if text, ok := unorderedListText(trimmed); ok {
@@ -193,6 +207,85 @@ func unorderedListText(line string) (string, bool) {
 	return "", false
 }
 
+func markdownTaskText(line string) (string, string, bool) {
+	if len(line) < 6 || (line[0] != '-' && line[0] != '*' && line[0] != '+') || line[1] != ' ' || line[2] != '[' || line[4] != ']' || line[5] != ' ' {
+		return "", "", false
+	}
+	switch line[3] {
+	case 'x', 'X':
+		return "done", strings.TrimSpace(line[6:]), true
+	case ' ':
+		return "open", strings.TrimSpace(line[6:]), true
+	default:
+		return "", "", false
+	}
+}
+
+func parseMarkdownTable(lines []string) (DocumentBlock, int, bool) {
+	if len(lines) < 2 {
+		return DocumentBlock{}, 0, false
+	}
+	headings := splitMarkdownTableRow(strings.TrimSpace(lines[0]))
+	if len(headings) < 2 || len(headings) > 4 || !isMarkdownTableSeparator(strings.TrimSpace(lines[1]), len(headings)) {
+		return DocumentBlock{}, 0, false
+	}
+	for index := range headings {
+		headings[index] = cleanInlineMarkdown(headings[index])
+		if headings[index] == "" {
+			return DocumentBlock{}, 0, false
+		}
+	}
+	rows := make([][]string, 0)
+	consumed := 2
+	for consumed < len(lines) {
+		trimmed := strings.TrimSpace(lines[consumed])
+		if trimmed == "" {
+			break
+		}
+		cells := splitMarkdownTableRow(trimmed)
+		if len(cells) != len(headings) {
+			break
+		}
+		for index := range cells {
+			cells[index] = cleanInlineMarkdown(cells[index])
+		}
+		rows = append(rows, cells)
+		consumed++
+	}
+	if len(rows) == 0 {
+		return DocumentBlock{}, 0, false
+	}
+	return DocumentBlock{Kind: "table", Columns: headings, Rows: rows}, consumed, true
+}
+
+func splitMarkdownTableRow(line string) []string {
+	line = strings.TrimSpace(line)
+	if !strings.Contains(line, "|") {
+		return nil
+	}
+	line = strings.TrimPrefix(line, "|")
+	line = strings.TrimSuffix(line, "|")
+	parts := strings.Split(line, "|")
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
+	}
+	return parts
+}
+
+func isMarkdownTableSeparator(line string, columns int) bool {
+	cells := splitMarkdownTableRow(line)
+	if len(cells) != columns {
+		return false
+	}
+	for _, cell := range cells {
+		cell = strings.TrimSpace(strings.Trim(cell, ":"))
+		if len(cell) < 3 || strings.Trim(cell, "-") != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func paginateDocumentBlocks(blocks []DocumentBlock, capacity int) [][]DocumentBlock {
 	var pages [][]DocumentBlock
 	var current []DocumentBlock
@@ -227,6 +320,9 @@ func splitDocumentBlock(block DocumentBlock, maxUnits int) []DocumentBlock {
 	if documentBlockUnits(block) <= maxUnits {
 		return []DocumentBlock{block}
 	}
+	if block.Kind == "table" {
+		return splitTableBlock(block, maxUnits)
+	}
 	charsPerUnit := documentCharsPerUnit(block.Kind)
 	contentUnits := maxUnits - 1
 	if block.Kind == "heading" {
@@ -254,6 +350,69 @@ func splitDocumentBlock(block DocumentBlock, maxUnits int) []DocumentBlock {
 		runes = runes[end:]
 	}
 	return pieces
+}
+
+func splitTableBlock(block DocumentBlock, maxUnits int) []DocumentBlock {
+	var pieces []DocumentBlock
+	current := DocumentBlock{Kind: "table", Columns: append([]string(nil), block.Columns...)}
+	for _, row := range splitOversizedTableRows(block.Rows, maxUnits) {
+		candidate := current
+		candidate.Rows = append(append([][]string(nil), current.Rows...), append([]string(nil), row...))
+		if len(current.Rows) > 0 && documentBlockUnits(candidate) > maxUnits {
+			pieces = append(pieces, current)
+			current = DocumentBlock{Kind: "table", Columns: append([]string(nil), block.Columns...)}
+		}
+		current.Rows = append(current.Rows, append([]string(nil), row...))
+	}
+	if len(current.Rows) > 0 {
+		pieces = append(pieces, current)
+	}
+	return pieces
+}
+
+func splitOversizedTableRows(rows [][]string, maxUnits int) [][]string {
+	columnCount := 1
+	if len(rows) > 0 && len(rows[0]) > 0 {
+		columnCount = len(rows[0])
+	}
+	visualTracks := (columnCount + 1) / 2
+	maxCellRunes := ((maxUnits - 2) / visualTracks) * 16
+	if maxCellRunes < 16 {
+		maxCellRunes = 16
+	}
+	var result [][]string
+	for _, row := range rows {
+		remaining := make([][]rune, len(row))
+		hasRowContent := false
+		for index, cell := range row {
+			remaining[index] = []rune(cell)
+			hasRowContent = hasRowContent || len(remaining[index]) > 0
+		}
+		if !hasRowContent {
+			result = append(result, append([]string(nil), row...))
+			continue
+		}
+		for {
+			piece := make([]string, len(row))
+			hasContent := false
+			for index := range remaining {
+				end := len(remaining[index])
+				if end > maxCellRunes {
+					end = maxCellRunes
+				}
+				if end > 0 {
+					hasContent = true
+					piece[index] = string(remaining[index][:end])
+					remaining[index] = remaining[index][end:]
+				}
+			}
+			if !hasContent {
+				break
+			}
+			result = append(result, piece)
+		}
+	}
+	return result
 }
 
 func splitCodeBlock(block DocumentBlock, maxUnits int) []DocumentBlock {
@@ -298,6 +457,28 @@ func documentBlockUnits(block DocumentBlock) int {
 	if block.Kind == "rule" {
 		return 2
 	}
+	if block.Kind == "table" {
+		units := 1
+		for _, row := range block.Rows {
+			rowUnits := 0
+			for start := 0; start < len(row); start += 2 {
+				trackUnits := 2
+				end := start + 2
+				if end > len(row) {
+					end = len(row)
+				}
+				for _, cell := range row[start:end] {
+					cellUnits := (utf8.RuneCountInString(cell) + 15) / 16
+					if cellUnits > trackUnits {
+						trackUnits = cellUnits
+					}
+				}
+				rowUnits += trackUnits
+			}
+			units += rowUnits + 1
+		}
+		return units
+	}
 	charsPerUnit := documentCharsPerUnit(block.Kind)
 	lines := 0
 	for _, line := range strings.Split(block.Text, "\n") {
@@ -313,10 +494,70 @@ func documentBlockUnits(block DocumentBlock) int {
 		return lines*2 + 1
 	case "code":
 		return lines + 2
-	case "quote", "bullet", "ordered":
+	case "quote", "bullet", "ordered", "task":
 		return lines + 1
 	default:
 		return lines + 1
+	}
+}
+
+func estimateDocumentHeight(title string, blocks []DocumentBlock, firstPage, lastPage bool) int {
+	// 页面内边距、品牌栏以及模板间的差异预算。
+	height := 160
+	if firstPage && title != "" {
+		height += runeLines(title, 14)*68 + 26
+	}
+	for index, block := range blocks {
+		if index > 0 {
+			height += 17
+		}
+		height += estimateDocumentBlockHeight(block)
+	}
+	if lastPage {
+		height += 60
+	}
+	return height + 36
+}
+
+func estimateDocumentBlockHeight(block DocumentBlock) int {
+	switch block.Kind {
+	case "rule":
+		return 11
+	case "heading":
+		return runeLines(block.Text, 22)*47 + 6
+	case "bullet", "ordered", "task":
+		return runeLines(block.Text, 30) * 42
+	case "quote":
+		return runeLines(block.Text, 32)*40 + 38
+	case "code":
+		lines := 0
+		for _, line := range strings.Split(block.Text, "\n") {
+			lines += runeLines(line, 48)
+		}
+		return lines*35 + 66
+	case "table":
+		height := 0
+		for rowIndex, row := range block.Rows {
+			if rowIndex > 0 {
+				height += 11
+			}
+			for start := 0; start < len(row); start += 2 {
+				trackLines := 1
+				end := start + 2
+				if end > len(row) {
+					end = len(row)
+				}
+				for _, cell := range row[start:end] {
+					if lines := runeLines(cell, 16); lines > trackLines {
+						trackLines = lines
+					}
+				}
+				height += 58 + trackLines*33
+			}
+		}
+		return height
+	default:
+		return runeLines(block.Text, 32) * 45
 	}
 }
 
@@ -326,7 +567,7 @@ func documentCharsPerUnit(kind string) int {
 		return 22
 	case "code":
 		return 48
-	case "bullet", "ordered", "quote":
+	case "bullet", "ordered", "quote", "task":
 		return 30
 	default:
 		return 32

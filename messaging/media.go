@@ -107,6 +107,23 @@ func mediaBatchMayBeVisible(err error) bool {
 	return errors.As(err, &batchErr) && batchErr.MayBeVisible
 }
 
+// mediaBatchVisibleCount 返回已经确定可见或因响应丢失而可能可见的媒体数量。
+func mediaBatchVisibleCount(err error) int {
+	var batchErr *mediaBatchError
+	if !errors.As(err, &batchErr) || batchErr.Phase != "send" {
+		return 0
+	}
+	count := batchErr.Index - 1
+	var sendErr *stagedMediaSendError
+	if errors.As(batchErr.Err, &sendErr) && sendErr.MayBeVisible {
+		count++
+	}
+	if count < 0 {
+		return 0
+	}
+	return count
+}
+
 type stagedMediaSendError struct {
 	MayBeVisible bool
 	Err          error

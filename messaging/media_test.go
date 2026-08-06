@@ -137,6 +137,9 @@ func TestMediaBatchVisibilityDistinguishesExplicitRejectionAndPartialSend(t *tes
 	if mediaBatchMayBeVisible(explicit) {
 		t.Fatal("explicit rejection of the first item must allow complete fallback")
 	}
+	if count := mediaBatchVisibleCount(explicit); count != 0 {
+		t.Fatalf("explicit visible count = %d, want 0", count)
+	}
 	ambiguous := &mediaBatchError{
 		Phase: "send", Index: 1, Total: 2, MayBeVisible: true,
 		Err: &stagedMediaSendError{MayBeVisible: true, Err: context.DeadlineExceeded},
@@ -144,11 +147,17 @@ func TestMediaBatchVisibilityDistinguishesExplicitRejectionAndPartialSend(t *tes
 	if !mediaBatchMayBeVisible(ambiguous) {
 		t.Fatal("ambiguous first send must suppress duplicate fallback")
 	}
+	if count := mediaBatchVisibleCount(ambiguous); count != 1 {
+		t.Fatalf("ambiguous visible count = %d, want 1", count)
+	}
 	partial := &mediaBatchError{
 		Phase: "send", Index: 2, Total: 2, MayBeVisible: true,
 		Err: &stagedMediaSendError{Err: context.Canceled},
 	}
 	if !mediaBatchMayBeVisible(partial) {
 		t.Fatal("a failed later item must preserve already visible earlier items")
+	}
+	if count := mediaBatchVisibleCount(partial); count != 1 {
+		t.Fatalf("partial visible count = %d, want 1", count)
 	}
 }

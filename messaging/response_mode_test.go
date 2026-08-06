@@ -176,7 +176,7 @@ func TestReadingModeForcesShortReplyCard(t *testing.T) {
 	if renderer.documentRenderCalls != 1 || renderer.renderCalls != 0 {
 		t.Fatalf("reading renderer calls = document:%d card:%d", renderer.documentRenderCalls, renderer.renderCalls)
 	}
-	if len(sent) != 2 || sent[0].Msg.ItemList[0].Type != ilink.ItemTypeImage || sent[1].Msg.ItemList[0].Type != ilink.ItemTypeText {
+	if len(sent) != 1 || sent[0].Msg.ItemList[0].Type != ilink.ItemTypeImage {
 		t.Fatalf("reading mode messages = %#v", sent)
 	}
 }

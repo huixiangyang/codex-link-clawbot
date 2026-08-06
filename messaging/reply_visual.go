@@ -34,22 +34,18 @@ func (h *Handler) SetVisualReplyConfig(enabled bool, minRunes int) {
 	}
 }
 
-func (h *Handler) sendVisualReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string, force bool) (bool, error) {
-	return h.sendVisualReplyWithStyle(ctx, client, userID, reply, contextToken, clientID, force, h.currentVisualStyle(userID))
-}
-
-func (h *Handler) sendVisualReplyWithStyle(ctx context.Context, client *ilink.Client, userID, reply, contextToken, clientID string, force bool, style visual.Style) (bool, error) {
+func (h *Handler) sendVisualReplyWithStyle(ctx context.Context, client *ilink.Client, userID, reply, contextToken string, force bool, style visual.Style) (int, error) {
 	// 显式阅读模式不受“自适应长回复”开关约束，只要求渲染能力可用。
 	if h.visual == nil || (!force && !h.visualReplyEnabled) {
-		return false, nil
+		return 0, nil
 	}
 	runeCount := utf8.RuneCountInString(reply)
 	if (!force && runeCount < h.visualReplyMinRunes) || runeCount > visualReplyMaxRunes {
-		return false, nil
+		return 0, nil
 	}
 	artifacts, documents, err := h.renderVisualDocumentsWithStyle(ctx, reply, style)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	cleanupArtifacts := func() {
 		for _, artifact := range artifacts {
@@ -59,20 +55,32 @@ func (h *Handler) sendVisualReplyWithStyle(ctx context.Context, client *ilink.Cl
 		}
 	}
 	defer cleanupArtifacts()
+	payloads := make([]outboundMediaPayload, 0, len(artifacts))
 	for index, artifact := range artifacts {
-		if err := SendMediaFromPath(ctx, client, userID, artifact.Path, contextToken); err != nil {
-			document := documents[index]
-			return index > 0 || outboundMayBeVisible(err), fmt.Errorf("send page %d/%d: %w", document.PageNumber, document.TotalPages, err)
+		payload, payloadErr := outboundMediaFromPath(artifact.Path)
+		if payloadErr != nil {
+			return 0, fmt.Errorf("prepare page %d/%d: %w", documents[index].PageNumber, documents[index].TotalPages, payloadErr)
 		}
+		payload.FileName = fmt.Sprintf("weclaw-reply-%02d.png", index+1)
+		payloads = append(payloads, payload)
 	}
 
+	// 发送前保留原文；若批次在发送阶段出现歧义，用户仍可取回完整文字。
+	previousReply, hadPreviousReply := h.visualReplies.Load(userID)
 	h.visualReplies.Store(userID, &cachedVisualReply{Text: reply, ExpiresAt: time.Now().Add(visualReplyCacheTTL)})
-	caption := fmt.Sprintf("Codex 回复已整理为 %d 页阅读卡片。回复“文字版”获取可复制原文。", len(documents))
-	if err := SendTextReply(ctx, client, userID, caption, contextToken, clientID); err != nil {
-		// 图片已经完整送达时不能回退并重复发送整篇原文。
-		return true, fmt.Errorf("send reading caption: %w", err)
+	if err := sendMediaBatch(ctx, client, userID, contextToken, payloads); err != nil {
+		visible := mediaBatchVisibleCount(err)
+		if visible == 0 {
+			// 新批次完全不可见时恢复此前可取回的回复，不能让一次预上传失败抹掉历史成功结果。
+			if hadPreviousReply {
+				h.visualReplies.Store(userID, previousReply)
+			} else {
+				h.visualReplies.Delete(userID)
+			}
+		}
+		return visible, fmt.Errorf("send reading pages: %w", err)
 	}
-	return true, nil
+	return len(documents), nil
 }
 
 func (h *Handler) renderVisualDocuments(ctx context.Context, userID, reply string) ([]*visual.Artifact, []visual.Document, error) {

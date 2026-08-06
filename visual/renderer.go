@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	CanvasWidth     = 1080
-	minCanvasHeight = 900
-	maxCanvasHeight = 2400
-	maxRenderBytes  = 12 << 20
-	renderTimeout   = 12 * time.Second
+	CanvasWidth       = 1080
+	minCanvasHeight   = 900
+	maxCanvasHeight   = 2400
+	minDocumentHeight = 720
+	maxDocumentHeight = 2200
+	maxRenderBytes    = 12 << 20
+	renderTimeout     = 12 * time.Second
 )
 
 type Variant string
@@ -447,23 +449,21 @@ func normalizeDocument(document Document) Document {
 	if document.Theme != ThemeDay && document.Theme != ThemeNight {
 		document.Theme = ThemeNight
 	}
-	if strings.TrimSpace(document.Title) == "" {
-		document.Title = "Codex 回复"
-	}
+	document.Title = strings.TrimSpace(document.Title)
 	if document.PageNumber <= 0 {
 		document.PageNumber = 1
 	}
 	if document.TotalPages < document.PageNumber {
 		document.TotalPages = document.PageNumber
 	}
-	if document.ProgressPercent <= 0 || document.ProgressPercent > 100 {
-		document.ProgressPercent = document.PageNumber * 100 / document.TotalPages
+	document.MultiPage = document.TotalPages > 1
+	document.FirstPage = document.PageNumber == 1
+	document.LastPage = document.PageNumber == document.TotalPages
+	if document.Height < minDocumentHeight {
+		document.Height = minDocumentHeight
 	}
-	if document.Height < minCanvasHeight {
-		document.Height = minCanvasHeight
-	}
-	if document.Height > maxCanvasHeight {
-		document.Height = maxCanvasHeight
+	if document.Height > maxDocumentHeight {
+		document.Height = maxDocumentHeight
 	}
 	return document
 }
