@@ -23,8 +23,8 @@ const (
 	maxInboundFiles      = 8
 	maxInboundFileBytes  = int64(50 << 20)
 	maxInboundTotalBytes = int64(100 << 20)
-	defaultImagePrompt   = "请分析我发送的图片，并结合当前工作区完成图片中体现的任务。"
-	defaultFilePrompt    = "请检查我发送的文件，并结合当前工作区完成文件中体现的任务。"
+	defaultImagePrompt   = "请分析我发送的图片，并结合当前工作区完成图片中体现的要求。"
+	defaultFilePrompt    = "请检查我发送的文件，并结合当前工作区完成文件中体现的要求。"
 )
 
 var inboundTextExtensions = map[string]bool{
@@ -96,7 +96,7 @@ func prepareCodexInputWithDownloaders(ctx context.Context, text string, images [
 	}
 	taskDir, err := os.MkdirTemp(root, "turn-")
 	if err != nil {
-		return request, cleanup, fmt.Errorf("创建 turn 任务目录: %w", err)
+		return request, cleanup, fmt.Errorf("创建请求目录：%w", err)
 	}
 	cleanup = func() {
 		if err := os.RemoveAll(taskDir); err != nil {

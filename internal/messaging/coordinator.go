@@ -166,38 +166,41 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 
 	requestPayload, err := coordinator.tasks.LoadRequest(task.OwnerID, task.ID)
 	if err != nil {
-		coordinator.failBeforeExecution(client, task, active, "任务输入损坏，已停止执行。", taskqueue.ReasonPayloadInvalid, err)
+		coordinator.failBeforeExecution(client, task, active, "WeClaw 请求输入损坏，已停止执行。", taskqueue.ReasonPayloadInvalid, err)
 		return
 	}
 	projectDefinition, ok := coordinator.handler.projects.Get(task.ProjectID)
 	if !ok {
-		coordinator.failBeforeExecution(client, task, active, "任务绑定的项目已不存在，未改用其他项目。", taskqueue.ReasonProjectUnavailable, nil)
+		coordinator.failBeforeExecution(client, task, active, "请求绑定的 WeClaw 项目入口已不存在，未改用其他目录。", taskqueue.ReasonProjectUnavailable, nil)
 		return
 	}
 	coordinator.handler.codex.SetCwd(projectDefinition.Root)
 	outbox, err := coordinator.tasks.PrepareOutbox(task.OwnerID, task.ID)
 	if err != nil {
-		coordinator.failBeforeExecution(client, task, active, "无法创建任务交付目录。", taskqueue.ReasonPayloadInvalid, err)
+		coordinator.failBeforeExecution(client, task, active, "无法创建请求交付目录。", taskqueue.ReasonPayloadInvalid, err)
 		return
 	}
 	request := queuedChatRequest(requestPayload, outbox)
 	threadAgent, ok := coordinator.handler.codex.(codex.ThreadClient)
 	if !ok || coordinator.handler.sessions == nil {
-		coordinator.failBeforeExecution(client, task, active, "Codex 会话运行时不可用。", taskqueue.ReasonSessionUnavailable, nil)
+		coordinator.failBeforeExecution(client, task, active, "Codex 线程运行时不可用。", taskqueue.ReasonSessionUnavailable, nil)
 		return
 	}
 	thread, err := coordinator.handler.sessions.OpenTaskThread(taskContext, task.OwnerID, task.ProjectID, task.ThreadID, threadAgent, suggestedSessionName(request))
 	if err != nil {
-		coordinator.failBeforeExecution(client, task, active, "任务绑定的会话不可用，未自动切换会话。", taskqueue.ReasonSessionUnavailable, err)
+		coordinator.failBeforeExecution(client, task, active, "请求绑定的 Codex 线程不可用，未自动切换线程。", taskqueue.ReasonSessionUnavailable, err)
 		return
 	}
 	if task.ThreadID == "" {
 		if err := coordinator.tasks.AttachThread(task.OwnerID, task.ID, thread.ID); err != nil {
-			coordinator.failBeforeExecution(client, task, active, "无法固定新建会话，任务已停止。", taskqueue.ReasonSessionUnavailable, err)
+			coordinator.failBeforeExecution(client, task, active, "无法固定新建 Codex 线程，请求已停止。", taskqueue.ReasonSessionUnavailable, err)
 			return
 		}
 		task.ThreadID = thread.ID
 	}
+	threadSettings := coordinator.handler.sessions.SettingsForTask(task.OwnerID, task.ProjectID, thread.ID)
+	request.Model = threadSettings.Model
+	request.Effort = threadSettings.Effort
 
 	reporter := newProgressReporter(taskContext, client, task.OwnerID, requestPayload.ContextToken, coordinator.handler.progress, func(stage string) {
 		stage = truncateRunes(strings.Join(strings.Fields(stage), " "), 120)
@@ -239,13 +242,13 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 		return
 	}
 	if err != nil {
-		coordinator.failTask(client, task, "Codex 执行失败，任务输入保留 24 小时供手动重试。", taskqueue.ReasonCodexFailed, err)
+		coordinator.failTask(client, task, "Codex 轮次执行失败，WeClaw 请求输入保留 24 小时供手动重试。", taskqueue.ReasonCodexFailed, err)
 		return
 	}
 	log.Printf("[queue] Codex completed task %s (elapsed=%s chars=%d)", shortTaskID(task.ID), time.Since(started), len([]rune(reply)))
 	artifacts, collectErr := collectArtifacts(outbox)
 	if collectErr != nil {
-		coordinator.failTask(client, task, "无法校验 Codex 交付文件，任务未开始发送。", taskqueue.ReasonResultFreezeFailed, collectErr)
+		coordinator.failTask(client, task, "无法校验 Codex 交付文件，请求结果未开始发送。", taskqueue.ReasonResultFreezeFailed, collectErr)
 		return
 	}
 	if len(artifacts.Skipped) > 0 {
@@ -255,11 +258,11 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 		Reply: reply, ArtifactPaths: artifacts.Paths, ImageURLs: ExtractImageURLs(reply),
 	})
 	if err != nil {
-		coordinator.failTask(client, task, "无法冻结任务发送计划，任务未开始发送。", taskqueue.ReasonResultFreezeFailed, err)
+		coordinator.failTask(client, task, "无法冻结请求发送计划，结果未开始发送。", taskqueue.ReasonResultFreezeFailed, err)
 		return
 	}
 	if _, err := coordinator.tasks.BeginDelivery(task.OwnerID, task.ID); err != nil {
-		coordinator.failTask(client, task, "无法冻结任务发送状态。", taskqueue.ReasonDeliveryFailed, err)
+		coordinator.failTask(client, task, "无法冻结请求发送状态。", taskqueue.ReasonDeliveryFailed, err)
 		return
 	}
 	message := ilink.WeixinMessage{FromUserID: task.OwnerID, ContextToken: requestPayload.ContextToken}

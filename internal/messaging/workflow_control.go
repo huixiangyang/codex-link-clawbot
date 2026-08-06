@@ -27,7 +27,7 @@ type compiledWorkflowContent struct {
 // openWorkflowRunPicker 只保留运行路径，避免用户为执行快捷任务先进入详情再选择运行。
 func (h *Handler) openWorkflowRunPicker(userID, projectID string, page int) string {
 	if h.projects == nil || h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	if pending, exists, err := h.workflows.PendingRun(userID); err != nil {
 		return workflowUnavailableText()
@@ -36,7 +36,7 @@ func (h *Handler) openWorkflowRunPicker(userID, projectID string, page int) stri
 	}
 	projectInfo, exists := h.projects.Get(strings.TrimSpace(projectID))
 	if !exists {
-		return "这个项目已经不可用。发送“项目”刷新列表。"
+		return "这个 WeClaw 项目入口已经不可用。发送“项目”刷新列表。"
 	}
 	definitions := h.workflows.List(userID, projectInfo.ID)
 	totalPages := (len(definitions) + workflowPageSize - 1) / workflowPageSize
@@ -79,15 +79,15 @@ func (h *Handler) openWorkflowRunPicker(userID, projectID string, page int) stri
 	}
 	if len(definitions) == 0 {
 		options = append(options, controlOption{
-			Label: "新建快捷任务", Action: actionPromptWorkflowCreate, Query: projectInfo.ID, Page: 1,
+			Label: "新建提示词模板", Action: actionPromptWorkflowCreate, Query: projectInfo.ID, Page: 1,
 		})
 	}
 	lines := []string{
-		"运行快捷任务", "", "项目：" + projectInfo.Name,
+		"运行提示词模板", "", "WeClaw 项目入口：" + projectInfo.Name,
 		fmt.Sprintf("数量：%d 项", len(definitions)), fmt.Sprintf("页码：%d / %d", page, totalPages),
 	}
 	if len(definitions) == 0 {
-		lines = append(lines, "", "这里还没有快捷任务，可以直接创建第一项。")
+		lines = append(lines, "", "这里还没有提示词模板，可以直接创建第一项。")
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	if !h.storeChoiceWithBack(userID, viewProjectQuickRun, options, controlOption{Action: actionMain}) {
@@ -98,7 +98,7 @@ func (h *Handler) openWorkflowRunPicker(userID, projectID string, page int) stri
 
 func (h *Handler) openWorkflowCenter(userID, projectID string, page int) string {
 	if h.projects == nil || h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	if pending, exists, err := h.workflows.PendingRun(userID); err != nil {
 		return workflowUnavailableText()
@@ -107,7 +107,7 @@ func (h *Handler) openWorkflowCenter(userID, projectID string, page int) string 
 	}
 	projectInfo, exists := h.projects.Get(strings.TrimSpace(projectID))
 	if !exists {
-		return "这个项目已经不可用。发送“项目”刷新列表。"
+		return "这个 WeClaw 项目入口已经不可用。发送“项目”刷新列表。"
 	}
 	definitions := h.workflows.List(userID, projectInfo.ID)
 	totalPages := (len(definitions) + workflowPageSize - 1) / workflowPageSize
@@ -127,7 +127,7 @@ func (h *Handler) openWorkflowCenter(userID, projectID string, page int) string 
 	}
 	options := make([]controlOption, 0, workflowPageSize+3)
 	options = append(options, controlOption{
-		Label: "新建快捷任务", Action: actionPromptWorkflowCreate, Query: projectInfo.ID, Page: page,
+		Label: "新建提示词模板", Action: actionPromptWorkflowCreate, Query: projectInfo.ID, Page: page,
 	})
 	for _, definition := range definitions[start:end] {
 		label := definition.Name
@@ -151,34 +151,34 @@ func (h *Handler) openWorkflowCenter(userID, projectID string, page int) string 
 		})
 	}
 	lines := []string{
-		"快捷任务",
+		"提示词模板",
 		"",
-		"项目：" + projectInfo.Name,
+		"WeClaw 项目入口：" + projectInfo.Name,
 		fmt.Sprintf("数量：%d 项", len(definitions)),
 		fmt.Sprintf("页码：%d / %d", page, totalPages),
 	}
 	if len(definitions) == 0 {
-		lines = append(lines, "", "这里还没有快捷任务。可以直接在微信里创建第一项。")
+		lines = append(lines, "", "这里还没有提示词模板。可以直接在微信里创建第一项。")
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	back := controlOption{Action: actionProjectCenter}
 	if !h.storeChoiceWithBack(userID, viewProjectQuickTasks, options, back) {
 		return controlStateFailureResult().Text
 	}
-	return strings.Join(lines, "\n") + "\n\n回复数字管理，0 返回项目中心。"
+	return strings.Join(lines, "\n") + "\n\n回复数字管理，0 返回 Codex 执行环境。"
 }
 
 func (h *Handler) openWorkflowDetail(userID string, source controlOption) string {
 	if h.projects == nil || h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	projectInfo, exists := h.projects.Get(source.Query)
 	if !exists {
-		return "这个项目已经不可用。发送“项目”刷新列表。"
+		return "这个 WeClaw 项目入口已经不可用。发送“项目”刷新列表。"
 	}
 	definition, exists := h.workflows.Find(userID, projectInfo.ID, source.Value)
 	if !exists {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	}
 	if source.Page <= 0 {
 		source.Page = 1
@@ -192,17 +192,17 @@ func (h *Handler) openWorkflowDetail(userID string, source controlOption) string
 		parameterText = strings.Join(labels, "、")
 	}
 	options := []controlOption{
-		{Label: "运行这个快捷任务", Action: actionRunQuickTask, Value: definition.ID, Query: projectInfo.ID, Page: source.Page},
+		{Label: "运行这个模板", Action: actionRunQuickTask, Value: definition.ID, Query: projectInfo.ID, Page: source.Page},
 		{Label: "重命名", Action: actionPromptWorkflowRename, Value: definition.ID, Query: projectInfo.ID, Page: source.Page},
 		{Label: "编辑内容与参数", Action: actionPromptWorkflowEdit, Value: definition.ID, Query: projectInfo.ID, Page: source.Page},
 		{Label: "删除", Action: actionConfirmWorkflowDelete, Value: definition.ID, Query: projectInfo.ID, Page: source.Page},
 	}
 	back := controlOption{Action: actionProjectQuickTasks, Query: projectInfo.ID, Page: source.Page}
 	lines := []string{
-		"快捷任务详情",
+		"提示词模板详情",
 		"",
 		"名称：" + definition.Name,
-		"项目：" + projectInfo.Name,
+		"WeClaw 项目入口：" + projectInfo.Name,
 		"参数：" + parameterText,
 		"更新：" + formatSessionTime(definition.UpdatedAt),
 		"",
@@ -218,11 +218,11 @@ func (h *Handler) openWorkflowDetail(userID string, source controlOption) string
 
 func (h *Handler) promptWorkflowCreate(userID, projectID string, page int) string {
 	if h.projects == nil || h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	projectInfo, exists := h.projects.Get(projectID)
 	if !exists {
-		return "这个项目已经不可用。发送“项目”刷新列表。"
+		return "这个 WeClaw 项目入口已经不可用。发送“项目”刷新列表。"
 	}
 	if page <= 0 {
 		page = 1
@@ -232,9 +232,9 @@ func (h *Handler) promptWorkflowCreate(userID, projectID string, page int) strin
 		return controlStateFailureResult().Text
 	}
 	return strings.Join([]string{
-		"新建快捷任务",
+		"新建提示词模板",
 		"",
-		"项目：" + projectInfo.Name,
+		"WeClaw 项目入口：" + projectInfo.Name,
 		"按下面格式发送一条消息：",
 		"",
 		"名称：发布检查",
@@ -247,7 +247,7 @@ func (h *Handler) promptWorkflowCreate(userID, projectID string, page int) strin
 func (h *Handler) promptWorkflowRename(userID string, source controlOption) string {
 	definition, projectName, ok := h.workflowForControl(userID, source.Query, source.Value)
 	if !ok {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	}
 	if source.Page <= 0 {
 		source.Page = 1
@@ -256,13 +256,13 @@ func (h *Handler) promptWorkflowRename(userID string, source controlOption) stri
 	if !h.storeInputWithBack(userID, viewWorkflowRename, controlWorkflowRename, back) {
 		return controlStateFailureResult().Text
 	}
-	return "重命名快捷任务\n\n项目：" + projectName + "\n当前：" + definition.Name + "\n\n发送新名称，回复 0 返回。"
+	return "重命名提示词模板\n\nWeClaw 项目入口：" + projectName + "\n当前：" + definition.Name + "\n\n发送新名称，回复 0 返回。"
 }
 
 func (h *Handler) promptWorkflowEdit(userID string, source controlOption) string {
 	definition, projectName, ok := h.workflowForControl(userID, source.Query, source.Value)
 	if !ok {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	}
 	if source.Page <= 0 {
 		source.Page = 1
@@ -272,9 +272,9 @@ func (h *Handler) promptWorkflowEdit(userID string, source controlOption) string
 		return controlStateFailureResult().Text
 	}
 	return strings.Join([]string{
-		"编辑快捷任务",
+		"编辑提示词模板",
 		"",
-		"项目：" + projectName,
+		"WeClaw 项目入口：" + projectName,
 		"名称：" + definition.Name,
 		"发送完整的新内容；用「参数名」标记运行时需要填写的位置。",
 		"",
@@ -287,7 +287,7 @@ func (h *Handler) promptWorkflowEdit(userID string, source controlOption) string
 func (h *Handler) confirmWorkflowDelete(userID string, source controlOption) string {
 	definition, projectName, ok := h.workflowForControl(userID, source.Query, source.Value)
 	if !ok {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	}
 	if source.Page <= 0 {
 		source.Page = 1
@@ -297,7 +297,7 @@ func (h *Handler) confirmWorkflowDelete(userID string, source controlOption) str
 		Value: definition.ID, Query: source.Query, Page: source.Page,
 	}}
 	back := controlOption{Action: actionWorkflowDetail, Value: definition.ID, Query: source.Query, Page: source.Page}
-	prompt := "删除快捷任务\n\n项目：" + projectName + "\n名称：" + definition.Name + "\n\n删除后无法恢复。\n\n" + renderControlOptions(options)
+	prompt := "删除提示词模板\n\nWeClaw 项目入口：" + projectName + "\n名称：" + definition.Name + "\n\n删除后无法恢复。\n\n" + renderControlOptions(options)
 	if !h.storeChoiceWithBack(userID, viewWorkflowDelete, options, back) {
 		return controlStateFailureResult().Text
 	}
@@ -306,18 +306,18 @@ func (h *Handler) confirmWorkflowDelete(userID string, source controlOption) str
 
 func (h *Handler) promptWorkflowSaveFromTask(userID string, source controlOption) string {
 	if h.tasks == nil || h.workflows == nil || h.projects == nil {
-		return "任务复用当前不可用。"
+		return "执行记录复用当前不可用。"
 	}
 	task, exists := h.tasks.Find(userID, source.Value)
 	if !exists || task.State != taskqueue.StateSucceeded || task.ProjectID != source.Query {
-		return "这个成功任务已经变化。发送“任务中心”刷新。"
+		return "这条成功执行记录已经变化。发送“请求队列”刷新。"
 	}
 	if _, exists := h.projects.Get(task.ProjectID); !exists {
-		return "任务所属项目已经不可用。"
+		return "执行记录所属的 WeClaw 项目入口已经不可用。"
 	}
 	prompt, err := h.tasks.LoadReusablePrompt(userID, task.ID)
 	if err != nil || !reusablePromptCanBecomeWorkflow(prompt) {
-		return "原始请求已过期、包含附件或不符合快捷任务格式，无法保存。"
+		return "原始请求已过期、包含附件或不符合提示词模板格式，无法保存。"
 	}
 	if source.Page <= 0 {
 		source.Page = 1
@@ -329,19 +329,19 @@ func (h *Handler) promptWorkflowSaveFromTask(userID string, source controlOption
 		return controlStateFailureResult().Text
 	}
 	return strings.Join([]string{
-		"保存为快捷任务",
+		"保存为提示词模板",
 		"",
-		"项目：" + task.ProjectID,
+		"WeClaw 项目入口：" + task.ProjectID,
 		"来源：" + task.Summary,
 		"",
-		"发送快捷任务名称。保存的是原始请求，不包含 Codex 回答、附件或交付内容。",
-		"回复 0 返回任务详情。",
+		"发送提示词模板名称。保存的是原始请求，不包含 Codex 回答、附件或交付内容。",
+		"回复 0 返回执行记录。",
 	}, "\n")
 }
 
 func (h *Handler) createWorkflow(userID, projectID string, form workflowCreateForm) string {
 	if h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	definition, err := h.workflows.Create(workflow.CreateInput{
 		OwnerID: userID, ProjectID: projectID, Name: form.Name,
@@ -350,16 +350,16 @@ func (h *Handler) createWorkflow(userID, projectID string, form workflowCreateFo
 	if err != nil {
 		return workflowMutationErrorText(err)
 	}
-	return h.workflowMutationResult(userID, projectID, definition.ID, 1, "快捷任务已创建。")
+	return h.workflowMutationResult(userID, projectID, definition.ID, 1, "提示词模板已创建。")
 }
 
 func (h *Handler) renameWorkflow(userID, projectID, workflowID, name string, page int) string {
 	if h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	definition, exists := h.workflows.Find(userID, projectID, workflowID)
 	if !exists {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	}
 	updated, err := h.workflows.Update(userID, projectID, workflowID, workflow.UpdateInput{
 		Name: name, PromptTemplate: definition.PromptTemplate, Slots: definition.Slots,
@@ -367,16 +367,16 @@ func (h *Handler) renameWorkflow(userID, projectID, workflowID, name string, pag
 	if err != nil {
 		return workflowMutationErrorText(err)
 	}
-	return h.workflowMutationResult(userID, projectID, updated.ID, page, "快捷任务已重命名。")
+	return h.workflowMutationResult(userID, projectID, updated.ID, page, "提示词模板已重命名。")
 }
 
 func (h *Handler) editWorkflow(userID, projectID, workflowID string, content compiledWorkflowContent, page int) string {
 	if h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	definition, exists := h.workflows.Find(userID, projectID, workflowID)
 	if !exists {
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	}
 	updated, err := h.workflows.Update(userID, projectID, workflowID, workflow.UpdateInput{
 		Name: definition.Name, PromptTemplate: content.Prompt, Slots: content.Slots,
@@ -384,12 +384,12 @@ func (h *Handler) editWorkflow(userID, projectID, workflowID string, content com
 	if err != nil {
 		return workflowMutationErrorText(err)
 	}
-	return h.workflowMutationResult(userID, projectID, updated.ID, page, "快捷任务内容已更新。")
+	return h.workflowMutationResult(userID, projectID, updated.ID, page, "提示词模板内容已更新。")
 }
 
 func (h *Handler) deleteWorkflow(userID, projectID, workflowID string, page int) string {
 	if h.workflows == nil {
-		return "快捷任务当前不可用。"
+		return "提示词模板当前不可用。"
 	}
 	if err := h.workflows.Delete(userID, projectID, workflowID); err != nil {
 		return workflowMutationErrorText(err)
@@ -397,25 +397,25 @@ func (h *Handler) deleteWorkflow(userID, projectID, workflowID string, page int)
 	if page <= 0 {
 		page = 1
 	}
-	options := []controlOption{{Label: "返回快捷任务", Action: actionProjectQuickTasks, Query: projectID, Page: page}}
-	prompt := "快捷任务已删除。\n\n" + renderControlOptions(options)
+	options := []controlOption{{Label: "返回提示词模板", Action: actionProjectQuickTasks, Query: projectID, Page: page}}
+	prompt := "提示词模板已删除。\n\n" + renderControlOptions(options)
 	if !h.storeChoiceWithBack(userID, viewWorkflowResult, options, controlOption{Action: actionProjectCenter}) {
 		return controlStateFailureResult().Text
 	}
-	return prompt + "\n\n回复数字继续，0 返回项目中心。"
+	return prompt + "\n\n回复数字继续，0 返回 Codex 执行环境。"
 }
 
 func (h *Handler) saveTaskAsWorkflow(userID, projectID, taskID, name string, page int) string {
 	if h.tasks == nil || h.workflows == nil {
-		return "任务复用当前不可用。"
+		return "执行记录复用当前不可用。"
 	}
 	task, exists := h.tasks.Find(userID, taskID)
 	if !exists || task.State != taskqueue.StateSucceeded || task.ProjectID != projectID {
-		return "这个成功任务已经变化。发送“任务中心”刷新。"
+		return "这条成功执行记录已经变化。发送“请求队列”刷新。"
 	}
 	prompt, err := h.tasks.LoadReusablePrompt(userID, task.ID)
 	if err != nil || !reusablePromptCanBecomeWorkflow(prompt) {
-		return "原始请求已过期、包含附件或不符合快捷任务格式，无法保存。"
+		return "原始请求已过期、包含附件或不符合提示词模板格式，无法保存。"
 	}
 	definition, err := h.workflows.Create(workflow.CreateInput{
 		OwnerID: userID, ProjectID: projectID, Name: name,
@@ -424,7 +424,7 @@ func (h *Handler) saveTaskAsWorkflow(userID, projectID, taskID, name string, pag
 	if err != nil {
 		return workflowMutationErrorText(err)
 	}
-	return h.workflowMutationResult(userID, projectID, definition.ID, page, "已从成功任务保存快捷任务。")
+	return h.workflowMutationResult(userID, projectID, definition.ID, page, "已从成功请求保存提示词模板。")
 }
 
 func (h *Handler) workflowMutationResult(userID, projectID, workflowID string, page int, headline string) string {
@@ -433,13 +433,13 @@ func (h *Handler) workflowMutationResult(userID, projectID, workflowID string, p
 	}
 	options := []controlOption{
 		{Label: "查看详情", Action: actionWorkflowDetail, Query: projectID, Value: workflowID, Page: page},
-		{Label: "返回快捷任务", Action: actionProjectQuickTasks, Query: projectID, Page: page},
+		{Label: "返回提示词模板", Action: actionProjectQuickTasks, Query: projectID, Page: page},
 	}
 	prompt := headline + "\n\n" + renderControlOptions(options)
 	if !h.storeChoiceWithBack(userID, viewWorkflowResult, options, controlOption{Action: actionProjectQuickTasks, Query: projectID, Page: page}) {
 		return controlStateFailureResult().Text
 	}
-	return prompt + "\n\n回复数字继续，0 返回快捷任务。"
+	return prompt + "\n\n回复数字继续，0 返回提示词模板。"
 }
 
 func (h *Handler) workflowForControl(userID, projectID, workflowID string) (workflow.Definition, string, bool) {
@@ -511,7 +511,7 @@ func compileReadableWorkflowContent(content string) (compiledWorkflowContent, er
 		key, exists := labels[label]
 		if !exists {
 			if len(slots) >= workflow.MaxSlots {
-				return compiledWorkflowContent{}, fmt.Errorf("一个快捷任务最多包含 %d 个参数", workflow.MaxSlots)
+				return compiledWorkflowContent{}, fmt.Errorf("一个提示词模板最多包含 %d 个参数", workflow.MaxSlots)
 			}
 			key = fmt.Sprintf("slot_%d", len(slots)+1)
 			labels[label] = key
@@ -543,9 +543,9 @@ func reusablePromptCanBecomeWorkflow(prompt string) bool {
 
 func workflowParameterPrompt(status workflow.RunStatus) string {
 	return strings.Join([]string{
-		"填写快捷任务参数",
+		"填写提示词模板参数",
 		"",
-		"任务：" + status.WorkflowName,
+		"模板：" + status.WorkflowName,
 		fmt.Sprintf("进度：%d / %d", status.Position, status.Total),
 		"当前：" + status.Slot.Label,
 		"",
@@ -555,25 +555,25 @@ func workflowParameterPrompt(status workflow.RunStatus) string {
 
 func workflowMutationErrorText(err error) string {
 	if err == nil {
-		return "快捷任务操作失败。"
+		return "提示词模板操作失败。"
 	}
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "name already exists"):
-		return "当前项目已有同名快捷任务，请换一个名称。"
+		return "当前 WeClaw 项目入口已有同名提示词模板，请换一个名称。"
 	case strings.Contains(message, "capacity"):
-		return "快捷任务数量已达上限，请先删除不再需要的快捷任务。"
+		return "提示词模板数量已达上限，请先删除不再需要的模板。"
 	case strings.Contains(message, "not found"):
-		return "快捷任务已经变化。发送“快捷任务”刷新列表。"
+		return "提示词模板已经变化。发送“提示词模板”刷新列表。"
 	case strings.Contains(message, "name is invalid"):
 		return "名称不能为空，且最多 32 个字。"
 	case strings.Contains(message, "prompt template is invalid"), strings.Contains(message, "slot is invalid"), strings.Contains(message, "placeholders"):
-		return "快捷任务内容或参数格式无效，请重新编辑。"
+		return "提示词模板内容或参数格式无效，请重新编辑。"
 	default:
 		return workflowUnavailableText()
 	}
 }
 
 func workflowUnavailableText() string {
-	return "快捷任务状态暂不可用，请稍后重新打开。"
+	return "提示词模板状态暂不可用，请稍后重新打开。"
 }

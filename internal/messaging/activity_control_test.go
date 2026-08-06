@@ -26,7 +26,7 @@ func TestTaskCenterUsesPersistentQueueAndKeepsDetailPage(t *testing.T) {
 		}
 	}
 	first := handler.openActivities("owner-1", 1)
-	for _, want := range []string{"任务中心", "页码：1 / 2", "等待：8", "下一页 · 2/2"} {
+	for _, want := range []string{"WeClaw 请求队列", "页码：1 / 2", "等待：8", "下一页 · 2/2"} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("task first page missing %q: %q", want, first)
 		}
@@ -37,7 +37,7 @@ func TestTaskCenterUsesPersistentQueueAndKeepsDetailPage(t *testing.T) {
 	}
 	tasks := store.List("owner-1")
 	detail := handler.openActivityDetail("owner-1", tasks[6].ID, 2)
-	for _, want := range []string{"任务详情", "摘要：检查任务", "状态：排队中", "编号："} {
+	for _, want := range []string{"WeClaw 执行记录", "摘要：检查任务", "状态：排队中", "编号："} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("task detail missing %q: %q", want, detail)
 		}
@@ -84,7 +84,7 @@ func TestTaskCenterOnlyOffersFrozenRecoveryWhenResultExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	detail := handler.openActivityDetail("owner-1", withoutResult.ID, 1)
-	if !strings.Contains(detail, "重试任务") || strings.Contains(detail, "取回冻结文字") {
+	if !strings.Contains(detail, "重试请求") || strings.Contains(detail, "取回冻结文字") {
 		t.Fatalf("detail without result = %q", detail)
 	}
 
@@ -99,7 +99,7 @@ func TestTaskCenterOnlyOffersFrozenRecoveryWhenResultExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	detail = handler.openActivityDetail("owner-1", withResult.ID, 1)
-	if !strings.Contains(detail, "取回冻结文字") || strings.Contains(detail, "重试任务") {
+	if !strings.Contains(detail, "取回冻结文字") || strings.Contains(detail, "重试请求") {
 		t.Fatalf("detail with result = %q", detail)
 	}
 }

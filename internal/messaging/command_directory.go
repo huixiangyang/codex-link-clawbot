@@ -58,10 +58,6 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 		}
 	}
 
-	recentLabel := "最近结果"
-	if _, exists := h.latestSuccessfulTask(userID, false); !exists {
-		recentLabel += " · 暂无"
-	}
 	saveRecentLabel := "保存最近结果"
 	if _, exists := h.latestSuccessfulTask(userID, true); !exists {
 		saveRecentLabel += " · 暂无可保存内容"
@@ -71,11 +67,11 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 		queueToggle.Label = "继续队列 · 当前已暂停"
 		queueToggle.Action = actionQueueResume
 	}
-	cancelLabel := "取消当前任务"
+	cancelLabel := "取消当前执行"
 	if !h.hasActiveTask(userID) {
-		cancelLabel += " · 当前无运行任务"
+		cancelLabel += " · 当前无执行"
 	}
-	clearLabel := "清空等待任务"
+	clearLabel := "清空等待请求"
 	if queued == 0 {
 		clearLabel += " · 当前为空"
 	}
@@ -112,43 +108,45 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 
 	sections := []commandDirectorySection{
 		{
-			Code: "1", Title: "会话管理",
-			Category: controlOption{Code: "1", Label: "会话管理", Action: actionSessionMenu},
+			Code: "1", Title: "Codex · 线程",
+			Category: controlOption{Code: "1", Label: "Codex · 线程", Action: actionSessionMenu},
 			Items: []controlOption{
-				{Code: "11", Label: "新建会话", Action: actionPromptNewSession},
-				{Code: "12", Label: "重命名当前会话", Action: actionPromptRenameSession},
-				{Code: "13", Label: "切换会话", Action: actionPickSession},
-				{Code: "14", Label: "搜索会话", Action: actionPromptSessionSearch},
-				{Code: "15", Label: "查看当前会话", Action: actionCurrentSession},
-				{Code: "16", Label: "归档当前会话", Action: actionConfirmArchive},
-				{Code: "17", Label: "恢复归档会话", Action: actionPickArchivedSession},
+				{Code: "11", Label: "新建线程", Action: actionPromptNewSession},
+				{Code: "12", Label: "当前线程", Action: actionCurrentSession},
+				{Code: "13", Label: "切换线程", Action: actionPickSession},
+				{Code: "14", Label: "搜索线程", Action: actionPromptSessionSearch},
+				{Code: "15", Label: "分叉当前线程", Action: actionForkThread},
+				{Code: "16", Label: "压缩上下文", Action: actionCompactThread},
+				{Code: "17", Label: "设置线程目标", Action: actionPromptThreadGoal},
+				{Code: "18", Label: "归档当前线程", Action: actionConfirmArchive},
+				{Code: "19", Label: "恢复归档线程", Action: actionPickArchivedSession},
 			},
 		},
 		{
-			Code: "2", Title: "项目与工作流",
-			Category: controlOption{Code: "2", Label: "项目与工作流", Action: actionProjectCenter},
+			Code: "2", Title: "Codex · 执行能力",
+			Category: controlOption{Code: "2", Label: "Codex · 执行能力", Action: actionProjectCenter},
 			Items: []controlOption{
-				{Code: "21", Label: "切换项目", Action: actionProjectCenter},
-				{Code: "22", Label: fmt.Sprintf("运行快捷任务 · %d 项", workflowCount), Action: actionProjectQuickTasks, Query: projectID, Page: 1, AutoUse: true},
-				{Code: "23", Label: "新建快捷任务", Action: actionPromptWorkflowCreate, Query: projectID, Page: 1},
-				{Code: "24", Label: "管理快捷任务", Action: actionProjectQuickTasks, Query: projectID, Page: 1},
-				{Code: "25", Label: saveRecentLabel, Action: actionSaveRecentWorkflow},
+				{Code: "21", Label: "WeClaw 项目入口", Action: actionProjectCenter},
+				{Code: "22", Label: "线程模型", Action: actionThreadModels},
+				{Code: "23", Label: "推理强度", Action: actionThreadEfforts},
+				{Code: "24", Label: "审查未提交改动", Action: actionReviewThread},
+				{Code: "25", Label: "刷新 Codex 能力", Action: actionProjectCenter},
 			},
 		},
 		{
-			Code: "3", Title: "任务管理",
-			Category: controlOption{Code: "3", Label: "任务管理", Action: actionActivityPage, Page: 1},
+			Code: "3", Title: "WeClaw · 请求队列",
+			Category: controlOption{Code: "3", Label: "WeClaw · 请求队列", Action: actionActivityPage, Page: 1},
 			Items: []controlOption{
-				{Code: "31", Label: "查看当前任务", Action: actionTaskStatus},
-				{Code: "32", Label: recentLabel, Action: actionRecentResult},
+				{Code: "31", Label: "查看执行状态", Action: actionTaskStatus},
+				{Code: "32", Label: "最近执行结果", Action: actionRecentResult},
 				queueToggle,
 				{Code: "34", Label: cancelLabel, Action: actionConfirmCancelTask},
 				{Code: "35", Label: clearLabel, Action: actionConfirmQueueClear},
 			},
 		},
 		{
-			Code: "4", Title: "回答与视觉",
-			Category: controlOption{Code: "4", Label: "回答与视觉", Action: actionResponseModes},
+			Code: "4", Title: "WeClaw · 回复呈现",
+			Category: controlOption{Code: "4", Label: "WeClaw · 回复呈现", Action: actionResponseModes},
 			Items: append([]controlOption{
 				modeOption("41", "自适应回答", "adaptive"),
 				modeOption("42", "阅读卡回答", "reading"),
@@ -156,19 +154,21 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 			}, styleOptions...),
 		},
 		{
-			Code: "5", Title: "工具与内容",
-			Category: controlOption{Code: "5", Label: "工具与内容", Action: actionMore},
+			Code: "5", Title: "WeClaw · 内容与自动化",
+			Category: controlOption{Code: "5", Label: "WeClaw · 内容与自动化", Action: actionMore},
 			Items: []controlOption{
 				{Code: "51", Label: "素材与交付", Action: actionLibraryCenter},
 				{Code: "52", Label: "链接素材", Action: actionLibraryPage, Query: string(LibraryLink), Page: 1},
 				{Code: "53", Label: "交付记录", Action: actionLibraryPage, Query: string(LibraryDelivery), Page: 1},
 				{Code: "54", Label: automationLabel, Action: actionAutomations, Page: 1},
 				{Code: "55", Label: voiceLabel, Action: actionVoiceBriefing},
+				{Code: "56", Label: fmt.Sprintf("提示词模板 · WeClaw · %d 项", workflowCount), Action: actionProjectQuickTasks, Query: projectID, Page: 1},
+				{Code: "57", Label: saveRecentLabel, Action: actionSaveRecentWorkflow},
 			},
 		},
 		{
-			Code: "6", Title: "运行与安全",
-			Category: controlOption{Code: "6", Label: "运行与安全", Action: actionRuntimeInfo},
+			Code: "6", Title: "WeClaw · 运行与安全",
+			Category: controlOption{Code: "6", Label: "WeClaw · 运行与安全", Action: actionRuntimeInfo},
 			Items: []controlOption{
 				{Code: "61", Label: "为什么没回复", Action: actionNoReplyDiagnostic},
 				{Code: "62", Label: lockLabel, Action: actionConfirmRemoteLock},
@@ -181,12 +181,13 @@ func (h *Handler) openCommandDirectory(ctx context.Context, userID string) strin
 	options := make([]controlOption, 0, 48)
 	lines := []string{
 		"WeClaw 操作总览", "",
+		"能力边界：Codex 原生与 WeClaw 增强已分区",
 		"版本：" + h.bridgeVersion,
-		"项目：" + projectName,
-		"会话：" + currentSession,
-		"任务：" + taskState,
-		"回答：" + preference.Definition().Name,
-		fmt.Sprintf("队列：%d 项等待", queued),
+		"WeClaw 项目入口：" + projectName,
+		"Codex 线程：" + currentSession,
+		"WeClaw 执行：" + taskState,
+		"WeClaw 回复：" + preference.Definition().Name,
+		fmt.Sprintf("WeClaw 队列：%d 项等待", queued),
 	}
 	for _, section := range sections {
 		options = append(options, section.Category)

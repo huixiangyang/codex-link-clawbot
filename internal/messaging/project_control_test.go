@@ -42,8 +42,8 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	}
 	handler.SetProjectManager(projects)
 	attachProjectWorkflow(t, handler, "owner-1", "beta", "审查改动", "审查当前项目改动")
-	created := controlReply(t, handler, "owner-1", "新建会话 Alpha 会话")
-	if !strings.Contains(created, "Alpha 会话") {
+	created := controlReply(t, handler, "owner-1", "新建线程 Alpha 线程")
+	if !strings.Contains(created, "Alpha 线程") {
 		t.Fatalf("alpha session = %q", created)
 	}
 	switched := controlReply(t, handler, "owner-1", "切换项目 beta")
@@ -53,12 +53,12 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	if stats := handler.sessions.Stats("owner-1"); stats.Active != 0 || stats.HasCurrent {
 		t.Fatalf("beta sessions leaked alpha state: %#v", stats)
 	}
-	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "快捷任务", false, nextTestControlSource())
+	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "提示词模板", false, nextTestControlSource())
 	if !handled || !strings.Contains(menu.Text, "审查改动") {
 		t.Fatalf("quick task menu = %q, %v", menu.Text, handled)
 	}
 	detail, handled := handler.handleControlInput(context.Background(), "owner-1", "2", false, nextTestControlSource())
-	if !handled || !strings.Contains(detail.Text, "快捷任务详情") {
+	if !handled || !strings.Contains(detail.Text, "提示词模板详情") {
 		t.Fatalf("quick task detail = %#v, %v", detail, handled)
 	}
 	quickTaskSource := nextTestControlSource()
@@ -125,7 +125,7 @@ func TestQuickTaskQueueFailureRestoresMenuRevision(t *testing.T) {
 	}
 	handler.SetProjectManager(projects)
 	attachProjectWorkflow(t, handler, "owner-1", "alpha", "审查改动", "审查当前项目改动")
-	_ = controlReply(t, handler, "owner-1", "快捷任务")
+	_ = controlReply(t, handler, "owner-1", "提示词模板")
 	_ = controlReply(t, handler, "owner-1", "2")
 	before, status, err := handler.controlStates.Load("owner-1")
 	if err != nil || status != controlStateActive {
@@ -157,13 +157,13 @@ func TestRunningMenuUsesPersistentTaskCenter(t *testing.T) {
 	handler, cancel := testHandlerWithRunningTask(t, "owner-1")
 	defer cancel()
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"[3]  任务管理", "31  查看当前任务", "33  暂停队列", "34  取消当前任务"} {
+	for _, want := range []string{"[3]  WeClaw · 请求队列", "31  查看执行状态", "33  暂停队列", "34  取消当前执行"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("active menu missing %q: %q", want, main)
 		}
 	}
 	state, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || len(state.Options) != 40 {
+	if err != nil || status != controlStateActive || len(state.Options) != 44 {
 		t.Fatalf("persistent command directory = %#v status=%v err=%v", state, status, err)
 	}
 }

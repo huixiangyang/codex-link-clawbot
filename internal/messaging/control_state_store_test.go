@@ -19,11 +19,11 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	first.SetControlStateStore(firstStore)
 	attachTestSessionManager(t, first)
 	menu, handled := first.handleControlInput(context.Background(), "owner-1", "/", false, nextTestControlSource())
-	if !handled || !strings.Contains(menu.Text, "WeClaw 操作总览") || !strings.Contains(menu.Text, "11  新建会话") {
+	if !handled || !strings.Contains(menu.Text, "WeClaw 操作总览") || !strings.Contains(menu.Text, "11  新建线程") {
 		t.Fatalf("main menu = %#v, handled=%v", menu, handled)
 	}
 	before, status, err := firstStore.Load("owner-1")
-	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 40 || before.Options[1].Code != "11" {
+	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 44 || before.Options[1].Code != "11" {
 		t.Fatalf("stored main menu = %#v, status=%v, err=%v", before, status, err)
 	}
 
@@ -54,9 +54,9 @@ func TestPendingSessionInputContinuesAfterHandlerRestart(t *testing.T) {
 	first.SetControlStateStore(firstStore)
 	attachTestSessionManager(t, first)
 	prompt, handled := first.handleControlInput(
-		context.Background(), "owner-1", "新建会话", false, nextTestControlSource(),
+		context.Background(), "owner-1", "新建线程", false, nextTestControlSource(),
 	)
-	if !handled || !strings.Contains(prompt.Text, "会话名称") {
+	if !handled || !strings.Contains(prompt.Text, "线程名称") {
 		t.Fatalf("new session prompt = %#v, handled=%v", prompt, handled)
 	}
 
@@ -68,7 +68,7 @@ func TestPendingSessionInputContinuesAfterHandlerRestart(t *testing.T) {
 	restarted.SetControlStateStore(restartedStore)
 	restarted.SetSessionManager(first.sessions)
 	created, handled := restarted.handleControlInput(
-		context.Background(), "owner-1", "重启后的会话", false, nextTestControlSource(),
+		context.Background(), "owner-1", "重启后的线程", false, nextTestControlSource(),
 	)
 	if !handled || !strings.Contains(created.Text, "已创建并切换") || runtime.next != 1 {
 		t.Fatalf("resumed input = %#v, handled=%v next=%d", created, handled, runtime.next)
@@ -83,7 +83,7 @@ func TestControlStateStoreSurvivesRestartWithoutDisplayContent(t *testing.T) {
 	}
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Second)
 	written, err := store.Put("owner-1", controlState{
-		View: "session.list", Mode: controlChoice,
+		View: viewSessionList, Mode: controlChoice,
 		ExpiresAt: expiresAt,
 		Options: []controlOption{
 			{Code: "7", Label: "下一页 · 2/3", Action: actionSessionPage, Page: 2, Query: "登录"},
@@ -115,7 +115,7 @@ func TestControlStateStoreSurvivesRestartWithoutDisplayContent(t *testing.T) {
 	if err != nil || status != controlStateActive {
 		t.Fatalf("Load() status=%v err=%v", status, err)
 	}
-	if state.Revision != written.Revision || state.View != "session.list" || len(state.Options) != 2 {
+	if state.Revision != written.Revision || state.View != viewSessionList || len(state.Options) != 2 {
 		t.Fatalf("reloaded state = %#v", state)
 	}
 	if state.Options[0].Label != "" || state.Options[0].Navigate != navigationNext || state.Options[0].Code != "7" || state.Options[1].Code != "15" {
@@ -176,7 +176,7 @@ func TestControlReceiptPreventsDuplicateActionAcrossRestart(t *testing.T) {
 	if err != nil || reserved {
 		t.Fatalf("duplicate reserve = %v, %v", reserved, err)
 	}
-	if reserved, err = store.ReserveReceipt("owner-1", "account:message:42", string(IntentQueuePause), DomainTask); err == nil || reserved {
+	if reserved, err = store.ReserveReceipt("owner-1", "account:message:42", string(IntentQueuePause), DomainQueue); err == nil || reserved {
 		t.Fatalf("conflicting reserve = %v, %v", reserved, err)
 	}
 
@@ -272,12 +272,12 @@ func TestReservedControlReceiptRollbackRemovesDirectRerun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if reserved, err := store.ReserveReceipt(
-		"owner-1", "account:message:83", string(IntentTaskRerun), DomainTask,
+		"owner-1", "account:message:83", string(IntentTaskRerun), DomainQueue,
 	); err != nil || !reserved {
 		t.Fatalf("ReserveReceipt() = %v, %v", reserved, err)
 	}
 	if err := store.RollbackReservedReceipt(
-		"owner-1", "account:message:83", string(IntentTaskRerun), DomainTask,
+		"owner-1", "account:message:83", string(IntentTaskRerun), DomainQueue,
 	); err != nil {
 		t.Fatal(err)
 	}

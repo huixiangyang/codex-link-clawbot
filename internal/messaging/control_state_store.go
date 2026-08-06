@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	controlStateVersion  = 2
+	controlStateVersion  = 4
 	controlStateMaxBytes = 256 << 10
 	controlStateMaxOwner = 64
 	controlStateMaxItems = 48
@@ -31,12 +31,12 @@ const (
 	viewSystemRuntime       controlView = "system.runtime"
 	viewSystemMore          controlView = "system.more"
 	viewSystemGuide         controlView = "system.guide"
-	viewTaskStatus          controlView = "task.status"
-	viewTaskCancelConfirm   controlView = "task.cancel_confirm"
-	viewTaskCenter          controlView = "task.center"
-	viewTaskDetail          controlView = "task.detail"
-	viewTaskResult          controlView = "task.result"
-	viewTaskClearConfirm    controlView = "task.clear_confirm"
+	viewTaskStatus          controlView = "queue.status"
+	viewTaskCancelConfirm   controlView = "queue.cancel_confirm"
+	viewTaskCenter          controlView = "queue.center"
+	viewTaskDetail          controlView = "queue.detail"
+	viewTaskResult          controlView = "queue.result"
+	viewTaskClearConfirm    controlView = "queue.clear_confirm"
 	viewProjectCenter       controlView = "project.center"
 	viewProjectQuickTasks   controlView = "project.quick_tasks"
 	viewProjectQuickRun     controlView = "project.quick_run"
@@ -48,15 +48,15 @@ const (
 	viewWorkflowSave        controlView = "project.workflow_save"
 	viewWorkflowResult      controlView = "project.workflow_result"
 	viewProjectResult       controlView = "project.result"
-	viewSessionCenter       controlView = "session.center"
-	viewSessionCurrent      controlView = "session.current"
-	viewSessionList         controlView = "session.list"
-	viewSessionDetail       controlView = "session.detail"
-	viewSessionSearchInput  controlView = "session.search_input"
-	viewSessionNewInput     controlView = "session.new_input"
-	viewSessionRenameInput  controlView = "session.rename_input"
-	viewSessionArchive      controlView = "session.archive_confirm"
-	viewSessionResult       controlView = "session.result"
+	viewSessionCenter       controlView = "thread.center"
+	viewSessionCurrent      controlView = "thread.current"
+	viewSessionList         controlView = "thread.list"
+	viewSessionDetail       controlView = "thread.detail"
+	viewSessionSearchInput  controlView = "thread.search_input"
+	viewSessionNewInput     controlView = "thread.new_input"
+	viewSessionRenameInput  controlView = "thread.rename_input"
+	viewSessionArchive      controlView = "thread.archive_confirm"
+	viewSessionResult       controlView = "thread.result"
 	viewPreferenceResponse  controlView = "preference.response"
 	viewPreferenceVisual    controlView = "preference.visual"
 	viewLibraryCenter       controlView = "library.center"
@@ -423,7 +423,7 @@ func (store *ControlStateStore) validate() error {
 		if strings.TrimSpace(ownerID) == "" || len(ownerID) > 512 || !validControlRevision(state.Revision) || !validControlView(state.View) {
 			return fmt.Errorf("invalid control state owner")
 		}
-		if state.Mode < controlChoice || state.Mode > controlWorkflowSave || state.ExpiresAt <= 0 || len(state.Options) > controlStateMaxItems {
+		if state.Mode < controlChoice || state.Mode > controlThreadGoal || state.ExpiresAt <= 0 || len(state.Options) > controlStateMaxItems {
 			return fmt.Errorf("invalid control state value")
 		}
 		if state.Mode == controlChoice && len(state.Options) == 0 || state.Mode != controlChoice && len(state.Options) != 0 {
@@ -584,10 +584,12 @@ func validControlReceiptIdentity(value string, domain ActionDomain) bool {
 	switch IntentID(value) {
 	case IntentCancel, IntentTaskContinue, IntentTaskRerun, IntentTaskRerunNew,
 		IntentQueuePause, IntentQueueResume, IntentQueueClear:
-		return domain == DomainTask
+		return domain == DomainQueue
 	case IntentProjectSelect:
 		return domain == DomainProject
-	case IntentSessionSelect, IntentSessionRestore, IntentSessionNew, IntentSessionRename, IntentSessionArchive:
+	case IntentSessionSelect, IntentSessionRestore, IntentSessionNew, IntentSessionRename, IntentSessionArchive,
+		IntentThreadFork, IntentThreadPin, IntentThreadCompact, IntentThreadGoal,
+		IntentThreadGoalClear, IntentThreadReview, IntentTurnSteer:
 		return domain == DomainSession
 	case IntentResponseVoice, IntentResponseAdaptive, IntentResponseReading, IntentVisualStyle:
 		return domain == DomainPreference
@@ -614,7 +616,11 @@ func (action controlAction) valid() bool {
 		actionBrowseSessions, actionPromptSessionSearch, actionSessionPage, actionSessionDetail,
 		actionUseSession, actionPromptNewSession, actionPromptRenameSession, actionConfirmArchive,
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem, actionPickArchivedSession,
-		actionRestoreSession, actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
+		actionRestoreSession, actionForkThread, actionToggleThreadPin, actionCompactThread,
+		actionPromptThreadGoal, actionClearThreadGoal, actionReviewThread,
+		actionConfirmDeleteThread, actionDeleteThread, actionThreadModels,
+		actionSelectThreadModel, actionThreadEfforts, actionSelectThreadEffort,
+		actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
 		actionActivityPage, actionActivityDetail, actionTaskMoveFront, actionTaskDelete,
 		actionTaskRetry, actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume,

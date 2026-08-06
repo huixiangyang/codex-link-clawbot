@@ -11,9 +11,9 @@ type ActionDomain string
 
 const (
 	DomainSystem     ActionDomain = "system"
-	DomainTask       ActionDomain = "task"
+	DomainQueue      ActionDomain = "queue"
 	DomainProject    ActionDomain = "project"
-	DomainSession    ActionDomain = "session"
+	DomainSession    ActionDomain = "thread"
 	DomainPreference ActionDomain = "preference"
 	DomainLibrary    ActionDomain = "library"
 	DomainAutomation ActionDomain = "automation"
@@ -22,7 +22,7 @@ const (
 
 func (domain ActionDomain) valid() bool {
 	switch domain {
-	case DomainSystem, DomainTask, DomainProject, DomainSession, DomainPreference, DomainLibrary, DomainAutomation, DomainSecurity:
+	case DomainSystem, DomainQueue, DomainProject, DomainSession, DomainPreference, DomainLibrary, DomainAutomation, DomainSecurity:
 		return true
 	default:
 		return false

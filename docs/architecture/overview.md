@@ -6,7 +6,7 @@ WeClaw 是个人微信到本机 Codex App Server 的单一桥接器。它不提�
 
 ## 两条主链路
 
-普通消息进入持久任务链路：
+普通消息进入 WeClaw 持久请求链路，并在领取后启动 Codex 轮次：
 
 ```text
 微信 iLink 长轮询
@@ -53,8 +53,8 @@ cmd/weclaw/main.go
 | `internal/codex` | App Server 进程、JSON-RPC 与事件归一化 |
 | `internal/ilink` | 微信登录、长轮询、协议客户端和游标 |
 | `internal/messaging` | 入站、控制、Coordinator、投递和媒体编排 |
-| `internal/taskqueue` | 持久任务模型、请求、结果和生命周期 |
-| `internal/session` | Codex thread 所有权、项目隔离和会话索引 |
+| `internal/taskqueue` | WeClaw 请求的持久队列记录、结果和生命周期 |
+| `internal/session` | Codex 线程所有权、项目隔离和索引 |
 | `internal/workflow` | 快捷工作流定义、参数和运行记录 |
 | `internal/project` | 项目白名单与绑定者当前项目 |
 | `internal/preference` | 回答方式与视觉风格偏好 |
@@ -81,7 +81,7 @@ cmd/weclaw
 ## 核心不变量
 
 - 只有配置中的项目绝对路径可以成为 Codex 工作目录。
-- 普通输入先落盘再确认；执行与投递使用入队时冻结的项目、会话和偏好。
+- 普通输入先成为 WeClaw 请求并落盘再确认；执行与投递使用入队时冻结的项目入口、Codex 线程和偏好。
 - Codex 最终回复先冻结，再选择文字、图片、文件或语音交付，不能边生成边产生不可恢复副作用。
 - 多媒体在任何内容可见前完成整批 CDN 预上传；响应不确定时不盲目重复正文。
 - 所有状态按绑定者隔离，严格拒绝未知字段、尾随数据、符号链接和越界容量。

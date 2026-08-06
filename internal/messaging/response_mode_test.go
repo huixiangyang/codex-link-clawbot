@@ -37,7 +37,7 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 		}
 	}
 	switched, handled := handler.handleControlInput(context.Background(), "owner-1", "3", false, nextTestControlSource())
-	if !handled || !strings.Contains(switched.Text, "回答方式已切换") || !strings.Contains(switched.Text, "当前：语音") {
+	if !handled || !strings.Contains(switched.Text, "WeClaw 回复方式已切换") || !strings.Contains(switched.Text, "当前：语音") {
 		t.Fatalf("voice mode switch = %q handled=%v", switched.Text, handled)
 	}
 	if got := store.Get("owner-1").ResponseMode; got != preference.ResponseVoice {

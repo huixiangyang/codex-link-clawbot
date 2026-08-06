@@ -47,7 +47,7 @@ func newTaskReuseTestEnvironment(t *testing.T) taskReuseTestEnvironment {
 		t.Fatal(err)
 	}
 	handler.SetProjectManager(projects)
-	if reply := handler.createSession(context.Background(), "owner-1", "发布会话"); !strings.Contains(reply, "已创建") {
+	if reply := handler.createSession(context.Background(), "owner-1", "发布线程"); !strings.Contains(reply, "已创建") {
 		t.Fatalf("create task session = %q", reply)
 	}
 	threadID := handler.sessions.SnapshotThreadID("owner-1", "alpha")
@@ -96,7 +96,7 @@ func TestSuccessfulTaskOffersContinueRerunNewSessionAndWorkflowSave(t *testing.T
 	environment := newTaskReuseTestEnvironment(t)
 	handler := environment.handler
 	detail := handler.openActivityDetail("owner-1", environment.task.ID, 1)
-	for _, want := range []string{"继续这个会话", "再次执行", "在新会话执行", "保存为快捷任务"} {
+	for _, want := range []string{"继续这个线程", "再次执行", "在新线程执行", "保存为提示词模板"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("task detail missing %q: %q", want, detail)
 		}
@@ -122,7 +122,7 @@ func TestSuccessfulTaskOffersContinueRerunNewSessionAndWorkflowSave(t *testing.T
 	saved, handled := handler.handleControlInput(
 		context.Background(), "owner-1", "发布检查", false, saveSource,
 	)
-	if !handled || !strings.Contains(saved.Text, "已从成功任务保存") {
+	if !handled || !strings.Contains(saved.Text, "已从成功请求保存") {
 		t.Fatalf("saved workflow = %#v, handled=%v", saved, handled)
 	}
 	definitions := handler.workflows.List("owner-1", "alpha")
@@ -144,8 +144,8 @@ func TestSuccessfulTaskOffersContinueRerunNewSessionAndWorkflowSave(t *testing.T
 			t.Fatalf("workflow state leaked %q: %s", forbidden, raw)
 		}
 	}
-	directPrompt := controlReply(t, handler, "owner-1", "保存为快捷任务")
-	if !strings.Contains(directPrompt, "发送快捷任务名称") {
+	directPrompt := controlReply(t, handler, "owner-1", "保存为提示词模板")
+	if !strings.Contains(directPrompt, "发送提示词模板名称") {
 		t.Fatalf("direct workflow save prompt = %q", directPrompt)
 	}
 	_ = controlReply(t, handler, "owner-1", "0")
@@ -158,7 +158,7 @@ func TestTaskContinuationSwitchesBackToFrozenProjectAndUpdatesStableDirectory(t 
 		t.Fatal(err)
 	}
 	reply := handler.continueTaskSession(context.Background(), "owner-1", environment.task.ID, 1)
-	if !strings.Contains(reply, "已回到任务会话") || handler.projects.Current("owner-1").ID != "alpha" ||
+	if !strings.Contains(reply, "已回到执行记录关联的 Codex 线程") || handler.projects.Current("owner-1").ID != "alpha" ||
 		handler.sessions.SnapshotThreadID("owner-1", "alpha") != environment.threadID {
 		t.Fatalf("continued task session = %q current=%q", reply, handler.projects.Current("owner-1").ID)
 	}
@@ -168,17 +168,17 @@ func TestTaskContinuationSwitchesBackToFrozenProjectAndUpdatesStableDirectory(t 
 		t.Fatal(err)
 	}
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"22  运行快捷任务 · 1 项", "25  保存最近结果", "32  最近结果", "[2]  项目与工作流"} {
+	for _, want := range []string{"56  提示词模板 · WeClaw · 1 项", "57  保存最近结果", "32  最近执行结果", "[2]  Codex · 执行能力"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("stable directory missing %q: %q", want, main)
 		}
 	}
 	state, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || state == nil || len(state.Options) != 40 {
+	if err != nil || status != controlStateActive || state == nil || len(state.Options) != 44 {
 		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
 	}
-	workflowOption, hasWorkflowCode := controlOptionByCode("22", state.Options)
-	if !hasWorkflowCode || workflowOption.Action != actionProjectQuickTasks || !workflowOption.AutoUse {
+	workflowOption, hasWorkflowCode := controlOptionByCode("56", state.Options)
+	if !hasWorkflowCode || workflowOption.Action != actionProjectQuickTasks || workflowOption.AutoUse {
 		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
 	}
 }

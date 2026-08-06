@@ -185,21 +185,21 @@ func (h *Handler) requestVoiceBriefing(userID string) ActionResult {
 
 func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) (string, error) {
 	if strings.TrimSpace(contextToken) == "" {
-		return "", fmt.Errorf("发送微信音频必须使用当前会话 context token")
+		return "", fmt.Errorf("发送微信音频必须使用当前线程的消息上下文令牌")
 	}
-	projectName := "未配置项目"
+	projectName := "未配置"
 	if h.projects != nil {
 		projectName = h.projects.Current(userID).Name
 	}
-	parts := []string{"WeClaw 工作简报。当前项目：" + projectName + "。"}
+	parts := []string{"WeClaw 工作简报。当前项目入口：" + projectName + "。"}
 	if h.tasks == nil || len(h.tasks.List(userID)) == 0 {
-		parts = append(parts, "目前还没有已完成任务。")
+		parts = append(parts, "目前还没有已完成请求。")
 	} else {
 		tasks := h.tasks.List(userID)
 		if len(tasks) > 3 {
 			tasks = tasks[:3]
 		}
-		parts = append(parts, fmt.Sprintf("最近有 %d 项任务。", len(tasks)))
+		parts = append(parts, fmt.Sprintf("最近有 %d 条 WeClaw 执行记录。", len(tasks)))
 		for index, task := range tasks {
 			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, task.Summary, taskStateText(task.State)))
 		}
@@ -247,7 +247,7 @@ func (h *Handler) renderVoiceCompanionCard(ctx context.Context, userID, projectN
 		Style:   h.currentVisualStyle(userID),
 		Title:   "语音简报",
 		Facts: []visual.Fact{
-			{Label: "当前项目", Value: projectName},
+			{Label: "WeClaw 项目入口", Value: projectName},
 			{Label: "音频来源", Value: providerID},
 		},
 		Body:   []string{script},

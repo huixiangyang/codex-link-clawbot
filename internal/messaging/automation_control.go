@@ -98,7 +98,7 @@ func (h *Handler) openAutomation(userID, id string, pageNumber int) string {
 	lines := []string{
 		"自动化详情：" + selected.Name, "",
 		"状态：" + selected.State,
-		"项目：" + selected.ProjectName,
+		"WeClaw 项目入口：" + selected.ProjectName,
 		"计划：" + selected.Schedule,
 		"时区：" + selected.Timezone,
 		"检查：" + strings.Join(selected.Checks, "、"),

@@ -23,7 +23,7 @@ func (h *Handler) currentResponseMode(userID string) preference.ResponseMode {
 }
 
 func (h *Handler) sendVoiceCodexReply(ctx context.Context, client *ilink.Client, userID, reply, contextToken string) (bool, error) {
-	projectName := "未配置项目"
+	projectName := "未配置"
 	if h.projects != nil {
 		projectName = h.projects.Current(userID).Name
 	}
@@ -35,7 +35,7 @@ func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink
 		return false, fmt.Errorf("语音回答当前不可用")
 	}
 	if strings.TrimSpace(contextToken) == "" {
-		return false, fmt.Errorf("发送语音回答必须使用当前会话 context token")
+		return false, fmt.Errorf("发送语音回答必须使用当前线程的消息上下文令牌")
 	}
 	script, summarized := buildVoiceReplyScript(reply)
 	if script == "" {
@@ -76,7 +76,7 @@ func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink
 	}
 
 	if strings.TrimSpace(projectName) == "" {
-		projectName = "未配置项目"
+		projectName = "未配置"
 	}
 	footer := "配套 MP3 音频文件随后发送"
 	if summarized {
@@ -87,7 +87,7 @@ func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink
 		Style:   style,
 		Title:   "语音回答",
 		Facts: []visual.Fact{
-			{Label: "当前项目", Value: projectName},
+			{Label: "WeClaw 项目入口", Value: projectName},
 			{Label: "音频来源", Value: synthesis.ProviderID},
 		},
 		Body:   []string{script},

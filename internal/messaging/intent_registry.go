@@ -13,28 +13,38 @@ const (
 	IntentGuide             IntentID = "system.guide"
 	IntentRuntime           IntentID = "system.runtime"
 	IntentNoReplyDiagnostic IntentID = "system.no_reply_diagnostic"
-	IntentCancel            IntentID = "task.cancel"
-	IntentTaskStatus        IntentID = "task.status"
-	IntentTaskCenter        IntentID = "task.center"
-	IntentTaskContinue      IntentID = "task.continue_in_thread"
-	IntentTaskRerun         IntentID = "task.rerun"
-	IntentTaskRerunNew      IntentID = "task.continue_in_new_thread"
-	IntentQueuePause        IntentID = "task.queue_pause"
-	IntentQueueResume       IntentID = "task.queue_resume"
-	IntentQueueClear        IntentID = "task.queue_clear"
+	IntentCancel            IntentID = "queue.cancel"
+	IntentTaskStatus        IntentID = "queue.status"
+	IntentTaskCenter        IntentID = "queue.center"
+	IntentTaskContinue      IntentID = "queue.continue_in_thread"
+	IntentTaskRerun         IntentID = "queue.rerun"
+	IntentTaskRerunNew      IntentID = "queue.continue_in_new_thread"
+	IntentQueuePause        IntentID = "queue.pause"
+	IntentQueueResume       IntentID = "queue.resume"
+	IntentQueueClear        IntentID = "queue.clear"
 	IntentProjectCenter     IntentID = "project.center"
 	IntentProjectQuickTasks IntentID = "project.quick_tasks"
 	IntentWorkflowNew       IntentID = "project.workflow_new"
 	IntentWorkflowSaveLast  IntentID = "project.workflow_save_last"
 	IntentProjectSelect     IntentID = "project.select"
-	IntentSessionCenter     IntentID = "session.center"
-	IntentSessionSelect     IntentID = "session.select"
-	IntentSessionSearch     IntentID = "session.search"
-	IntentSessionCurrent    IntentID = "session.current"
-	IntentSessionRestore    IntentID = "session.restore"
-	IntentSessionNew        IntentID = "session.new"
-	IntentSessionRename     IntentID = "session.rename"
-	IntentSessionArchive    IntentID = "session.archive"
+	IntentSessionCenter     IntentID = "thread.center"
+	IntentSessionSelect     IntentID = "thread.select"
+	IntentSessionSearch     IntentID = "thread.search"
+	IntentSessionCurrent    IntentID = "thread.current"
+	IntentSessionRestore    IntentID = "thread.restore"
+	IntentSessionNew        IntentID = "thread.new"
+	IntentSessionRename     IntentID = "thread.rename"
+	IntentSessionArchive    IntentID = "thread.archive"
+	IntentThreadFork        IntentID = "thread.fork"
+	IntentThreadPin         IntentID = "thread.pin"
+	IntentThreadCompact     IntentID = "thread.compact"
+	IntentThreadGoal        IntentID = "thread.goal.set"
+	IntentThreadGoalClear   IntentID = "thread.goal.clear"
+	IntentThreadReview      IntentID = "thread.review"
+	IntentThreadDelete      IntentID = "thread.delete"
+	IntentThreadModels      IntentID = "thread.models"
+	IntentThreadEffort      IntentID = "thread.effort"
+	IntentTurnSteer         IntentID = "turn.steer"
 	IntentResponseModes     IntentID = "preference.response_modes"
 	IntentResponseVoice     IntentID = "preference.response_voice"
 	IntentResponseAdaptive  IntentID = "preference.response_adaptive"
@@ -209,28 +219,38 @@ func defaultIntentDefinitions() []IntentDefinition {
 		{ID: IntentGuide, Domain: DomainSystem, ExactPhrases: []string{"帮助", "怎么用", "使用说明"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_guide"},
 		{ID: IntentRuntime, Domain: DomainSystem, ExactPhrases: []string{"运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_runtime"},
 		{ID: IntentNoReplyDiagnostic, Domain: DomainSystem, ExactPhrases: []string{"为什么没回复", "怎么没回复", "为什么没反应", "怎么没反应", "没响应", "没有响应", "没回复"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "diagnose_no_reply"},
-		{ID: IntentCancel, Domain: DomainTask, ExactPhrases: []string{"取消", "取消任务", "停止", "停止任务", "停下", "停一下"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "cancel_task_or_operation"},
-		{ID: IntentTaskStatus, Domain: DomainTask, ExactPhrases: []string{"状态", "查看状态", "看下状态", "任务状态", "进度", "任务进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_task_status"},
-		{ID: IntentTaskCenter, Domain: DomainTask, ExactPhrases: []string{"任务队列", "排队任务", "任务中心"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_task_center"},
-		{ID: IntentTaskContinue, Domain: DomainTask, ExactPhrases: []string{"继续处理", "继续上次任务", "继续这个任务"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "continue_task_session"},
-		{ID: IntentTaskRerun, Domain: DomainTask, ExactPhrases: []string{"重跑上次任务", "重试上次任务", "再执行一次"}, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "rerun_last_task"},
-		{ID: IntentTaskRerunNew, Domain: DomainTask, ExactPhrases: []string{"在新会话继续", "新会话重跑"}, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "rerun_last_task_in_new_session"},
-		{ID: IntentQueuePause, Domain: DomainTask, ExactPhrases: []string{"暂停队列", "暂停任务队列", "停止排队任务"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "pause_queue"},
-		{ID: IntentQueueResume, Domain: DomainTask, ExactPhrases: []string{"继续队列", "恢复队列", "继续任务队列"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "resume_queue"},
-		{ID: IntentQueueClear, Domain: DomainTask, ExactPhrases: []string{"清空队列", "删除排队任务"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "request_clear_queue"},
+		{ID: IntentCancel, Domain: DomainQueue, ExactPhrases: []string{"取消", "取消当前执行", "停止", "停止当前执行", "停下", "停一下"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "cancel_queue_execution"},
+		{ID: IntentTaskStatus, Domain: DomainQueue, ExactPhrases: []string{"状态", "查看状态", "执行状态", "进度", "执行进度", "查看进度", "进度怎么样", "现在怎么样了", "怎么样了"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_queue_status"},
+		{ID: IntentTaskCenter, Domain: DomainQueue, ExactPhrases: []string{"请求队列", "排队请求", "执行记录"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_queue"},
+		{ID: IntentTaskContinue, Domain: DomainQueue, ExactPhrases: []string{"继续处理", "继续最近结果", "继续这个结果"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "continue_queue_result_thread"},
+		{ID: IntentTaskRerun, Domain: DomainQueue, ExactPhrases: []string{"再次执行最近请求", "重试最近请求", "再执行一次"}, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "rerun_queue_request"},
+		{ID: IntentTaskRerunNew, Domain: DomainQueue, ExactPhrases: []string{"在新线程继续", "在新线程再次执行"}, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "rerun_queue_request_in_new_thread"},
+		{ID: IntentQueuePause, Domain: DomainQueue, ExactPhrases: []string{"暂停队列", "暂停请求队列", "停止处理请求"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "pause_queue"},
+		{ID: IntentQueueResume, Domain: DomainQueue, ExactPhrases: []string{"继续队列", "恢复队列", "继续请求队列"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "resume_queue"},
+		{ID: IntentQueueClear, Domain: DomainQueue, ExactPhrases: []string{"清空队列", "删除排队请求"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "request_clear_queue"},
 		{ID: IntentProjectCenter, Domain: DomainProject, ExactPhrases: []string{"项目", "项目中心", "项目列表", "查看项目", "当前项目"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_project_center"},
-		{ID: IntentProjectQuickTasks, Domain: DomainProject, ExactPhrases: []string{"快捷任务", "项目快捷任务", "快速任务"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_quick_tasks"},
-		{ID: IntentWorkflowNew, Domain: DomainProject, ExactPhrases: []string{"新建快捷任务", "创建快捷任务", "添加快捷任务"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_workflow_create"},
-		{ID: IntentWorkflowSaveLast, Domain: DomainProject, ExactPhrases: []string{"保存为快捷任务", "把上次任务保存为快捷任务"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_workflow_save_from_task"},
+		{ID: IntentProjectQuickTasks, Domain: DomainProject, ExactPhrases: []string{"提示词模板", "提示模板"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_prompt_templates"},
+		{ID: IntentWorkflowNew, Domain: DomainProject, ExactPhrases: []string{"新建提示词模板", "创建提示词模板"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_template_create"},
+		{ID: IntentWorkflowSaveLast, Domain: DomainProject, ExactPhrases: []string{"保存为提示词模板", "把上次请求保存为模板"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_template_save_from_request"},
 		{ID: IntentProjectSelect, Domain: DomainProject, ArgumentPrefixes: []string{"切换项目", "切到项目", "进入项目"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "select_project"},
-		{ID: IntentSessionCenter, Domain: DomainSession, ExactPhrases: []string{"会话", "查看会话", "看看会话", "会话菜单"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_session_center"},
-		{ID: IntentSessionSelect, Domain: DomainSession, ExactPhrases: []string{"会话列表", "列出会话", "选择会话"}, ArgumentPrefixes: []string{"切换会话", "切换到会话", "切到会话", "进入会话"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "select_session"},
-		{ID: IntentSessionSearch, Domain: DomainSession, ArgumentPrefixes: []string{"搜索会话", "查找会话", "找会话"}, AllowEmptyArgument: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "search_session"},
-		{ID: IntentSessionCurrent, Domain: DomainSession, ExactPhrases: []string{"当前会话", "这个会话", "会话详情"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_current_session"},
-		{ID: IntentSessionRestore, Domain: DomainSession, ExactPhrases: []string{"已归档会话"}, ArgumentPrefixes: []string{"恢复会话", "找回会话"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "restore_session"},
-		{ID: IntentSessionNew, Domain: DomainSession, ArgumentPrefixes: []string{"新建会话", "创建会话", "开一个新会话", "开个新会话"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "create_session"},
-		{ID: IntentSessionRename, Domain: DomainSession, ArgumentPrefixes: []string{"重命名当前会话", "当前会话改名", "把当前会话改名"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "rename_session"},
-		{ID: IntentSessionArchive, Domain: DomainSession, ExactPhrases: []string{"归档当前会话", "把当前会话归档", "归档这个会话"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "archive_session"},
+		{ID: IntentSessionCenter, Domain: DomainSession, ExactPhrases: []string{"线程", "线程中心"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_thread_center"},
+		{ID: IntentSessionSelect, Domain: DomainSession, ExactPhrases: []string{"线程列表", "选择线程"}, ArgumentPrefixes: []string{"切换线程", "切换到线程"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "select_thread"},
+		{ID: IntentSessionSearch, Domain: DomainSession, ArgumentPrefixes: []string{"搜索线程", "查找线程"}, AllowEmptyArgument: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "search_thread"},
+		{ID: IntentSessionCurrent, Domain: DomainSession, ExactPhrases: []string{"当前线程", "这个线程", "线程详情"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_current_thread"},
+		{ID: IntentSessionRestore, Domain: DomainSession, ExactPhrases: []string{"已归档线程"}, ArgumentPrefixes: []string{"恢复线程", "找回线程"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "restore_thread"},
+		{ID: IntentSessionNew, Domain: DomainSession, ArgumentPrefixes: []string{"新建线程", "创建线程"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "create_thread"},
+		{ID: IntentSessionRename, Domain: DomainSession, ArgumentPrefixes: []string{"重命名当前线程", "重命名线程", "当前线程改名"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "rename_thread"},
+		{ID: IntentSessionArchive, Domain: DomainSession, ExactPhrases: []string{"归档当前线程", "归档这个线程", "归档线程"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "archive_thread"},
+		{ID: IntentThreadFork, Domain: DomainSession, ExactPhrases: []string{"分叉当前线程", "分叉线程"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "fork_thread"},
+		{ID: IntentThreadPin, Domain: DomainSession, ExactPhrases: []string{"置顶当前线程", "置顶线程"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "pin_thread"},
+		{ID: IntentThreadCompact, Domain: DomainSession, ExactPhrases: []string{"压缩上下文", "压缩线程上下文"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "compact_thread"},
+		{ID: IntentThreadGoal, Domain: DomainSession, ExactPhrases: []string{"设置线程目标", "线程目标"}, ArgumentPrefixes: []string{"设置线程目标为", "设置目标"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "set_thread_goal"},
+		{ID: IntentThreadGoalClear, Domain: DomainSession, ExactPhrases: []string{"清除线程目标", "清除目标"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "clear_thread_goal"},
+		{ID: IntentThreadReview, Domain: DomainSession, ExactPhrases: []string{"审查未提交改动", "代码审查"}, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "review_thread"},
+		{ID: IntentThreadDelete, Domain: DomainSession, ExactPhrases: []string{"永久删除线程", "删除当前线程"}, AllowDuringDrain: true, AuditEvent: "confirm_delete_thread"},
+		{ID: IntentThreadModels, Domain: DomainSession, ExactPhrases: []string{"线程模型", "Codex 模型", "选择模型"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_thread_models"},
+		{ID: IntentThreadEffort, Domain: DomainSession, ExactPhrases: []string{"推理强度", "思考强度"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_thread_effort"},
+		{ID: IntentTurnSteer, Domain: DomainSession, ArgumentPrefixes: []string{"追加指令", "调整当前轮次", "调整轮次"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "steer_turn"},
 		{ID: IntentResponseModes, Domain: DomainPreference, ExactPhrases: []string{"回答方式", "回复方式", "输出方式", "偏好设置", "语音模式"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_response_modes"},
 		{ID: IntentResponseVoice, Domain: DomainPreference, ExactPhrases: []string{"开启语音模式", "打开语音模式", "启用语音模式"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "set_response_voice"},
 		{ID: IntentResponseAdaptive, Domain: DomainPreference, ExactPhrases: []string{"关闭语音模式", "退出语音模式", "自适应模式"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "set_response_adaptive"},

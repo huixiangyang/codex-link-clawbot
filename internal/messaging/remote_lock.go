@@ -132,7 +132,7 @@ func (h *Handler) lockRemote(userID string) string {
 	if h.tasks != nil {
 		queueWasPaused = h.tasks.Status(userID).Paused
 		if err := h.tasks.SetPaused(userID, true); err != nil {
-			return fmt.Sprintf("远程锁定失败：无法暂停任务队列：%v", err)
+			return fmt.Sprintf("远程锁定失败：无法暂停 WeClaw 请求队列：%v", err)
 		}
 	}
 	if err := h.remoteLock.Lock(userID); err != nil {
@@ -158,7 +158,7 @@ func (h *Handler) confirmRemoteLock(userID string) string {
 	if !h.storeChoiceWithBack(userID, viewSecurityLockConfirm, options, controlOption{Action: actionMain}) {
 		return controlStateFailureResult().Text
 	}
-	return "准备远程锁定\n\n锁定会取消当前任务、暂停队列，并阻止后续内容进入 Codex。\n\n" + renderControlOptions(options) + "\n\n回复 1 确认，0 返回操作总览。"
+	return "准备远程锁定\n\n锁定会取消 WeClaw 当前执行、暂停请求队列，并阻止后续内容进入 Codex。\n\n" + renderControlOptions(options) + "\n\n回复 1 确认，0 返回操作总览。"
 }
 
 func (h *Handler) handleLockedInput(userID, text string) string {
@@ -171,5 +171,5 @@ func (h *Handler) handleLockedInput(userID, text string) string {
 	if err := h.remoteLock.Unlock(userID, code); err != nil {
 		return "解锁失败：解锁码不正确。"
 	}
-	return "WeClaw 已解锁。任务队列仍保持暂停；发送“继续队列”后才会恢复执行。"
+	return "WeClaw 已解锁。请求队列仍保持暂停；发送“继续队列”后才会恢复执行。"
 }

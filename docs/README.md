@@ -8,9 +8,10 @@
 
 1. [安装与启动](guides/getting-started.md)
 2. [配置参考](guides/configuration.md)
-3. [微信任务与进度](guides/tasks.md)
-4. [会话管理](guides/sessions.md)
-5. [视觉回复](guides/visual-replies.md)
+3. [Codex 与 WeClaw 能力边界](guides/capability-boundary.md)
+4. [WeClaw 项目入口与 Codex 线程](guides/projects-and-threads.md)
+5. [Codex 轮次与 WeClaw 请求队列](guides/turns-and-queue.md)
+6. [视觉回复](guides/visual-replies.md)
 
 ## 用户指南
 
@@ -18,8 +19,9 @@
 | --- | --- |
 | [安装与启动](guides/getting-started.md) | 构建、登录、启动和本机服务 |
 | [配置参考](guides/configuration.md) | 项目、Codex、视觉、语音、自动化和主动发送 |
-| [微信任务与进度](guides/tasks.md) | 排队、取消、恢复、进度和无回复诊断 |
-| [会话管理](guides/sessions.md) | 新建、搜索、切换、归档和项目隔离 |
+| [Codex 与 WeClaw 能力边界](guides/capability-boundary.md) | 区分 Codex 原生能力与 WeClaw 微信增强 |
+| [Codex 轮次与 WeClaw 请求队列](guides/turns-and-queue.md) | 轮次、请求、追加指令、取消、恢复和诊断 |
+| [WeClaw 项目入口与 Codex 线程](guides/projects-and-threads.md) | 目录入口、线程、模型、目标、分叉、审查和 Codex 能力 |
 | [文件与交付](guides/media-and-deliveries.md) | 图片、附件、交付物、素材和再次发送 |
 | [视觉回复](guides/visual-replies.md) | 五套模板、阅读卡、图片批次和文字版 |
 
@@ -35,7 +37,7 @@
 | [统一状态内核](architecture/state-kernel.md) | 原子写入、严格 schema、租约和备份 |
 | [本机管理安全](architecture/management-security.md) | Unix socket、主动发送和可信代理 |
 | [确定性诊断](architecture/diagnostics.md) | “为什么没回复”的证据与隐私边界 |
-| [持久工作流](architecture/workflows.md) | 快捷任务、参数槽、复用和项目隔离 |
+| [持久提示词模板](architecture/workflows.md) | 提示词模板、参数槽、复用和项目隔离 |
 
 ## 运维
 

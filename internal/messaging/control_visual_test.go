@@ -59,14 +59,14 @@ func (r *fakeControlVisualRenderer) Render(_ context.Context, card visual.Card) 
 }
 
 func TestControlCardFromMainMenu(t *testing.T) {
-	card := controlCardFromText("WeClaw\n\n版本：v1.4.0-runtime.1\n会话：视觉交互开发\n状态：空闲\n\n1  会话\n2  任务状态\n3  运行中心\n\n回复数字即可，0 退出。")
+	card := controlCardFromText("WeClaw\n\n版本：v1.4.0-runtime.1\nCodex 线程：视觉交互开发\nWeClaw 执行：空闲\n\n1  Codex 线程\n2  WeClaw 执行状态\n3  WeClaw 运行与安全\n\n回复数字即可，0 退出。")
 	if card.Variant != visual.VariantHome || card.Title != "WeClaw" {
 		t.Fatalf("main card identity = %#v", card)
 	}
-	if len(card.Facts) != 3 || card.Facts[0].Label != "版本" || card.Facts[1].Label != "会话" || card.Facts[1].Value != "视觉交互开发" {
+	if len(card.Facts) != 3 || card.Facts[0].Label != "版本" || card.Facts[1].Label != "Codex 线程" || card.Facts[1].Value != "视觉交互开发" {
 		t.Fatalf("main card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 3 || card.Options[2].Label != "运行中心" {
+	if len(card.Options) != 3 || card.Options[2].Label != "WeClaw 运行与安全" {
 		t.Fatalf("main card options = %#v", card.Options)
 	}
 	if card.Footer != "回复数字即可，0 退出。" {
@@ -75,44 +75,44 @@ func TestControlCardFromMainMenu(t *testing.T) {
 }
 
 func TestControlDirectoryFromTextBuildsSixStableSections(t *testing.T) {
-	reply := "WeClaw 操作总览\n\n版本：v2\n项目：主项目\n会话：移动端开发\n任务：运行中\n回答：自适应\n队列：2 项等待\n\n" +
-		"[1]  会话管理\n11  新建会话\n12  重命名当前会话\n\n" +
-		"[2]  项目与工作流\n22  快捷任务 · 3 项\n\n" +
-		"[3]  任务管理\n31  查看当前任务\n\n" +
-		"[4]  回答与视觉\n41  自适应回答 · 当前\n\n" +
-		"[5]  工具与内容\n51  素材与交付\n\n" +
-		"[6]  运行与安全\n63  使用说明\n\n回复编号直接操作，0 退出；总览 30 分钟内有效。"
+	reply := "WeClaw 操作总览\n\n能力边界：Codex 原生与 WeClaw 增强已分区\n版本：v2\nWeClaw 项目入口：主项目\nCodex 线程：移动端开发\nWeClaw 执行：运行中\nWeClaw 回复：自适应\nWeClaw 队列：2 项等待\n\n" +
+		"[1]  Codex · 线程\n11  新建线程\n12  重命名当前线程\n\n" +
+		"[2]  Codex · 执行能力\n22  线程模型\n\n" +
+		"[3]  WeClaw · 请求队列\n31  查看执行状态\n\n" +
+		"[4]  WeClaw · 回复呈现\n41  自适应回答 · 当前\n\n" +
+		"[5]  WeClaw · 内容与自动化\n51  素材与交付\n\n" +
+		"[6]  WeClaw · 运行与安全\n63  使用说明\n\n回复编号直接操作，0 退出；总览 30 分钟内有效。"
 	directory, ok := controlDirectoryFromText(reply)
-	if !ok || len(directory.Facts) != 6 || len(directory.Sections) != 6 {
+	if !ok || directory.Subtitle != "Codex 原生与 WeClaw 增强已分区" || len(directory.Facts) != 6 || len(directory.Sections) != 6 {
 		t.Fatalf("directory = %#v, ok=%v", directory, ok)
 	}
-	if directory.Facts[1].Label != "项目" || directory.Facts[1].Value != "主项目" {
+	if directory.Facts[1].Label != "WeClaw 项目入口" || directory.Facts[1].Value != "主项目" {
 		t.Fatalf("directory facts = %#v", directory.Facts)
 	}
-	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "messages-square" || first.Items[0].Code != "11" || first.Items[0].Label != "新建会话" {
+	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "messages-square" || first.Items[0].Code != "11" || first.Items[0].Label != "新建线程" {
 		t.Fatalf("first directory section = %#v", first)
 	}
-	if workflow := directory.Sections[1].Items[0]; workflow.Label != "快捷任务" || workflow.Meta != "3 项" {
-		t.Fatalf("directory item metadata = %#v", workflow)
+	if current := directory.Sections[3].Items[0]; current.Label != "自适应回答" || current.Meta != "当前" {
+		t.Fatalf("directory item metadata = %#v", current)
 	}
 }
 
 func TestControlCardFromRuntimeCenter(t *testing.T) {
-	reply := "运行中心\nWeClaw：运行中\n版本：v1.4.0-runtime.1\n已运行：2 小时 5 分\n本地接口：127.0.0.1:18011\nCodex：运行中\n协议：App Server\n模型：使用 Codex 默认配置\n工作目录：/workspace\nCodex PID：4242\n\n1  工作目录\n2  刷新运行中心\n\n回复数字操作，0 返回。"
+	reply := "WeClaw 运行与安全\nWeClaw：运行中\n版本：v1.4.0-runtime.1\n已运行：2 小时 5 分\n本地接口：127.0.0.1:18011\nCodex：运行中\n协议：Codex 应用服务\n模型：使用 Codex 默认配置\nCodex 工作目录：/workspace\nCodex PID：4242\n\n1  工作目录\n2  刷新 WeClaw 状态\n\n回复数字操作，0 返回。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantSystem || card.Title != "运行中心" {
+	if card.Variant != visual.VariantSystem || card.Title != "WeClaw 运行与安全" {
 		t.Fatalf("runtime card identity = %#v", card)
 	}
 	if len(card.Facts) != 9 || card.Facts[0].Label != "WeClaw" || card.Facts[8].Label != "Codex PID" {
 		t.Fatalf("runtime card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 2 || card.Options[1].Label != "刷新运行中心" {
+	if len(card.Options) != 2 || card.Options[1].Label != "刷新 WeClaw 状态" {
 		t.Fatalf("runtime card options = %#v", card.Options)
 	}
 }
 
 func TestControlCardUsesWarningSemanticsForArchiveConfirmation(t *testing.T) {
-	reply := "准备归档会话：视觉交互开发\n\n1  确认归档\n\n回复 1 确认，0 返回。"
+	reply := "准备归档线程：视觉交互开发\n\n1  确认归档\n\n回复 1 确认，0 返回。"
 	card := controlCardFromText(reply)
 	if card.Variant != visual.VariantWarning || card.Title != "归档确认" || card.Subtitle != "视觉交互开发" {
 		t.Fatalf("archive card = %#v", card)
@@ -137,23 +137,23 @@ func TestControlCardFromAutomationDetail(t *testing.T) {
 }
 
 func TestControlCardFromBrowsableSessionDetail(t *testing.T) {
-	reply := "会话详情\n名称：登录排障\n短编号：00000001\n状态：空闲\n位置：可用\n目录：/workspace\n摘要：检查微信登录失败原因\n\n1  切换到这个会话\n2  归档这个会话\n3  返回会话列表\n\n回复数字管理，0 返回原列表。"
+	reply := "线程详情\n名称：登录排障\n短编号：00000001\n状态：空闲\n位置：可用\n目录：/workspace\n摘要：检查微信登录失败原因\n\n1  切换到这个线程\n2  归档这个线程\n3  返回线程列表\n\n回复数字管理，0 返回原列表。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantSession || card.Title != "会话详情" {
+	if card.Variant != visual.VariantSession || card.Title != "线程详情" {
 		t.Fatalf("session detail card identity = %#v", card)
 	}
 	if len(card.Facts) != 6 || card.Facts[3].Label != "位置" || card.Facts[5].Label != "摘要" {
 		t.Fatalf("session detail card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 3 || card.Options[0].Label != "切换到这个会话" {
+	if len(card.Options) != 3 || card.Options[0].Label != "切换到这个线程" {
 		t.Fatalf("session detail card options = %#v", card.Options)
 	}
 }
 
 func TestControlCardFromTaskHistory(t *testing.T) {
-	reply := "任务中心\n\n页码：1 / 2\n等待：2\n执行：1\n已暂停：否\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
+	reply := "WeClaw 请求队列\n\n页码：1 / 2\n等待：2\n执行：1\n已暂停：否\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantProgress || card.Title != "任务中心" {
+	if card.Variant != visual.VariantProgress || card.Title != "WeClaw 请求队列" {
 		t.Fatalf("activity card identity = %#v", card)
 	}
 	if len(card.Facts) != 4 || card.Facts[3].Label != "已暂停" {
@@ -251,7 +251,7 @@ func TestVisualRenderFailureFallsBackToFullText(t *testing.T) {
 		MessageState: ilink.MessageStateFinish,
 		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
 	})
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "11  新建会话") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "11  新建线程") {
 		t.Fatalf("fallback message = %#v", sent.Msg.ItemList)
 	}
 }

@@ -77,13 +77,16 @@ type LocalFile struct {
 	Size        int64
 }
 
-// ChatRequest 是一次 Codex turn 的结构化用户输入。
+// ChatRequest 是一次 Codex 轮次的结构化用户输入。
 // 本机路径的生命周期全部由消息桥接层管理。
 type ChatRequest struct {
 	Text        string
 	LocalImages []string
 	LocalFiles  []LocalFile
 	ArtifactDir string
+	// Model 与 Effort 是当前线程的 Codex 执行设置，由微信控制面显式选择。
+	Model  string
+	Effort string
 }
 
 // PromptText 把本机文件和交付目录转换为 Codex 可执行的明确约定。
@@ -122,19 +125,28 @@ type ThreadStatus struct {
 	ActiveFlags []string `json:"activeFlags,omitempty"`
 }
 
-// ThreadInfo 是会话管理所需的稳定线程摘要，不包含完整 turn 历史。
+// ThreadInfo 是线程管理所需的稳定摘要，不包含完整轮次历史。
 type ThreadInfo struct {
-	ID            string       `json:"id"`
-	SessionID     string       `json:"sessionId"`
-	Name          string       `json:"name"`
-	Preview       string       `json:"preview"`
-	Cwd           string       `json:"cwd"`
-	CreatedAt     int64        `json:"createdAt"`
-	UpdatedAt     int64        `json:"updatedAt"`
-	RecencyAt     *int64       `json:"recencyAt"`
-	ModelProvider string       `json:"modelProvider"`
-	IsPinned      bool         `json:"isPinned"`
-	Status        ThreadStatus `json:"status"`
+	ID                 string       `json:"id"`
+	SessionID          string       `json:"sessionId"`
+	ForkedFromID       string       `json:"forkedFromId"`
+	Name               string       `json:"name"`
+	Preview            string       `json:"preview"`
+	Cwd                string       `json:"cwd"`
+	CreatedAt          int64        `json:"createdAt"`
+	UpdatedAt          int64        `json:"updatedAt"`
+	RecencyAt          *int64       `json:"recencyAt"`
+	ModelProvider      string       `json:"modelProvider"`
+	IsPinned           bool         `json:"isPinned"`
+	GitInfo            *GitInfo     `json:"gitInfo"`
+	InstructionSources []string     `json:"instructionSources,omitempty"`
+	Status             ThreadStatus `json:"status"`
+}
+
+type GitInfo struct {
+	SHA       string `json:"sha"`
+	Branch    string `json:"branch"`
+	OriginURL string `json:"originUrl"`
 }
 
 // ThreadListOptions 控制 Codex 线程分页查询。
@@ -142,6 +154,9 @@ type ThreadListOptions struct {
 	Cursor      string
 	Limit       int
 	Archived    bool
+	Cwd         string
+	SearchTerm  string
+	Pinned      *bool
 	SourceKinds []string
 }
 
@@ -149,6 +164,58 @@ type ThreadListOptions struct {
 type ThreadPage struct {
 	Threads    []ThreadInfo
 	NextCursor string
+}
+
+// ThreadGoal 对应 Codex 的持久线程目标，不在 WeClaw 中另造用户概念。
+type ThreadGoal struct {
+	ThreadID        string `json:"threadId"`
+	Objective       string `json:"objective"`
+	Status          string `json:"status"`
+	TokenBudget     *int64 `json:"tokenBudget"`
+	TokensUsed      int64  `json:"tokensUsed"`
+	TimeUsedSeconds int64  `json:"timeUsedSeconds"`
+	CreatedAt       int64  `json:"createdAt"`
+	UpdatedAt       int64  `json:"updatedAt"`
+}
+
+type ReasoningEffort struct {
+	Effort      string `json:"reasoningEffort"`
+	Description string `json:"description"`
+}
+
+type ModelInfo struct {
+	ID                        string            `json:"id"`
+	Model                     string            `json:"model"`
+	DisplayName               string            `json:"displayName"`
+	DefaultReasoningEffort    string            `json:"defaultReasoningEffort"`
+	SupportedReasoningEfforts []ReasoningEffort `json:"supportedReasoningEfforts"`
+	InputModalities           []string          `json:"inputModalities"`
+	SupportsPersonality       bool              `json:"supportsPersonality"`
+	IsDefault                 bool              `json:"isDefault"`
+}
+
+type SkillInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
+	Interface   struct {
+		DisplayName string `json:"displayName"`
+	} `json:"interface"`
+}
+
+type ProjectCapabilities struct {
+	Skills      []SkillInfo
+	SkillErrors []string
+	MCPServers  int
+	MCPReady    int
+}
+
+type ReviewTarget struct {
+	Type         string `json:"type"`
+	BaseBranch   string `json:"branch,omitempty"`
+	SHA          string `json:"sha,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // ThreadClient 暴露 Codex App Server 的显式线程生命周期。
@@ -163,6 +230,25 @@ type ThreadClient interface {
 	UnarchiveThread(ctx context.Context, threadID string) (ThreadInfo, error)
 	UnsubscribeThread(ctx context.Context, threadID string) error
 	ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error)
+}
+
+// AdvancedThreadClient 是 Codex 线程的高级原生控制面。
+type AdvancedThreadClient interface {
+	ForkThread(ctx context.Context, threadID string) (ThreadInfo, error)
+	SetThreadPinned(ctx context.Context, threadID string, pinned bool) (ThreadInfo, error)
+	CompactThread(ctx context.Context, threadID string) error
+	DeleteThread(ctx context.Context, threadID string) error
+	SetThreadGoal(ctx context.Context, threadID, objective string, tokenBudget *int64) (ThreadGoal, error)
+	GetThreadGoal(ctx context.Context, threadID string) (ThreadGoal, bool, error)
+	ClearThreadGoal(ctx context.Context, threadID string) error
+	SteerThread(ctx context.Context, threadID string, request ChatRequest) error
+	ReviewThread(ctx context.Context, threadID string, target ReviewTarget, onProgress ProgressHandler) (string, error)
+}
+
+// CapabilityClient 用于构建 Codex 原生模型选择器与项目能力面板。
+type CapabilityClient interface {
+	ListModels(ctx context.Context) ([]ModelInfo, error)
+	InspectProject(ctx context.Context, cwd string) (ProjectCapabilities, error)
 }
 
 // ProgressClient 是支持结构化任务进度的 Codex 客户端。

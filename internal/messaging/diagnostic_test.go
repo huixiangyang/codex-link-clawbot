@@ -75,7 +75,7 @@ func TestNoReplyDiagnosticExplainsPausedQueueWithoutLeakingIdentity(t *testing.T
 	}
 
 	got := handler.buildNoReplyDiagnostic(ownerID)
-	for _, want := range []string{"任务队列已暂停", "继续队列", "任务中心"} {
+	for _, want := range []string{"WeClaw 请求队列已暂停", "继续队列", "请求队列"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("diagnostic missing %q: %q", want, got)
 		}
@@ -115,7 +115,7 @@ func TestNoReplyDiagnosticDoesNotExposeLiveTaskStage(t *testing.T) {
 	}
 
 	got := handler.buildNoReplyDiagnostic("owner-1")
-	if !strings.Contains(got, "任务状态：执行中") || strings.Contains(got, privateStage) || strings.Contains(got, "/private/workspace") {
+	if !strings.Contains(got, "WeClaw 执行状态：运行中") || strings.Contains(got, privateStage) || strings.Contains(got, "/private/workspace") {
 		t.Fatalf("live task diagnostic = %q", got)
 	}
 }

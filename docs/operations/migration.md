@@ -10,17 +10,17 @@ v2.5 不兼容旧运行状态。运行时只读取当前严格 schema，不猜�
 - 删除 daemon、PID 文件、`--foreground`、`update`、`upgrade` 和 `scripts/cutover-local.sh`。
 - `start` 永远在前台运行；生产生命周期只交给 systemd 用户服务。
 
-v2.6 删除项目、会话、偏好、自动化、素材、交付、远程锁、同步游标和任务 JSON 各自的文件 writer，统一交给 `statefile`。此前 v2 的 `codex.cwd`、多 Agent 字段、旧语音字段和 `visual-styles.json` 继续被拒绝，不恢复兼容。
+v2.6 删除项目、线程、偏好、自动化、素材、交付、远程锁、同步游标和任务 JSON 各自的文件 writer，统一交给 `statefile`。此前 v2 的 `codex.cwd`、多 Agent 字段、旧语音字段和 `visual-styles.json` 继续被拒绝，不恢复兼容。
 
 账号凭据是 v2.6 唯一需要改变磁盘 schema 的现存领域：无版本账号文件一次性升级为严格 v1。运行时只接受 `version: 1`，不会猜测或静默跳过损坏凭据。
 
-v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。后续大菜单重构把该文件破坏性升级为严格 v2，为每个动作保存显式稳定编号，并把单菜单容量提高到 48。离线迁移会直接丢弃 v1 的临时菜单与旧控制回执，写入空 v2；业务会话、任务、工作流、偏好和交付状态不会被删除。运行时不兼容读取 v1。
+v2.6 首次启动会创建严格 v1 `~/.weclaw/control-state.json`，用于菜单 revision 和最小控制回执。大菜单重构曾升级为严格 v2，Codex 概念对齐曾升级为 v3；本次能力分层破坏性升级为严格 v4：Codex 线程使用 `thread.*`，真实轮次操作使用 `turn.*`，WeClaw 请求队列使用 `queue.*`。离线迁移会直接丢弃 v1/v2/v3 的临时菜单与旧控制回执，写入空 v4；业务线程、请求队列、提示词模板、偏好和交付状态不会被删除。运行时不兼容读取旧版本。
 
 `control-state.json` 不保存卡片正文、提示词、回答、路径、附件名、令牌或 `context_token`；损坏、重复编号或未知 schema 会阻止启动。
 
 v2.6 同时删除共享 TCP `api_addr`、`WECLAW_API_ADDR`、`start --api-addr`、TCP 健康/管理端点和无认证发送。管理面固定迁移到 `~/.weclaw/control.sock`；主动发送默认关闭，启用后使用独立 `send_api` 哈希 token 配置与严格 v1 无正文回执。
 
-v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独占状态锁时，把每个旧快捷任务复制到每个已绑定者对应项目的严格 v1 `~/.weclaw/workflows.json`，确认全部写入后才原子删除配置字段。工作流保存原始提示模板和参数槽，不保存 Codex 回答；没有可确定绑定者时迁移直接失败，不会把任务变成无归属的共享数据。运行时不读取或兼容旧字段。
+v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独占状态锁时，把每个旧提示词模板复制到每个已绑定者对应项目的严格 v1 `~/.weclaw/workflows.json`，确认全部写入后才原子删除配置字段。工作流保存原始提示模板和参数槽，不保存 Codex 回答；没有可确定绑定者时迁移直接失败，不会把任务变成无归属的共享数据。运行时不读取或兼容旧字段。
 
 ## 自动离线迁移
 
@@ -32,7 +32,7 @@ v2.7 删除 `projects[].quick_tasks` 运行时配置。离线迁移在持有独�
 4. 删除已进入事务快照的 `task-history.json` 与 `weclaw.pid`。
 5. 从 `config.json` 删除旧 `api_addr` 并加入 `"send_api":{"enabled":false}`；已有新发送配置保持原样，未知配置字段仍由新运行时严格拒绝。
 6. 新任务索引由 v2.5 启动时创建，不导入旧任务历史。
-7. 将 `control-state.json` v1 破坏性替换为空 v2；合法 v2 保持不变，未知版本立即失败。
+7. 将 `control-state.json` v1/v2/v3 破坏性替换为空 v4；合法 v4 保持不变，未知版本立即失败。
 
 迁移命令不是日常修复工具，也不会在 `weclaw start` 中自动运行。服务生命周期持有 `~/.weclaw/.state.lock`；服务仍在运行时迁移必须以 `conflict` 失败，部署器停服后才可获取迁移锁。
 

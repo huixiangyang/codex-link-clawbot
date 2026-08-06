@@ -125,7 +125,7 @@ func migrateState(root string) error {
 	return syncDirectoryPath(root)
 }
 
-// migrateControlState 丢弃旧版短期菜单和回执；业务会话、任务与工作流不依赖这些临时选择。
+// migrateControlState 丢弃旧版短期菜单和回执；Codex 线程、WeClaw 请求队列与提示词模板不依赖这些临时选择。
 func migrateControlState(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -153,14 +153,14 @@ func migrateControlState(path string) error {
 		return fmt.Errorf("control state schema is invalid")
 	}
 	switch state.Version {
-	case 2:
+	case 4:
 		return os.Chmod(path, 0o600)
-	case 1:
+	case 1, 2, 3:
 		return writePrivateJSONAtomic(path, struct {
 			Version  int                        `json:"version"`
 			Owners   map[string]json.RawMessage `json:"owners"`
 			Receipts map[string]json.RawMessage `json:"receipts"`
-		}{Version: 2, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
+		}{Version: 4, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
 	default:
 		return fmt.Errorf("unsupported control state version %d", state.Version)
 	}

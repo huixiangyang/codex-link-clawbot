@@ -69,6 +69,46 @@ func (h *Handler) executeSessionControlAction(ctx context.Context, userID string
 		} else {
 			text = h.restoreSession(ctx, userID, option.Value)
 		}
+	case actionForkThread:
+		if h.hasActiveTask(userID) {
+			text = mutationBusyText()
+		} else {
+			text = h.forkCurrentThread(ctx, userID)
+		}
+	case actionToggleThreadPin:
+		text = h.toggleCurrentThreadPin(ctx, userID, option.Value == "true")
+	case actionCompactThread:
+		if h.hasActiveTask(userID) {
+			text = mutationBusyText()
+		} else {
+			text = h.compactCurrentThread(ctx, userID)
+		}
+	case actionPromptThreadGoal:
+		text = h.promptCurrentThreadGoal(userID)
+	case actionClearThreadGoal:
+		text = h.clearCurrentThreadGoal(ctx, userID)
+	case actionReviewThread:
+		if h.hasActiveTask(userID) {
+			text = mutationBusyText()
+		} else {
+			text = h.reviewCurrentThread(ctx, userID)
+		}
+	case actionConfirmDeleteThread:
+		text = h.confirmDeleteCurrentThread(ctx, userID)
+	case actionDeleteThread:
+		if h.hasActiveTask(userID) {
+			text = mutationBusyText()
+		} else {
+			text = h.deleteCurrentThread(ctx, userID)
+		}
+	case actionThreadModels:
+		text = h.openThreadModels(ctx, userID)
+	case actionSelectThreadModel:
+		text = h.selectThreadModel(ctx, userID, option.Value)
+	case actionThreadEfforts:
+		text = h.openThreadEfforts(ctx, userID, option.Value)
+	case actionSelectThreadEffort:
+		text = h.selectThreadEffort(ctx, userID, option.Query, option.Value)
 	default:
 		return invalidControlAction(option.Action, DomainSession)
 	}
@@ -110,6 +150,30 @@ func (h *Handler) dispatchSessionIntent(ctx context.Context, userID string, reso
 		}
 	case IntentSessionArchive:
 		text = h.confirmArchiveCurrent(ctx, userID)
+	case IntentThreadFork:
+		text = h.forkCurrentThread(ctx, userID)
+	case IntentThreadPin:
+		text = h.toggleCurrentThreadPin(ctx, userID, true)
+	case IntentThreadCompact:
+		text = h.compactCurrentThread(ctx, userID)
+	case IntentThreadGoal:
+		if argument == "" {
+			text = h.promptCurrentThreadGoal(userID)
+		} else {
+			text = h.setCurrentThreadGoal(ctx, userID, argument)
+		}
+	case IntentThreadGoalClear:
+		text = h.clearCurrentThreadGoal(ctx, userID)
+	case IntentThreadReview:
+		text = h.reviewCurrentThread(ctx, userID)
+	case IntentThreadDelete:
+		text = h.confirmDeleteCurrentThread(ctx, userID)
+	case IntentThreadModels:
+		text = h.openThreadModels(ctx, userID)
+	case IntentThreadEffort:
+		text = h.openThreadEfforts(ctx, userID, "")
+	case IntentTurnSteer:
+		text = h.steerCurrentTurn(ctx, userID, argument)
 	default:
 		return invalidIntentResult(resolved)
 	}

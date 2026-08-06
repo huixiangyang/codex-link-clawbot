@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
@@ -20,12 +21,16 @@ type fakeThreadClient struct {
 	resumed      []string
 	unsubscribed []string
 	listOptions  []codex.ThreadListOptions
+	goals        map[string]codex.ThreadGoal
+	compacted    []string
+	steered      []string
 }
 
 func newFakeThreadClient() *fakeThreadClient {
 	return &fakeThreadClient{
 		threads:  make(map[string]codex.ThreadInfo),
 		archived: make(map[string]bool),
+		goals:    make(map[string]codex.ThreadGoal),
 	}
 }
 
@@ -123,6 +128,90 @@ func (f *fakeThreadClient) UnsubscribeThread(_ context.Context, threadID string)
 func (f *fakeThreadClient) ChatThread(context.Context, string, codex.ChatRequest) (string, error) {
 	return "ok", nil
 }
+
+func (f *fakeThreadClient) ForkThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	source, ok := f.threads[threadID]
+	if !ok {
+		return codex.ThreadInfo{}, fmt.Errorf("thread not found")
+	}
+	f.next++
+	id := fmt.Sprintf("019fcc03-fc8b-7842-a812-%012d", f.next)
+	forked := source
+	forked.ID = id
+	forked.ForkedFromID = threadID
+	forked.Name = ""
+	f.threads[id] = forked
+	return forked, nil
+}
+
+func (f *fakeThreadClient) SetThreadPinned(_ context.Context, threadID string, pinned bool) (codex.ThreadInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	thread, ok := f.threads[threadID]
+	if !ok {
+		return codex.ThreadInfo{}, fmt.Errorf("thread not found")
+	}
+	thread.IsPinned = pinned
+	f.threads[threadID] = thread
+	return thread, nil
+}
+
+func (f *fakeThreadClient) CompactThread(_ context.Context, threadID string) error {
+	f.compacted = append(f.compacted, threadID)
+	return nil
+}
+
+func (f *fakeThreadClient) DeleteThread(_ context.Context, threadID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.threads[threadID]; !ok {
+		return fmt.Errorf("thread not found")
+	}
+	deleted := map[string]bool{threadID: true}
+	for changed := true; changed; {
+		changed = false
+		for id, thread := range f.threads {
+			if !deleted[id] && deleted[thread.ForkedFromID] {
+				deleted[id] = true
+				changed = true
+			}
+		}
+	}
+	for id := range deleted {
+		delete(f.threads, id)
+		delete(f.goals, id)
+	}
+	return nil
+}
+
+func (f *fakeThreadClient) SetThreadGoal(_ context.Context, threadID, objective string, tokenBudget *int64) (codex.ThreadGoal, error) {
+	goal := codex.ThreadGoal{ThreadID: threadID, Objective: objective, Status: "active", TokenBudget: tokenBudget}
+	f.goals[threadID] = goal
+	return goal, nil
+}
+
+func (f *fakeThreadClient) GetThreadGoal(_ context.Context, threadID string) (codex.ThreadGoal, bool, error) {
+	goal, ok := f.goals[threadID]
+	return goal, ok, nil
+}
+
+func (f *fakeThreadClient) ClearThreadGoal(_ context.Context, threadID string) error {
+	delete(f.goals, threadID)
+	return nil
+}
+
+func (f *fakeThreadClient) SteerThread(_ context.Context, threadID string, request codex.ChatRequest) error {
+	f.steered = append(f.steered, threadID+":"+request.Text)
+	return nil
+}
+
+func (f *fakeThreadClient) ReviewThread(_ context.Context, threadID string, target codex.ReviewTarget, _ codex.ProgressHandler) (string, error) {
+	return threadID + ":" + target.Type, nil
+}
+
+var _ codex.AdvancedThreadClient = (*fakeThreadClient)(nil)
 
 func TestManagerPersistsSelectionAcrossRestart(t *testing.T) {
 	path := t.TempDir() + "/session-index.json"
@@ -280,5 +369,88 @@ func TestManagerValidatesSessionNames(t *testing.T) {
 	}
 	if _, err := manager.New(context.Background(), "owner-1", client, string(make([]rune, MaxSessionName+1))); err == nil {
 		t.Fatal("New() should reject oversized name")
+	}
+}
+
+func TestManagerForkInheritsSettingsAndDeletesDescendants(t *testing.T) {
+	path := t.TempDir() + "/session-index.json"
+	manager, err := NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeThreadClient()
+	root, err := manager.New(context.Background(), "owner-1", client, "主线程")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := ThreadSettings{Model: "gpt-test", Effort: "high"}
+	if err := manager.SetCurrentSettings("owner-1", settings); err != nil {
+		t.Fatal(err)
+	}
+	child, err := manager.ForkCurrent(context.Background(), "owner-1", client, client)
+	if err != nil || child.ForkedFromID != root.ID || child.Name != "主线程 · 分支" {
+		t.Fatalf("ForkCurrent() = %#v, %v", child, err)
+	}
+	if got, err := manager.CurrentSettings("owner-1"); err != nil || got != settings {
+		t.Fatalf("CurrentSettings() = %#v, %v", got, err)
+	}
+	grandchild, err := manager.ForkCurrent(context.Background(), "owner-1", client, client)
+	if err != nil || grandchild.ForkedFromID != child.ID {
+		t.Fatalf("second ForkCurrent() = %#v, %v", grandchild, err)
+	}
+	if _, err := manager.Use(context.Background(), "owner-1", client, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DeleteCurrent(context.Background(), "owner-1", client); err != nil {
+		t.Fatal(err)
+	}
+	if stats := manager.Stats("owner-1"); stats.Active != 0 || stats.HasCurrent {
+		t.Fatalf("Stats() after recursive delete = %#v", stats)
+	}
+	if len(client.threads) != 0 {
+		t.Fatalf("remote descendants were not deleted: %#v", client.threads)
+	}
+
+	restarted, err := NewManager(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats := restarted.Stats("owner-1"); stats.Active != 0 || stats.HasCurrent {
+		t.Fatalf("restarted Stats() = %#v", stats)
+	}
+}
+
+func TestManagerNativeGoalSteerReviewAndPin(t *testing.T) {
+	manager, err := NewManager(t.TempDir() + "/session-index.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeThreadClient()
+	thread, err := manager.New(context.Background(), "owner-1", client, "高级控制")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := manager.PinCurrent(context.Background(), "owner-1", client, true)
+	if err != nil || !pinned.IsPinned {
+		t.Fatalf("PinCurrent() = %#v, %v", pinned, err)
+	}
+	if err := manager.CompactCurrent(context.Background(), "owner-1", client); err != nil || !reflect.DeepEqual(client.compacted, []string{thread.ID}) {
+		t.Fatalf("CompactCurrent() compacted=%#v err=%v", client.compacted, err)
+	}
+	goal, err := manager.SetCurrentGoal(context.Background(), "owner-1", client, "完成高级控制")
+	if err != nil || goal.Objective != "完成高级控制" {
+		t.Fatalf("SetCurrentGoal() = %#v, %v", goal, err)
+	}
+	if read, exists, err := manager.CurrentGoal(context.Background(), "owner-1", client); err != nil || !exists || read.ThreadID != thread.ID {
+		t.Fatalf("CurrentGoal() = %#v, %v, %v", read, exists, err)
+	}
+	if err := manager.SteerCurrent(context.Background(), "owner-1", client, codex.ChatRequest{Text: "先跑测试"}); err != nil {
+		t.Fatal(err)
+	}
+	if review, err := manager.ReviewCurrent(context.Background(), "owner-1", client, codex.ReviewTarget{Type: "uncommittedChanges"}, nil); err != nil || review != thread.ID+":uncommittedChanges" {
+		t.Fatalf("ReviewCurrent() = %q, %v", review, err)
+	}
+	if err := manager.ClearCurrentGoal(context.Background(), "owner-1", client); err != nil {
+		t.Fatal(err)
 	}
 }

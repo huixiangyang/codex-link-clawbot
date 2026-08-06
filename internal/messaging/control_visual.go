@@ -98,6 +98,10 @@ func controlDirectoryFromText(reply string) (visual.Directory, bool) {
 			continue
 		}
 		if sectionIndex < 0 {
+			if strings.HasPrefix(line, "能力边界：") {
+				directory.Subtitle = strings.TrimSpace(strings.TrimPrefix(line, "能力边界："))
+				continue
+			}
 			if label, value, ok := controlFact(line); ok {
 				directory.Facts = append(directory.Facts, visual.Fact{Label: label, Value: value})
 			}
@@ -140,25 +144,25 @@ func controlCardFromText(reply string) visual.Card {
 	switch {
 	case first == "WeClaw":
 		card.Title = first
-	case first == "运行中心", first == "项目中心", first == "更多功能", first == "自动化中心",
-		first == "素材与交付", first == "链接素材", first == "交付记录", first == "快捷任务",
-		first == "任务中心", first == "任务详情":
+	case first == "WeClaw 运行与安全", first == "Codex 执行环境", first == "WeClaw 内容与自动化", first == "自动化中心",
+		first == "素材与交付", first == "链接素材", first == "交付记录", first == "提示词模板",
+		first == "WeClaw 请求队列", first == "WeClaw 执行记录":
 		card.Title = first
 	case first == "视觉风格", first == "视觉风格已切换":
 		card.Title = first
-	case first == "回答方式", first == "回答方式已切换":
+	case first == "WeClaw 回复呈现", first == "WeClaw 回复方式已切换":
 		card.Title = first
-	case first == "会话", first == "当前会话", first == "会话详情", first == "归档会话详情", first == "搜索会话",
-		first == "新建会话", first == "重命名会话":
+	case first == "Codex 线程", first == "当前线程", first == "线程详情", first == "归档线程详情", first == "搜索线程",
+		first == "新建线程", first == "重命名线程", first == "线程模型", first == "推理强度", first == "设置线程目标":
 		card.Title = first
-	case strings.HasPrefix(first, "选择会话") || strings.HasPrefix(first, "恢复会话"):
+	case strings.HasPrefix(first, "选择线程") || strings.HasPrefix(first, "恢复线程"):
 		card.Title = first
-	case strings.HasPrefix(first, "准备归档会话："):
+	case strings.HasPrefix(first, "准备归档线程："):
 		card.Title = "归档确认"
-		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "准备归档会话："))
-	case strings.HasPrefix(first, "任务状态："):
-		card.Title = "任务状态"
-		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "任务状态："))
+		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "准备归档线程："))
+	case strings.HasPrefix(first, "WeClaw 执行状态："):
+		card.Title = "WeClaw 执行状态"
+		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "WeClaw 执行状态："))
 	case strings.HasPrefix(first, "Codex："):
 		card.Title = "Codex 运行信息"
 		card.Subtitle = strings.TrimSpace(strings.TrimPrefix(first, "Codex："))
@@ -216,27 +220,28 @@ func nonEmptyControlLines(text string) []string {
 
 func controlCardVariant(text string) visual.Variant {
 	switch {
-	case strings.HasPrefix(text, "WeClaw"):
+	case text == "WeClaw" || strings.HasPrefix(text, "WeClaw\n"):
 		return visual.VariantHome
 	case strings.HasPrefix(text, "准备归档") || strings.HasPrefix(text, "准备取消") || strings.HasPrefix(text, "准备清空"):
 		return visual.VariantWarning
-	case strings.HasPrefix(text, "运行中心") || strings.HasPrefix(text, "项目中心") ||
+	case strings.HasPrefix(text, "WeClaw 运行与安全") || strings.HasPrefix(text, "WeClaw 内容与自动化") || strings.HasPrefix(text, "Codex 执行环境") ||
 		strings.HasPrefix(text, "自动化") || strings.HasPrefix(text, "素材与交付"):
 		return visual.VariantSystem
 	case strings.HasPrefix(text, "视觉风格已切换"):
 		return visual.VariantSuccess
 	case strings.HasPrefix(text, "视觉风格"):
 		return visual.VariantSystem
-	case strings.HasPrefix(text, "回答方式已切换"):
+	case strings.HasPrefix(text, "WeClaw 回复方式已切换"):
 		return visual.VariantSuccess
-	case strings.HasPrefix(text, "回答方式"):
+	case strings.HasPrefix(text, "WeClaw 回复呈现"):
 		return visual.VariantSystem
-	case strings.HasPrefix(text, "任务中心") || strings.HasPrefix(text, "任务详情"):
+	case strings.HasPrefix(text, "WeClaw 请求队列") || strings.HasPrefix(text, "WeClaw 执行记录") || strings.HasPrefix(text, "WeClaw 执行状态"):
 		return visual.VariantProgress
-	case strings.HasPrefix(text, "会话中心") || strings.HasPrefix(text, "当前会话\n") ||
-		strings.HasPrefix(text, "会话列表") || strings.HasPrefix(text, "会话详情") ||
-		strings.HasPrefix(text, "归档会话详情") || strings.HasPrefix(text, "选择会话") ||
-		strings.HasPrefix(text, "恢复会话") || strings.HasPrefix(text, "搜索会话"):
+	case strings.HasPrefix(text, "Codex 线程") || strings.HasPrefix(text, "当前线程\n") ||
+		strings.HasPrefix(text, "线程列表") || strings.HasPrefix(text, "线程详情") ||
+		strings.HasPrefix(text, "归档线程详情") || strings.HasPrefix(text, "选择线程") ||
+		strings.HasPrefix(text, "恢复线程") || strings.HasPrefix(text, "搜索线程") ||
+		strings.HasPrefix(text, "线程模型") || strings.HasPrefix(text, "推理强度"):
 		return visual.VariantSession
 	case strings.HasPrefix(text, "已") || strings.Contains(text, "已切换") || strings.Contains(text, "已恢复") ||
 		strings.Contains(text, "已重命名") || strings.Contains(text, "已归档"):
@@ -246,13 +251,15 @@ func controlCardVariant(text string) visual.Variant {
 		strings.Contains(text, "暂时不能") || strings.Contains(text, "没有找到") || strings.Contains(text, "当前没有") ||
 		strings.Contains(text, "还没有") || strings.Contains(text, "本条消息未交给"):
 		return visual.VariantWarning
-	case strings.HasPrefix(text, "任务状态") || strings.Contains(text, "已运行：") || strings.Contains(text, "进度"):
+	case strings.HasPrefix(text, "WeClaw 执行状态") || strings.Contains(text, "已运行：") || strings.Contains(text, "进度"):
 		return visual.VariantProgress
-	case strings.Contains(text, "会话"):
+	case strings.Contains(text, "线程"):
 		return visual.VariantSession
-	case strings.HasPrefix(text, "Codex：") || strings.Contains(text, "项目目录") || strings.Contains(text, "协议：") ||
+	case strings.HasPrefix(text, "Codex：") || strings.Contains(text, "Codex 工作目录") || strings.Contains(text, "协议：") ||
 		strings.Contains(text, "自动化详情"):
 		return visual.VariantSystem
+	case strings.HasPrefix(text, "WeClaw"):
+		return visual.VariantHome
 	default:
 		return visual.VariantNeutral
 	}
@@ -265,7 +272,7 @@ func controlFallbackTitle(variant visual.Variant) string {
 	case visual.VariantSuccess:
 		return "操作完成"
 	case visual.VariantProgress:
-		return "任务状态"
+		return "执行状态"
 	default:
 		return "WeClaw"
 	}
@@ -303,7 +310,7 @@ func controlFact(line string) (string, string, bool) {
 
 func isControlInstruction(line string) bool {
 	return strings.HasPrefix(line, "回复") || strings.HasPrefix(line, "发送新的") ||
-		strings.HasPrefix(line, "发送会话名称") || strings.HasPrefix(line, "请输入") ||
+		strings.HasPrefix(line, "发送线程名称") || strings.HasPrefix(line, "请输入") ||
 		strings.Contains(line, "发送“状态”")
 }
 

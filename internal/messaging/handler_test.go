@@ -42,10 +42,10 @@ func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 	handler.startedAt = time.Now().Add(-2*time.Hour - 5*time.Minute)
 	status := controlReply(t, handler, "owner-1", "运行中心")
 	for _, want := range []string{
-		"运行中心", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
-		"主动发送：已启用", "Codex：运行中", "协议：App Server",
-		"模型：使用 Codex 默认配置", "项目目录：/workspace", "Codex PID：4242",
-		"1  为什么没回复", "2  项目中心", "3  刷新运行中心",
+		"WeClaw 运行与安全", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
+		"主动发送：已启用", "Codex：运行中", "协议：Codex 应用服务",
+		"模型：使用 Codex 默认配置", "Codex 工作目录：/workspace", "Codex PID：4242",
+		"1  为什么没回复", "2  Codex 执行环境", "3  刷新 WeClaw 状态",
 	} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("runtime center missing %q: %q", want, status)
@@ -95,10 +95,10 @@ func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {
 func TestTaskControlStatusAndCancel(t *testing.T) {
 	h, cancel := testHandlerWithRunningTask(t, "user-1")
 	defer cancel()
-	if got := h.buildTaskStatus("user-1"); !strings.Contains(got, "任务状态：运行中") {
+	if got := h.buildTaskStatus("user-1"); !strings.Contains(got, "WeClaw 执行状态：运行中") {
 		t.Fatalf("unexpected active status: %q", got)
 	}
-	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "已请求取消当前任务") {
+	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "已请求取消 WeClaw 当前执行") {
 		t.Fatalf("unexpected cancellation result: %q", got)
 	}
 	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "正在取消") {
@@ -111,11 +111,11 @@ func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
 	defer cancel()
 
 	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false, nextTestControlSource())
-	if !handled || !strings.Contains(status.Text, "任务状态：运行中") {
+	if !handled || !strings.Contains(status.Text, "WeClaw 执行状态：运行中") {
 		t.Fatalf("natural status = %q, handled=%v", status.Text, handled)
 	}
 	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false, nextTestControlSource())
-	if !handled || !strings.Contains(cancelled.Text, "已请求取消当前任务") {
+	if !handled || !strings.Contains(cancelled.Text, "已请求取消 WeClaw 当前执行") {
 		t.Fatalf("natural cancellation = %q, handled=%v", cancelled.Text, handled)
 	}
 }

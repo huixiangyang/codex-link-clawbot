@@ -11,10 +11,10 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 	}
 	domain := controlActionDomain(action)
 	switch domain {
-	case DomainTask:
+	case DomainQueue:
 		return h.executeTaskControlAction(ctx, userID, option)
 	case DomainProject:
-		return h.executeProjectControlAction(userID, option)
+		return h.executeProjectControlAction(ctx, userID, option)
 	case DomainSession:
 		return h.executeSessionControlAction(ctx, userID, option)
 	case DomainPreference:
@@ -37,7 +37,7 @@ func controlActionDomain(action controlAction) ActionDomain {
 		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume, actionConfirmQueueClear,
 		actionQueueClear:
-		return DomainTask
+		return DomainQueue
 	case actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
 		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
 		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit,
@@ -48,7 +48,11 @@ func controlActionDomain(action controlAction) ActionDomain {
 		actionPromptSessionSearch, actionSessionPage, actionSessionDetail, actionUseSession,
 		actionPromptNewSession, actionPromptRenameSession, actionConfirmArchive,
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem,
-		actionPickArchivedSession, actionRestoreSession:
+		actionPickArchivedSession, actionRestoreSession, actionForkThread,
+		actionToggleThreadPin, actionCompactThread, actionPromptThreadGoal,
+		actionClearThreadGoal, actionReviewThread, actionConfirmDeleteThread,
+		actionDeleteThread, actionThreadModels, actionSelectThreadModel,
+		actionThreadEfforts, actionSelectThreadEffort:
 		return DomainSession
 	case actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery:
 		return DomainLibrary
@@ -66,6 +70,8 @@ func controlActionDomain(action controlAction) ActionDomain {
 func controlActionRequiresReceipt(action controlAction) bool {
 	switch action {
 	case actionUseSession, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
+		actionForkThread, actionToggleThreadPin, actionCompactThread, actionClearThreadGoal,
+		actionReviewThread, actionDeleteThread, actionSelectThreadModel, actionSelectThreadEffort,
 		actionCancelTask, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
 		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionQueueClear,

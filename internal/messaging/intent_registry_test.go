@@ -16,11 +16,11 @@ func TestDefaultIntentRegistryResolvesUniqueActions(t *testing.T) {
 		argument string
 	}{
 		{text: "状态？", wantID: IntentTaskStatus},
-		{text: "任务中心", wantID: IntentTaskCenter},
+		{text: "请求队列", wantID: IntentTaskCenter},
 		{text: "切换项目：weclaw", wantID: IntentProjectSelect, argument: "：weclaw"},
-		{text: "切换会话 登录排障", wantID: IntentSessionSelect, argument: "登录排障"},
-		{text: "搜索会话", wantID: IntentSessionSearch},
-		{text: "恢复会话 登录", wantID: IntentSessionRestore, argument: "登录"},
+		{text: "切换线程 登录排障", wantID: IntentSessionSelect, argument: "登录排障"},
+		{text: "搜索线程", wantID: IntentSessionSearch},
+		{text: "恢复线程 登录", wantID: IntentSessionRestore, argument: "登录"},
 		{text: "视觉风格 简洁", wantID: IntentVisualStyle, argument: "简洁"},
 		{text: "发语音", wantID: IntentVoiceBriefing},
 		{text: "codex信息", wantID: IntentRuntime},
@@ -34,6 +34,9 @@ func TestDefaultIntentRegistryResolvesUniqueActions(t *testing.T) {
 	}
 	if _, ok := registry.Resolve("请检查项目测试"); ok {
 		t.Fatal("ordinary Codex prompt was captured by the control registry")
+	}
+	if _, ok := registry.Resolve("轮次队列"); ok {
+		t.Fatal("legacy queue phrase must not remain as a compatibility alias")
 	}
 }
 
@@ -71,6 +74,14 @@ func TestIntentRegistryRejectsPhraseAndPrefixConflicts(t *testing.T) {
 
 func TestIntentMetadataDeclaresSafetyBoundaries(t *testing.T) {
 	registry := mustDefaultIntentRegistry()
+	queue, ok := registry.Definition(IntentTaskCenter)
+	if !ok || queue.Domain != DomainQueue {
+		t.Fatalf("queue intent metadata = %#v", queue)
+	}
+	turnSteer, ok := registry.Definition(IntentTurnSteer)
+	if !ok || turnSteer.Domain != DomainSession || !strings.HasPrefix(string(turnSteer.ID), "turn.") {
+		t.Fatalf("Codex turn intent metadata = %#v", turnSteer)
+	}
 	sessionSelect, ok := registry.Definition(IntentSessionSelect)
 	if !ok || !sessionSelect.MutatesState || !sessionSelect.RequiresReceipt || sessionSelect.AllowDuringTask || !sessionSelect.AllowDuringDrain {
 		t.Fatalf("session select metadata = %#v", sessionSelect)

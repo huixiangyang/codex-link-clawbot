@@ -26,7 +26,7 @@ func (h *Handler) openLibraryCenter(userID string) string {
 	if !h.storeChoice(userID, viewLibraryCenter, options, actionMore) {
 		return controlStateFailureResult().Text
 	}
-	return prompt + "\n\n回复数字查看，0 返回更多功能。"
+	return prompt + "\n\n回复数字查看，0 返回 WeClaw 内容与自动化。"
 }
 
 func (h *Handler) openLibraryPage(userID string, kind LibraryKind, pageNumber int) string {
@@ -85,7 +85,7 @@ func (h *Handler) openLibraryDetail(userID, id string, kind LibraryKind, pageNum
 	}
 	lines := []string{
 		libraryKindName(kind) + "详情", "", "名称：" + record.Title,
-		"项目：" + emptyAutomationValue(record.ProjectID, "未关联"),
+		"WeClaw 项目入口：" + emptyAutomationValue(record.ProjectID, "未关联"),
 		"时间：" + time.Unix(record.CreatedAt, 0).Local().Format("2006-01-02 15:04"),
 	}
 	options := []controlOption{{Label: "返回列表", Action: actionLibraryPage, Query: string(kind), Page: pageNumber}}

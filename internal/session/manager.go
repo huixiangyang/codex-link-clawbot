@@ -84,7 +84,7 @@ func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex
 		if readErr != nil {
 			return codex.ThreadInfo{}, fmt.Errorf("read active session %s: %w", ShortCode(threadID), readErr)
 		}
-		// 对历史未命名会话做一次尽力命名；命名失败不能阻断用户的正常 turn。
+		// 对历史未命名线程做一次尽力命名；命名失败不能阻断用户的正常轮次。
 		if strings.TrimSpace(thread.Name) == "" && suggestedName != "" {
 			if nameErr := client.SetThreadName(ctx, threadID, suggestedName); nameErr == nil {
 				thread.Name = suggestedName
@@ -257,6 +257,153 @@ func (m *Manager) Rename(ctx context.Context, ownerID string, client codex.Threa
 	return thread, nil
 }
 
+func (m *Manager) CurrentSettings(ownerID string) (ThreadSettings, error) {
+	projectID := m.currentProject(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, projectID)
+	if !ok {
+		return ThreadSettings{}, ErrNoActive
+	}
+	return m.store.SettingsForProject(ownerID, projectID, threadID)
+}
+
+func (m *Manager) SetCurrentSettings(ownerID string, settings ThreadSettings) error {
+	projectID := m.currentProject(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, projectID)
+	if !ok {
+		return ErrNoActive
+	}
+	return m.store.SetSettingsForProject(ownerID, projectID, threadID, settings)
+}
+
+// SettingsForTask 在轮次真正执行前读取其线程设置，确保模型选择属于线程而不是微信队列。
+func (m *Manager) SettingsForTask(ownerID, projectID, threadID string) ThreadSettings {
+	settings, err := m.store.SettingsForProject(strings.TrimSpace(ownerID), strings.TrimSpace(projectID), strings.TrimSpace(threadID))
+	if err != nil {
+		return ThreadSettings{}
+	}
+	return settings
+}
+
+func (m *Manager) ForkCurrent(ctx context.Context, ownerID string, client codex.ThreadClient, advanced codex.AdvancedThreadClient) (codex.ThreadInfo, error) {
+	projectID := m.currentProject(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, projectID)
+	if !ok {
+		return codex.ThreadInfo{}, ErrNoActive
+	}
+	source, err := client.ReadThread(ctx, threadID)
+	if err != nil {
+		return codex.ThreadInfo{}, fmt.Errorf("read thread before fork: %w", err)
+	}
+	forked, err := advanced.ForkThread(ctx, threadID)
+	if err != nil {
+		return codex.ThreadInfo{}, fmt.Errorf("fork thread: %w", err)
+	}
+	if name := forkName(source.Name); name != "" {
+		if err := client.SetThreadName(ctx, forked.ID, name); err != nil {
+			_ = client.ArchiveThread(context.WithoutCancel(ctx), forked.ID)
+			return codex.ThreadInfo{}, fmt.Errorf("name forked thread: %w", err)
+		}
+		forked.Name = name
+	}
+	if err := m.store.RegisterProject(ownerID, projectID, forked, true, m.now()); err != nil {
+		_ = client.ArchiveThread(context.WithoutCancel(ctx), forked.ID)
+		return codex.ThreadInfo{}, fmt.Errorf("persist forked thread: %w", err)
+	}
+	// 分叉继承源线程的模型与推理强度，保持同一历史分支的执行语义连续。
+	if settings, settingsErr := m.store.SettingsForProject(ownerID, projectID, threadID); settingsErr == nil && settings.Model != "" {
+		if err := m.store.SetSettingsForProject(ownerID, projectID, forked.ID, settings); err != nil {
+			_ = client.ArchiveThread(context.WithoutCancel(ctx), forked.ID)
+			_ = m.store.DeleteForProject(ownerID, projectID, forked.ID, threadID)
+			return codex.ThreadInfo{}, fmt.Errorf("persist forked thread settings: %w", err)
+		}
+	}
+	_ = client.UnsubscribeThread(context.WithoutCancel(ctx), threadID)
+	return forked, nil
+}
+
+func (m *Manager) PinCurrent(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient, pinned bool) (codex.ThreadInfo, error) {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return codex.ThreadInfo{}, ErrNoActive
+	}
+	thread, err := advanced.SetThreadPinned(ctx, threadID, pinned)
+	if err != nil {
+		return codex.ThreadInfo{}, fmt.Errorf("update thread pin: %w", err)
+	}
+	return thread, nil
+}
+
+func (m *Manager) CompactCurrent(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient) error {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return ErrNoActive
+	}
+	if err := advanced.CompactThread(ctx, threadID); err != nil {
+		return fmt.Errorf("compact thread: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) CurrentGoal(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient) (codex.ThreadGoal, bool, error) {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return codex.ThreadGoal{}, false, ErrNoActive
+	}
+	return advanced.GetThreadGoal(ctx, threadID)
+}
+
+func (m *Manager) SetCurrentGoal(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient, objective string) (codex.ThreadGoal, error) {
+	objective = strings.TrimSpace(objective)
+	if objective == "" || len([]rune(objective)) > 4000 {
+		return codex.ThreadGoal{}, fmt.Errorf("thread goal must contain 1 to 4000 characters")
+	}
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return codex.ThreadGoal{}, ErrNoActive
+	}
+	return advanced.SetThreadGoal(ctx, threadID, objective, nil)
+}
+
+func (m *Manager) ClearCurrentGoal(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient) error {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return ErrNoActive
+	}
+	return advanced.ClearThreadGoal(ctx, threadID)
+}
+
+func (m *Manager) SteerCurrent(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient, request codex.ChatRequest) error {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return ErrNoActive
+	}
+	return advanced.SteerThread(ctx, threadID, request)
+}
+
+func (m *Manager) ReviewCurrent(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient, target codex.ReviewTarget, progress codex.ProgressHandler) (string, error) {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return "", ErrNoActive
+	}
+	return advanced.ReviewThread(ctx, threadID, target, progress)
+}
+
+func (m *Manager) DeleteCurrent(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient) error {
+	projectID := m.currentProject(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, projectID)
+	if !ok {
+		return ErrNoActive
+	}
+	if err := advanced.DeleteThread(ctx, threadID); err != nil {
+		return fmt.Errorf("delete thread: %w", err)
+	}
+	// 删除会递归覆盖所有派生线程；清空当前选择可避免误切换到待删除的深层后代。
+	if err := m.store.DeleteForProject(ownerID, projectID, threadID, ""); err != nil {
+		return fmt.Errorf("persist deleted thread: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) Archive(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (string, error) {
 	if strings.TrimSpace(reference) == "" {
 		var ok bool
@@ -411,6 +558,20 @@ func normalizeName(name string) (string, error) {
 		return "", fmt.Errorf("session name exceeds %d characters", MaxSessionName)
 	}
 	return name, nil
+}
+
+func forkName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	suffix := " · 分支"
+	limit := MaxSessionName - len([]rune(suffix))
+	runes := []rune(name)
+	if len(runes) > limit {
+		name = string(runes[:limit])
+	}
+	return name + suffix
 }
 
 func recency(thread codex.ThreadInfo) int64 {

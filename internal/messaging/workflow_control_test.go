@@ -77,7 +77,7 @@ func TestReadableWorkflowTemplateCompilesStableSlots(t *testing.T) {
 	}
 }
 
-func TestCommandDirectorySeparatesWorkflowRunAndManagement(t *testing.T) {
+func TestCommandDirectoryOpensPromptTemplateManagement(t *testing.T) {
 	environment := newWorkflowTestEnvironment(t)
 	definition, err := environment.workflows.Create(workflow.CreateInput{
 		OwnerID: "owner-1", ProjectID: "alpha", Name: "发布检查", PromptTemplate: "检查发布", Slots: []workflow.Slot{},
@@ -86,24 +86,16 @@ func TestCommandDirectorySeparatesWorkflowRunAndManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment.handler.openMainMenu(context.Background(), "owner-1")
-	runPicker, handled := environment.handler.handleControlInput(
-		context.Background(), "owner-1", "22", false, nextTestControlSource(),
+	management, handled := environment.handler.handleControlInput(
+		context.Background(), "owner-1", "56", false, nextTestControlSource(),
 	)
-	if !handled || !strings.Contains(runPicker.Text, "运行快捷任务") || !strings.Contains(runPicker.Text, "1  发布检查") {
-		t.Fatalf("workflow run picker = %#v handled=%v", runPicker, handled)
+	if !handled || !strings.HasPrefix(management.Text, "提示词模板\n") || !strings.Contains(management.Text, "2  发布检查") {
+		t.Fatalf("workflow management = %#v handled=%v", management, handled)
 	}
 	state, status, err := environment.handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || state.View != viewProjectQuickRun || len(state.Options) != 1 ||
-		state.Options[0].Action != actionRunQuickTask || state.Options[0].Value != definition.ID {
+	if err != nil || status != controlStateActive || state.View != viewProjectQuickTasks || len(state.Options) != 2 ||
+		state.Options[1].Action != actionWorkflowDetail || state.Options[1].Value != definition.ID {
 		t.Fatalf("workflow run state = %#v status=%v err=%v", state, status, err)
-	}
-
-	environment.handler.openMainMenu(context.Background(), "owner-1")
-	management, handled := environment.handler.handleControlInput(
-		context.Background(), "owner-1", "24", false, nextTestControlSource(),
-	)
-	if !handled || !strings.HasPrefix(management.Text, "快捷任务\n") || !strings.Contains(management.Text, "2  发布检查") {
-		t.Fatalf("workflow management = %#v handled=%v", management, handled)
 	}
 }
 
@@ -111,7 +103,7 @@ func TestWorkflowCRUDCompletesInsideWeChatControlFlow(t *testing.T) {
 	environment := newWorkflowTestEnvironment(t)
 	handler := environment.handler
 
-	prompt := controlReply(t, handler, "owner-1", "新建快捷任务")
+	prompt := controlReply(t, handler, "owner-1", "新建提示词模板")
 	if !strings.Contains(prompt, "名称：发布检查") || !strings.Contains(prompt, "内容：检查") {
 		t.Fatalf("create prompt = %q", prompt)
 	}
@@ -131,7 +123,7 @@ func TestWorkflowCRUDCompletesInsideWeChatControlFlow(t *testing.T) {
 		t.Fatalf("duplicate create = %#v, handled=%v", duplicate, handled)
 	}
 
-	menu := controlReply(t, handler, "owner-1", "快捷任务")
+	menu := controlReply(t, handler, "owner-1", "提示词模板")
 	if !strings.Contains(menu, "发布检查 · 2 个参数") {
 		t.Fatalf("workflow menu = %q", menu)
 	}
@@ -145,7 +137,7 @@ func TestWorkflowCRUDCompletesInsideWeChatControlFlow(t *testing.T) {
 		t.Fatalf("rename result = %q", renamed)
 	}
 
-	_ = controlReply(t, handler, "owner-1", "快捷任务")
+	_ = controlReply(t, handler, "owner-1", "提示词模板")
 	_ = controlReply(t, handler, "owner-1", "2")
 	_ = controlReply(t, handler, "owner-1", "3")
 	edited := controlReply(t, handler, "owner-1", "审查「目标」并输出结论")
@@ -157,7 +149,7 @@ func TestWorkflowCRUDCompletesInsideWeChatControlFlow(t *testing.T) {
 		t.Fatalf("updated workflow = %#v", definitions)
 	}
 
-	_ = controlReply(t, handler, "owner-1", "快捷任务")
+	_ = controlReply(t, handler, "owner-1", "提示词模板")
 	_ = controlReply(t, handler, "owner-1", "2")
 	confirm := controlReply(t, handler, "owner-1", "4")
 	if !strings.Contains(confirm, "删除后无法恢复") {
@@ -181,7 +173,7 @@ func TestWorkflowCRUDCompletesInsideWeChatControlFlow(t *testing.T) {
 
 func TestWorkflowCreateValidationKeepsFormAndCenterPaginates(t *testing.T) {
 	environment := newWorkflowTestEnvironment(t)
-	_ = controlReply(t, environment.handler, "owner-1", "新建快捷任务")
+	_ = controlReply(t, environment.handler, "owner-1", "新建提示词模板")
 	invalid, handled := environment.handler.handleControlInput(
 		context.Background(), "owner-1", "名称：缺少内容", false, nextTestControlSource(),
 	)
@@ -228,7 +220,7 @@ func TestWorkflowParameterCancellationIsIdempotent(t *testing.T) {
 	cancelled, handled := environment.handler.handleControlInput(
 		context.Background(), "owner-1", "取消", false, source,
 	)
-	if !handled || !strings.Contains(cancelled.Text, "已取消本次快捷任务") {
+	if !handled || !strings.Contains(cancelled.Text, "已取消本次模板运行") {
 		t.Fatalf("cancelled = %#v, handled=%v", cancelled, handled)
 	}
 	if _, exists, err := environment.workflows.PendingRun("owner-1"); err != nil || exists {
@@ -266,11 +258,11 @@ func TestWorkflowParametersResumeAfterRestartAndEnqueueOnce(t *testing.T) {
 	projectCenter, handled := environment.handler.handleControlInput(
 		context.Background(), "owner-1", "2", false, nextTestControlSource(),
 	)
-	if !handled || !strings.Contains(projectCenter.Text, "项目中心") {
+	if !handled || !strings.Contains(projectCenter.Text, "Codex 执行环境") {
 		t.Fatalf("menu choice during parameters = %#v, handled=%v", projectCenter, handled)
 	}
 	resumed, handled := environment.handler.handleControlInput(
-		context.Background(), "owner-1", "快捷任务", false, nextTestControlSource(),
+		context.Background(), "owner-1", "提示词模板", false, nextTestControlSource(),
 	)
 	if !handled || !strings.Contains(resumed.Text, "进度：1 / 2") {
 		t.Fatalf("resumed parameters = %#v, handled=%v", resumed, handled)

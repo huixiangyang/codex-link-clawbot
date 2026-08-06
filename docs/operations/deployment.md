@@ -46,7 +46,7 @@ weclaw status
 systemctl --user status weclaw.service
 ```
 
-然后在微信检查 `/`、当前任务、会话列表、阅读回复、“为什么没回复”和一次图片或文件任务。完整矩阵见 [验收清单](acceptance.md)。
+然后在微信检查 `/`、WeClaw 执行状态、Codex 线程列表、阅读回复、“为什么没回复”和一次图片或文件请求。完整矩阵见 [验收清单](acceptance.md)。
 
 ## 首次跨管理面切换
 

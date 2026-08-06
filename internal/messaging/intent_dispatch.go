@@ -21,10 +21,10 @@ func (h *Handler) dispatchIntent(ctx context.Context, userID string, resolved Re
 	}
 	var result ActionResult
 	switch definition.Domain {
-	case DomainTask:
+	case DomainQueue:
 		result = h.dispatchTaskIntent(ctx, userID, resolved)
 	case DomainProject:
-		result = h.dispatchProjectIntent(userID, resolved, argument)
+		result = h.dispatchProjectIntent(ctx, userID, resolved, argument)
 	case DomainSession:
 		result = h.dispatchSessionIntent(ctx, userID, resolved, argument)
 	case DomainPreference:
@@ -49,7 +49,7 @@ func intentRequiresReceipt(resolved ResolvedIntent, argument string) bool {
 		return false
 	}
 	switch resolved.Definition.ID {
-	case IntentProjectSelect, IntentSessionSelect, IntentSessionRestore, IntentVisualStyle:
+	case IntentProjectSelect, IntentSessionSelect, IntentSessionRestore, IntentVisualStyle, IntentThreadGoal:
 		return strings.TrimSpace(argument) != ""
 	default:
 		return true

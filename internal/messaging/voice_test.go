@@ -255,7 +255,7 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 func TestSendVoiceBriefingRejectsMissingContextToken(t *testing.T) {
 	handler := NewHandler(nil)
 	handler.SetVoiceBriefing(NewVoiceBriefing("/usr/bin/ffmpeg", nil))
-	if _, err := handler.sendVoiceBriefing(context.Background(), nil, "owner", ""); err == nil || !strings.Contains(err.Error(), "context token") {
+	if _, err := handler.sendVoiceBriefing(context.Background(), nil, "owner", ""); err == nil || !strings.Contains(err.Error(), "消息上下文令牌") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -339,7 +339,7 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 	if card.Title != "语音简报" || card.Footer != "配套 MP3 音频文件随后发送" || card.Variant != visual.VariantSystem {
 		t.Fatalf("companion card = %#v", card)
 	}
-	if len(card.Facts) != 2 || card.Facts[0] != (visual.Fact{Label: "当前项目", Value: "未配置项目"}) || card.Facts[1] != (visual.Fact{Label: "音频来源", Value: "local"}) {
+	if len(card.Facts) != 2 || card.Facts[0] != (visual.Fact{Label: "WeClaw 项目入口", Value: "未配置"}) || card.Facts[1] != (visual.Fact{Label: "音频来源", Value: "local"}) {
 		t.Fatalf("companion facts = %#v", card.Facts)
 	}
 	if len(card.Body) != 1 || !strings.Contains(card.Body[0], "WeClaw 工作简报") {

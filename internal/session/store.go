@@ -38,21 +38,32 @@ type ownerData struct {
 
 type trackedThread struct {
 	ID             string `json:"id"`
+	ForkedFromID   string `json:"forked_from_id,omitempty"`
 	ProjectID      string `json:"project_id"`
 	Archived       bool   `json:"archived"`
 	CreatedAt      int64  `json:"created_at"`
 	UpdatedAt      int64  `json:"updated_at"`
 	LastSelectedAt int64  `json:"last_selected_at"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
 }
 
 // Record 是会话管理器可读取的归属记录，不包含聊天正文。
 type Record struct {
 	ID             string
+	ForkedFromID   string
 	ProjectID      string
 	Archived       bool
 	CreatedAt      int64
 	UpdatedAt      int64
 	LastSelectedAt int64
+	Model          string
+	Effort         string
+}
+
+type ThreadSettings struct {
+	Model  string
+	Effort string
 }
 
 // Store 以原子文件替换持久化微信用户与 Codex 线程的归属关系。
@@ -123,6 +134,9 @@ func validateIndex(index indexFile) error {
 		for id, thread := range owner.Threads {
 			if thread == nil || id == "" || thread.ID != id || strings.TrimSpace(thread.ProjectID) == "" {
 				return fmt.Errorf("invalid thread record %q", id)
+			}
+			if !validThreadSetting(thread.Model, 128) || !validThreadSetting(thread.Effort, 32) {
+				return fmt.Errorf("invalid thread settings %q", id)
 			}
 		}
 	}
@@ -200,9 +214,10 @@ func (s *Store) RecordsForProject(ownerID, projectID string, archived bool) []Re
 			continue
 		}
 		records = append(records, Record{
-			ID: thread.ID, ProjectID: thread.ProjectID, Archived: thread.Archived,
+			ID: thread.ID, ForkedFromID: thread.ForkedFromID, ProjectID: thread.ProjectID, Archived: thread.Archived,
 			CreatedAt: thread.CreatedAt, UpdatedAt: thread.UpdatedAt,
 			LastSelectedAt: thread.LastSelectedAt,
+			Model:          thread.Model, Effort: thread.Effort,
 		})
 	}
 	sort.Slice(records, func(i, j int) bool {
@@ -212,6 +227,86 @@ func (s *Store) RecordsForProject(ownerID, projectID string, archived bool) []Re
 		return records[i].UpdatedAt > records[j].UpdatedAt
 	})
 	return records
+}
+
+func (s *Store) SettingsForProject(ownerID, projectID, threadID string) (ThreadSettings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state := findOwner(s.index, ownerID)
+	if state == nil {
+		return ThreadSettings{}, ErrNotOwned
+	}
+	thread := state.Threads[threadID]
+	if thread == nil || thread.ProjectID != projectID || thread.Archived {
+		return ThreadSettings{}, ErrNotOwned
+	}
+	return ThreadSettings{Model: thread.Model, Effort: thread.Effort}, nil
+}
+
+func (s *Store) SetSettingsForProject(ownerID, projectID, threadID string, settings ThreadSettings) error {
+	settings.Model = strings.TrimSpace(settings.Model)
+	settings.Effort = strings.TrimSpace(settings.Effort)
+	if settings.Model == "" || !validThreadSetting(settings.Model, 128) || !validThreadSetting(settings.Effort, 32) {
+		return fmt.Errorf("invalid thread settings")
+	}
+	return s.mutate(func(index *indexFile) error {
+		state := findOwner(*index, ownerID)
+		if state == nil {
+			return ErrNotOwned
+		}
+		thread := state.Threads[threadID]
+		if thread == nil || thread.ProjectID != projectID || thread.Archived {
+			return ErrNotOwned
+		}
+		thread.Model = settings.Model
+		thread.Effort = settings.Effort
+		return nil
+	})
+}
+
+func (s *Store) DeleteForProject(ownerID, projectID, threadID, nextActive string) error {
+	return s.mutate(func(index *indexFile) error {
+		state := findOwner(*index, ownerID)
+		if state == nil {
+			return ErrNotOwned
+		}
+		thread := state.Threads[threadID]
+		if thread == nil || thread.ProjectID != projectID {
+			return ErrNotOwned
+		}
+		if nextActive != "" {
+			next := state.Threads[nextActive]
+			if next == nil || next.ProjectID != projectID || next.Archived || nextActive == threadID {
+				return ErrNotOwned
+			}
+		}
+		deleted := map[string]bool{threadID: true}
+		for changed := true; changed; {
+			changed = false
+			for id, candidate := range state.Threads {
+				if !deleted[id] && deleted[candidate.ForkedFromID] {
+					deleted[id] = true
+					changed = true
+				}
+			}
+		}
+		for id := range deleted {
+			delete(state.Threads, id)
+		}
+		if state.ActiveThreads[projectID] == threadID {
+			if nextActive == "" {
+				delete(state.ActiveThreads, projectID)
+			} else {
+				state.ActiveThreads[projectID] = nextActive
+			}
+		}
+		for activeProject, activeThread := range state.ActiveThreads {
+			if deleted[activeThread] {
+				delete(state.ActiveThreads, activeProject)
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) Resolve(ownerID, reference string, archived bool) (Record, error) {
@@ -258,6 +353,9 @@ func (s *Store) RegisterProject(ownerID, projectID string, thread codex.ThreadIn
 		}
 		if record.ProjectID != projectID {
 			return ErrNotOwned
+		}
+		if thread.ForkedFromID != "" {
+			record.ForkedFromID = thread.ForkedFromID
 		}
 		record.Archived = false
 		if thread.CreatedAt > 0 {
@@ -408,4 +506,8 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func validThreadSetting(value string, limit int) bool {
+	return len([]rune(value)) <= limit && !strings.ContainsAny(value, "\r\n\x00")
 }

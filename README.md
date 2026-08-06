@@ -10,30 +10,31 @@ WeClaw is Codex-only. It is not a general bot framework and does not provide Cla
 
 ## Capabilities
 
-| Area | Current scope |
+| Owner | Current scope |
 | --- | --- |
-| Input | WeChat text, up to four images, restricted files, and image annotation requests |
-| Codex | One App Server runtime, project allowlist, persistent threads and turns |
-| Sessions | Create, search, inspect, switch, rename, archive, and restore |
-| Tasks | Persistent global FIFO, pause, reorder, cancel, retry, and restart recovery |
-| Workflows | Owner- and project-scoped reusable prompts with sequential parameters |
-| Delivery | Adaptive text, five reading-card systems, artifacts, and paired image + MP3 voice |
-| Operations | Deterministic checks, remote lock, no-reply diagnosis, draining, and transactional deployment |
+| Codex | Persistent threads, actual turns, model and reasoning settings, review, skills, and external tools |
+| WeClaw | WeChat text, up to four images, restricted files, and image annotation requests |
+| WeClaw | Allowlisted project entry points, durable request queue, cancellation, retry, and restart recovery |
+| WeClaw | Prompt templates, content library, deliveries, and restricted automations |
+| WeClaw | Adaptive text, five reading-card systems, artifacts, and paired image + MP3 voice |
+| WeClaw | Deterministic checks, remote lock, no-reply diagnosis, draining, and transactional deployment |
 
-Ordinary messages go to Codex. Projects, sessions, tasks, preferences, and operational controls are handled by deterministic code. Sending `/` returns one visual directory with six domains and 40 stable numeric actions.
+Codex owns threads, turns, models, review, skills, and external tools. WeClaw owns the WeChat transport, allowlisted directory selection, request queue, presentation, templates, automation, and operations. The 44-action `/` directory labels every section as Codex or WeClaw.
+
+Codex App Server has no WeClaw project object: a WeClaw project entry is an allowlisted directory used as the Codex working directory. A WeChat message is first a WeClaw request and becomes a Codex turn only after dispatch. See the [capability boundary](docs/guides/capability-boundary.md).
 
 ## Data flow
 
 ```text
 bound WeChat owner
   → iLink polling and attachment validation
-  → persistent task queue
+  → WeClaw persistent request queue
   → codex app-server --listen stdio://
   → frozen result
   → text / reading PNG / image / file / MP3
 ```
 
-Inputs are persisted before acknowledgement. Execution uses the project, session, response mode, and visual style frozen at enqueue time. Media batches are fully staged on the WeChat CDN before the first visible send. There is no echo mode or fallback model when the App Server is unavailable.
+Inputs are persisted before acknowledgement. Execution uses the project, thread, response mode, and visual style frozen at enqueue time. Thread-scoped model and reasoning settings are resolved before the turn starts. Media batches are fully staged on the WeChat CDN before the first visible send. There is no echo mode or fallback model when the App Server is unavailable.
 
 See the [architecture overview](docs/architecture/overview.md) for package boundaries and invariants.
 
@@ -62,7 +63,7 @@ See [getting started](docs/guides/getting-started.md) and [deployment](docs/oper
 
 ## WeChat interaction
 
-Send `/` to open the context-aware home card. Direct Chinese phrases cover sessions, projects, the task center, workflows, response mode, visual style, automations, deliveries, voice briefings, deterministic diagnosis, and remote locking.
+Send `/` to open the context-aware home card. Direct Chinese phrases cover projects, threads, turns, model and reasoning selection, thread goals, review, prompt templates, response mode, visual style, automations, deliveries, voice briefings, deterministic diagnosis, and remote locking.
 
 All legacy slash commands are removed. Any slash-prefixed text other than the single `/` is rejected and never forwarded to Codex.
 

@@ -55,7 +55,7 @@ func TestQueuedTaskKeepsProjectSessionAndPreferenceSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler.SetTaskQueue(store, coordinator)
-	created := handler.createSession(context.Background(), "owner", "冻结会话")
+	created := handler.createSession(context.Background(), "owner", "冻结线程")
 	if created == "" {
 		t.Fatal("session was not created")
 	}

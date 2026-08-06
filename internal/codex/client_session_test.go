@@ -8,6 +8,8 @@ import (
 )
 
 var _ ThreadClient = (*Codex)(nil)
+var _ AdvancedThreadClient = (*Codex)(nil)
+var _ CapabilityClient = (*Codex)(nil)
 var _ ProgressClient = (*Codex)(nil)
 
 func newCodexSessionTestAgent(call func(context.Context, string, interface{}) (json.RawMessage, error)) *Codex {
@@ -17,8 +19,194 @@ func newCodexSessionTestAgent(call func(context.Context, string, interface{}) (j
 		model:         "gpt-test",
 		loadedThreads: make(map[string]bool),
 		threadStatus:  make(map[string]ThreadStatus),
+		threadUsage:   make(map[string]ThreadUsage),
+		activeTurns:   make(map[string]string),
+		instructions:  make(map[string][]string),
 		turnCh:        make(map[string]chan *codexTurnEvent),
 		rpcCall:       call,
+	}
+}
+
+func TestCodexAdvancedThreadRPCs(t *testing.T) {
+	const sourceID = "thread-source"
+	const forkedID = "thread-forked"
+	var methods []string
+	a := newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+		methods = append(methods, method)
+		switch method {
+		case "thread/fork":
+			if got := params.(map[string]string); got["threadId"] != sourceID {
+				t.Fatalf("thread/fork params = %#v", got)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread-forked","forkedFromId":"thread-source","status":{"type":"idle"}},"instructionSources":["/workspace/AGENTS.md"]}`), nil
+		case "thread/metadata/update":
+			got := params.(map[string]interface{})
+			if got["threadId"] != forkedID || got["isPinned"] != true {
+				t.Fatalf("thread/metadata/update params = %#v", got)
+			}
+			return json.RawMessage(`{"thread":{"id":"thread-forked","isPinned":true,"status":{"type":"idle"}}}`), nil
+		case "thread/compact/start":
+			if got := params.(map[string]string); got["threadId"] != forkedID {
+				t.Fatalf("thread/compact/start params = %#v", got)
+			}
+			return json.RawMessage(`{}`), nil
+		case "thread/delete":
+			if got := params.(map[string]string); got["threadId"] != forkedID {
+				t.Fatalf("thread/delete params = %#v", got)
+			}
+			return json.RawMessage(`{}`), nil
+		default:
+			t.Fatalf("unexpected rpc method %q", method)
+			return nil, nil
+		}
+	})
+
+	forked, err := a.ForkThread(context.Background(), sourceID)
+	if err != nil || forked.ID != forkedID || forked.ForkedFromID != sourceID ||
+		!reflect.DeepEqual(forked.InstructionSources, []string{"/workspace/AGENTS.md"}) {
+		t.Fatalf("ForkThread() = %#v, %v", forked, err)
+	}
+	pinned, err := a.SetThreadPinned(context.Background(), forkedID, true)
+	if err != nil || !pinned.IsPinned {
+		t.Fatalf("SetThreadPinned() = %#v, %v", pinned, err)
+	}
+	if err := a.CompactThread(context.Background(), forkedID); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DeleteThread(context.Background(), forkedID); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"thread/fork", "thread/metadata/update", "thread/compact/start", "thread/delete"}
+	if !reflect.DeepEqual(methods, want) {
+		t.Fatalf("methods = %#v, want %#v", methods, want)
+	}
+}
+
+func TestCodexThreadGoalAndModelDirectoryRPCs(t *testing.T) {
+	const threadID = "thread-goal"
+	var goalExists = true
+	a := newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+		switch method {
+		case "thread/goal/set":
+			got := params.(map[string]interface{})
+			if got["threadId"] != threadID || got["objective"] != "完成中文控制面" || got["status"] != "active" {
+				t.Fatalf("thread/goal/set params = %#v", got)
+			}
+			return json.RawMessage(`{"goal":{"threadId":"thread-goal","objective":"完成中文控制面","status":"active","tokensUsed":0,"timeUsedSeconds":0}}`), nil
+		case "thread/goal/get":
+			if got := params.(map[string]string); got["threadId"] != threadID {
+				t.Fatalf("thread/goal/get params = %#v", got)
+			}
+			if !goalExists {
+				return json.RawMessage(`{"goal":null}`), nil
+			}
+			return json.RawMessage(`{"goal":{"threadId":"thread-goal","objective":"完成中文控制面","status":"active","tokensUsed":12,"timeUsedSeconds":3}}`), nil
+		case "thread/goal/clear":
+			goalExists = false
+			return json.RawMessage(`{}`), nil
+		case "model/list":
+			got := params.(map[string]interface{})
+			if got["limit"] != 100 || got["includeHidden"] != false {
+				t.Fatalf("model/list params = %#v", got)
+			}
+			return json.RawMessage(`{"data":[{"id":"gpt-test","model":"gpt-test","displayName":"测试模型","defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"均衡"}],"inputModalities":["text","image"],"isDefault":true}]}`), nil
+		default:
+			t.Fatalf("unexpected rpc method %q", method)
+			return nil, nil
+		}
+	})
+
+	goal, err := a.SetThreadGoal(context.Background(), threadID, " 完成中文控制面 ", nil)
+	if err != nil || goal.Objective != "完成中文控制面" {
+		t.Fatalf("SetThreadGoal() = %#v, %v", goal, err)
+	}
+	goal, exists, err := a.GetThreadGoal(context.Background(), threadID)
+	if err != nil || !exists || goal.TokensUsed != 12 {
+		t.Fatalf("GetThreadGoal() = %#v, %v, %v", goal, exists, err)
+	}
+	if err := a.ClearThreadGoal(context.Background(), threadID); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists, err := a.GetThreadGoal(context.Background(), threadID); err != nil || exists {
+		t.Fatalf("cleared GetThreadGoal() exists=%v err=%v", exists, err)
+	}
+	models, err := a.ListModels(context.Background())
+	if err != nil || len(models) != 1 || models[0].DisplayName != "测试模型" || models[0].SupportedReasoningEfforts[0].Effort != "medium" {
+		t.Fatalf("ListModels() = %#v, %v", models, err)
+	}
+}
+
+func TestCodexInspectsProjectCapabilities(t *testing.T) {
+	a := newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+		switch method {
+		case "skills/list":
+			got := params.(map[string]interface{})
+			if !reflect.DeepEqual(got["cwds"], []string{"/workspace"}) || got["forceReload"] != false {
+				t.Fatalf("skills/list params = %#v", got)
+			}
+			return json.RawMessage(`{"data":[{"cwd":"/workspace","skills":[{"name":"review","description":"review code","enabled":true,"interface":{"displayName":"代码审查"}}],"errors":[]}]}`), nil
+		case "mcpServerStatus/list":
+			got := params.(map[string]interface{})
+			if got["limit"] != 100 || got["detail"] != "toolsAndAuthOnly" {
+				t.Fatalf("mcpServerStatus/list params = %#v", got)
+			}
+			return json.RawMessage(`{"data":[{"name":"ready","authStatus":"unsupported","resourceTemplates":[],"resources":[],"tools":{}},{"name":"login","authStatus":"notLoggedIn","resourceTemplates":[],"resources":[],"tools":{}}]}`), nil
+		default:
+			t.Fatalf("unexpected rpc method %q", method)
+			return nil, nil
+		}
+	})
+
+	capabilities, err := a.InspectProject(context.Background(), "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities.Skills) != 1 || capabilities.Skills[0].Interface.DisplayName != "代码审查" {
+		t.Fatalf("skills = %#v", capabilities.Skills)
+	}
+	if capabilities.MCPServers != 2 || capabilities.MCPReady != 1 {
+		t.Fatalf("external tools = %d/%d", capabilities.MCPReady, capabilities.MCPServers)
+	}
+}
+
+func TestCodexSteersAndReviewsActiveTurn(t *testing.T) {
+	const threadID = "thread-active"
+	const turnID = "turn-active"
+	var a *Codex
+	a = newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+		switch method {
+		case "turn/steer":
+			got := params.(map[string]interface{})
+			if got["threadId"] != threadID || got["expectedTurnId"] != turnID {
+				t.Fatalf("turn/steer params = %#v", got)
+			}
+			input := got["input"].([]codexUserInput)
+			if len(input) != 1 || input[0].Text != "先修复失败测试" {
+				t.Fatalf("turn/steer input = %#v", input)
+			}
+			return json.RawMessage(`{"turnId":"turn-active"}`), nil
+		case "review/start":
+			got := params.(map[string]interface{})
+			if got["threadId"] != threadID || got["delivery"] != "inline" || got["target"].(ReviewTarget).Type != "uncommittedChanges" {
+				t.Fatalf("review/start params = %#v", got)
+			}
+			a.turnCh[threadID] <- &codexTurnEvent{Kind: "message_completed", ItemID: "review-message", Text: "发现一处风险"}
+			a.turnCh[threadID] <- &codexTurnEvent{Kind: "completed"}
+			return json.RawMessage(`{"turn":{"id":"turn-review"},"reviewThreadId":"thread-active"}`), nil
+		default:
+			t.Fatalf("unexpected rpc method %q", method)
+			return nil, nil
+		}
+	})
+	a.loadedThreads[threadID] = true
+	a.activeTurns[threadID] = turnID
+	if err := a.SteerThread(context.Background(), threadID, ChatRequest{Text: "先修复失败测试"}); err != nil {
+		t.Fatal(err)
+	}
+	delete(a.activeTurns, threadID)
+	review, err := a.ReviewThread(context.Background(), threadID, ReviewTarget{Type: "uncommittedChanges"}, nil)
+	if err != nil || review != "发现一处风险" {
+		t.Fatalf("ReviewThread() = %q, %v", review, err)
 	}
 }
 

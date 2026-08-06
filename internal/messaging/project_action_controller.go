@@ -1,10 +1,12 @@
 package messaging
 
-func (h *Handler) executeProjectControlAction(userID string, option controlOption) ActionResult {
+import "context"
+
+func (h *Handler) executeProjectControlAction(ctx context.Context, userID string, option controlOption) ActionResult {
 	var text string
 	switch option.Action {
 	case actionProjectCenter:
-		text = h.openProjectCenter(userID)
+		text = h.openProjectCenter(ctx, userID)
 	case actionSelectProject:
 		text = h.selectProject(userID, option.Value)
 	case actionProjectQuickTasks:
@@ -34,7 +36,7 @@ func (h *Handler) executeProjectControlAction(userID string, option controlOptio
 	case actionSaveRecentWorkflow:
 		task, exists := h.latestSuccessfulTask(userID, true)
 		if !exists {
-			text = "最近没有仍可保存的成功纯文字任务。"
+			text = "最近没有仍可保存的成功纯文字请求。"
 		} else {
 			text = h.promptWorkflowSaveFromTask(userID, controlOption{
 				Action: actionPromptWorkflowSave, Value: task.ID, Query: task.ProjectID, Page: 1,
@@ -48,23 +50,23 @@ func (h *Handler) executeProjectControlAction(userID string, option controlOptio
 	return controlTextResult(option.Action, DomainProject, text)
 }
 
-func (h *Handler) dispatchProjectIntent(userID string, resolved ResolvedIntent, argument string) ActionResult {
+func (h *Handler) dispatchProjectIntent(ctx context.Context, userID string, resolved ResolvedIntent, argument string) ActionResult {
 	var text string
 	switch resolved.Definition.ID {
 	case IntentProjectCenter:
-		text = h.openProjectCenter(userID)
+		text = h.openProjectCenter(ctx, userID)
 	case IntentProjectQuickTasks:
 		text = h.openProjectQuickTasks(userID)
 	case IntentWorkflowNew:
 		if h.projects == nil {
-			text = "快捷任务当前不可用。"
+			text = "提示词模板当前不可用。"
 		} else {
 			text = h.promptWorkflowCreate(userID, h.projects.Current(userID).ID, 1)
 		}
 	case IntentWorkflowSaveLast:
 		task, ok := h.latestSuccessfulTask(userID, true)
 		if !ok {
-			text = "最近没有仍可保存的成功纯文字任务。"
+			text = "最近没有仍可保存的成功纯文字请求。"
 		} else {
 			text = h.promptWorkflowSaveFromTask(userID, controlOption{
 				Action: actionPromptWorkflowSave, Value: task.ID, Query: task.ProjectID, Page: 1,
@@ -72,7 +74,7 @@ func (h *Handler) dispatchProjectIntent(userID string, resolved ResolvedIntent, 
 		}
 	case IntentProjectSelect:
 		if argument == "" {
-			text = h.openProjectCenter(userID)
+			text = h.openProjectCenter(ctx, userID)
 		} else {
 			text = h.selectProject(userID, argument)
 		}

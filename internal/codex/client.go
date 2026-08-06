@@ -31,6 +31,8 @@ type Codex struct {
 	loadedThreads map[string]bool // 当前 app-server 进程已加载的显式线程
 	threadStatus  map[string]ThreadStatus
 	threadUsage   map[string]ThreadUsage
+	activeTurns   map[string]string
+	instructions  map[string][]string
 	rateLimits    RateLimits
 	hasRateLimits bool
 	done          chan struct{}
@@ -86,6 +88,7 @@ type codexTurnStartParams struct {
 	Input          []codexUserInput `json:"input"`
 	SandboxPolicy  interface{}      `json:"sandboxPolicy,omitempty"`
 	Model          string           `json:"model,omitempty"`
+	Effort         string           `json:"effort,omitempty"`
 	Cwd            string           `json:"cwd,omitempty"`
 }
 
@@ -121,6 +124,8 @@ func NewCodex(cfg CodexConfig) *Codex {
 		loadedThreads: make(map[string]bool),
 		threadStatus:  make(map[string]ThreadStatus),
 		threadUsage:   make(map[string]ThreadUsage),
+		activeTurns:   make(map[string]string),
+		instructions:  make(map[string][]string),
 		pending:       make(map[int64]chan *rpcResponse),
 		turnCh:        make(map[string]chan *codexTurnEvent),
 		done:          make(chan struct{}),
@@ -246,6 +251,8 @@ func (a *Codex) waitForExit() {
 	a.exitErr = err
 	a.loadedThreads = make(map[string]bool)
 	a.threadStatus = make(map[string]ThreadStatus)
+	a.activeTurns = make(map[string]string)
+	a.instructions = make(map[string][]string)
 	a.mu.Unlock()
 	a.doneOnce.Do(func() { close(a.done) })
 	if err != nil {
@@ -281,20 +288,20 @@ func (a *Codex) StartThread(ctx context.Context) (ThreadInfo, error) {
 	if err != nil {
 		return ThreadInfo{}, err
 	}
-	var threadResult struct {
-		Thread ThreadInfo `json:"thread"`
-	}
-	if err := json.Unmarshal(result, &threadResult); err != nil {
-		return ThreadInfo{}, fmt.Errorf("parse thread/start result: %w", err)
-	}
-	if threadResult.Thread.ID == "" {
-		return ThreadInfo{}, fmt.Errorf("thread/start returned empty thread id")
+	thread, instructions, err := decodeOpenedThread(result, "thread/start")
+	if err != nil {
+		return ThreadInfo{}, err
 	}
 	a.mu.Lock()
-	a.loadedThreads[threadResult.Thread.ID] = true
-	a.threadStatus[threadResult.Thread.ID] = threadResult.Thread.Status
+	if a.instructions == nil {
+		a.instructions = make(map[string][]string)
+	}
+	a.loadedThreads[thread.ID] = true
+	a.threadStatus[thread.ID] = thread.Status
+	a.instructions[thread.ID] = append([]string(nil), instructions...)
 	a.mu.Unlock()
-	return threadResult.Thread, nil
+	thread.InstructionSources = instructions
+	return thread, nil
 }
 
 // ResumeThread 从磁盘加载线程并订阅其事件。
@@ -320,18 +327,23 @@ func (a *Codex) ResumeThread(ctx context.Context, threadID string) (ThreadInfo, 
 	if err != nil {
 		return ThreadInfo{}, err
 	}
-	thread, err := decodeCodexThread(result, "thread/resume")
+	thread, instructions, err := decodeOpenedThread(result, "thread/resume")
 	if err != nil {
 		return ThreadInfo{}, err
 	}
 	a.mu.Lock()
+	if a.instructions == nil {
+		a.instructions = make(map[string][]string)
+	}
 	a.loadedThreads[thread.ID] = true
 	a.threadStatus[thread.ID] = thread.Status
+	a.instructions[thread.ID] = append([]string(nil), instructions...)
 	a.mu.Unlock()
+	thread.InstructionSources = instructions
 	return thread, nil
 }
 
-// ReadThread 只读取线程摘要，不加载完整 turn 历史。
+// ReadThread 只读取线程摘要，不加载完整轮次历史。
 func (a *Codex) ReadThread(ctx context.Context, threadID string) (ThreadInfo, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadInfo{}, err
@@ -348,8 +360,11 @@ func (a *Codex) ReadThread(ctx context.Context, threadID string) (ThreadInfo, er
 		return ThreadInfo{}, err
 	}
 	a.mu.Lock()
-	// thread/read 已返回服务端当前状态，覆盖可能过期的通知缓存。
+	// 线程读取已返回服务端当前状态，覆盖可能过期的通知缓存。
 	a.threadStatus[threadID] = thread.Status
+	if a.instructions != nil {
+		thread.InstructionSources = append([]string(nil), a.instructions[threadID]...)
+	}
 	a.mu.Unlock()
 	return thread, nil
 }
@@ -372,6 +387,15 @@ func (a *Codex) ListThreads(ctx context.Context, options ThreadListOptions) (Thr
 	}
 	if len(options.SourceKinds) > 0 {
 		params["sourceKinds"] = options.SourceKinds
+	}
+	if options.Cwd != "" {
+		params["cwd"] = options.Cwd
+	}
+	if options.SearchTerm != "" {
+		params["searchTerm"] = options.SearchTerm
+	}
+	if options.Pinned != nil {
+		params["isPinned"] = *options.Pinned
 	}
 	result, err := a.rpc(ctx, "thread/list", params)
 	if err != nil {
@@ -396,6 +420,117 @@ func (a *Codex) SetThreadName(ctx context.Context, threadID, name string) error 
 		return err
 	}
 	_, err := a.rpc(ctx, "thread/name/set", map[string]string{"threadId": threadID, "name": name})
+	return err
+}
+
+// ForkThread 使用 Codex 原生历史分叉，生成新的持久线程。
+func (a *Codex) ForkThread(ctx context.Context, threadID string) (ThreadInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadInfo{}, err
+	}
+	result, err := a.rpc(ctx, "thread/fork", map[string]string{"threadId": threadID})
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	thread, instructions, err := decodeOpenedThread(result, "thread/fork")
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	a.mu.Lock()
+	if a.instructions == nil {
+		a.instructions = make(map[string][]string)
+	}
+	a.loadedThreads[thread.ID] = true
+	a.threadStatus[thread.ID] = thread.Status
+	a.instructions[thread.ID] = append([]string(nil), instructions...)
+	a.mu.Unlock()
+	thread.InstructionSources = instructions
+	return thread, nil
+}
+
+func (a *Codex) SetThreadPinned(ctx context.Context, threadID string, pinned bool) (ThreadInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadInfo{}, err
+	}
+	result, err := a.rpc(ctx, "thread/metadata/update", map[string]interface{}{
+		"threadId": threadID,
+		"isPinned": pinned,
+	})
+	if err != nil {
+		return ThreadInfo{}, err
+	}
+	return decodeCodexThread(result, "thread/metadata/update")
+}
+
+func (a *Codex) CompactThread(ctx context.Context, threadID string) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	_, err := a.rpc(ctx, "thread/compact/start", map[string]string{"threadId": threadID})
+	return err
+}
+
+func (a *Codex) DeleteThread(ctx context.Context, threadID string) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	_, err := a.rpc(ctx, "thread/delete", map[string]string{"threadId": threadID})
+	if err == nil {
+		a.mu.Lock()
+		delete(a.loadedThreads, threadID)
+		delete(a.threadStatus, threadID)
+		delete(a.threadUsage, threadID)
+		delete(a.activeTurns, threadID)
+		delete(a.instructions, threadID)
+		a.mu.Unlock()
+	}
+	return err
+}
+
+func (a *Codex) SetThreadGoal(ctx context.Context, threadID, objective string, tokenBudget *int64) (ThreadGoal, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadGoal{}, err
+	}
+	params := map[string]interface{}{
+		"threadId":  threadID,
+		"objective": strings.TrimSpace(objective),
+		"status":    "active",
+	}
+	if tokenBudget != nil {
+		params["tokenBudget"] = *tokenBudget
+	}
+	result, err := a.rpc(ctx, "thread/goal/set", params)
+	if err != nil {
+		return ThreadGoal{}, err
+	}
+	return decodeThreadGoal(result, "thread/goal/set")
+}
+
+func (a *Codex) GetThreadGoal(ctx context.Context, threadID string) (ThreadGoal, bool, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadGoal{}, false, err
+	}
+	result, err := a.rpc(ctx, "thread/goal/get", map[string]string{"threadId": threadID})
+	if err != nil {
+		return ThreadGoal{}, false, err
+	}
+	var response struct {
+		Goal *ThreadGoal `json:"goal"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return ThreadGoal{}, false, fmt.Errorf("parse thread/goal/get result: %w", err)
+	}
+	if response.Goal == nil {
+		return ThreadGoal{}, false, nil
+	}
+	return *response.Goal, true, nil
+}
+
+func (a *Codex) ClearThreadGoal(ctx context.Context, threadID string) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	_, err := a.rpc(ctx, "thread/goal/clear", map[string]string{"threadId": threadID})
 	return err
 }
 
@@ -437,7 +572,7 @@ func (a *Codex) UnsubscribeThread(ctx context.Context, threadID string) error {
 	return err
 }
 
-// ChatThread 在已经过归属校验的显式线程中执行一次 turn。
+// ChatThread 在已经过归属校验的显式线程中执行一次轮次。
 func (a *Codex) ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error) {
 	return a.chatTurn(ctx, threadID, request, nil)
 }
@@ -469,6 +604,103 @@ func decodeCodexThread(result json.RawMessage, method string) (ThreadInfo, error
 	return response.Thread, nil
 }
 
+func decodeOpenedThread(result json.RawMessage, method string) (ThreadInfo, []string, error) {
+	var response struct {
+		Thread             ThreadInfo `json:"thread"`
+		InstructionSources []string   `json:"instructionSources"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return ThreadInfo{}, nil, fmt.Errorf("parse %s result: %w", method, err)
+	}
+	if response.Thread.ID == "" {
+		return ThreadInfo{}, nil, fmt.Errorf("%s returned empty thread id", method)
+	}
+	return response.Thread, response.InstructionSources, nil
+}
+
+func decodeThreadGoal(result json.RawMessage, method string) (ThreadGoal, error) {
+	var response struct {
+		Goal ThreadGoal `json:"goal"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return ThreadGoal{}, fmt.Errorf("parse %s result: %w", method, err)
+	}
+	if response.Goal.ThreadID == "" {
+		return ThreadGoal{}, fmt.Errorf("%s returned empty goal", method)
+	}
+	return response.Goal, nil
+}
+
+func (a *Codex) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return nil, err
+	}
+	result, err := a.rpc(ctx, "model/list", map[string]interface{}{"limit": 100, "includeHidden": false})
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data []ModelInfo `json:"data"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, fmt.Errorf("parse model/list result: %w", err)
+	}
+	return response.Data, nil
+}
+
+// InspectProject 只读取 Codex 已发现的技能与外部工具摘要，不执行工具或修改配置。
+func (a *Codex) InspectProject(ctx context.Context, cwd string) (ProjectCapabilities, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ProjectCapabilities{}, err
+	}
+	result, err := a.rpc(ctx, "skills/list", map[string]interface{}{"cwds": []string{cwd}, "forceReload": false})
+	if err != nil {
+		return ProjectCapabilities{}, err
+	}
+	var skillResponse struct {
+		Data []struct {
+			Skills []SkillInfo `json:"skills"`
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(result, &skillResponse); err != nil {
+		return ProjectCapabilities{}, fmt.Errorf("parse skills/list result: %w", err)
+	}
+	capabilities := ProjectCapabilities{}
+	for _, group := range skillResponse.Data {
+		capabilities.Skills = append(capabilities.Skills, group.Skills...)
+		for _, skillErr := range group.Errors {
+			if message := strings.TrimSpace(skillErr.Message); message != "" {
+				capabilities.SkillErrors = append(capabilities.SkillErrors, message)
+			}
+		}
+	}
+	// 外部工具状态属于进程级摘要；读取失败不应遮蔽已经成功取得的项目技能。
+	mcpResult, mcpErr := a.rpc(ctx, "mcpServerStatus/list", map[string]interface{}{
+		"limit":  100,
+		"detail": "toolsAndAuthOnly",
+	})
+	if mcpErr == nil {
+		var mcpResponse struct {
+			Data []struct {
+				AuthStatus string `json:"authStatus"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(mcpResult, &mcpResponse) == nil {
+			capabilities.MCPServers = len(mcpResponse.Data)
+			for _, server := range mcpResponse.Data {
+				// notLoggedIn 表示连接存在但尚不能使用；其他协议值均表示当前无需再登录。
+				if server.AuthStatus != "notLoggedIn" {
+					capabilities.MCPReady++
+				}
+			}
+		}
+	}
+	return capabilities, nil
+}
+
 func (a *Codex) ensureThreadLoaded(ctx context.Context, threadID string) error {
 	a.mu.Lock()
 	loaded := a.loadedThreads[threadID]
@@ -497,34 +729,19 @@ func (a *Codex) chatTurn(ctx context.Context, threadID string, request ChatReque
 
 	log.Printf("[codex] using explicit thread (pid=%d, thread=%s)", pid, threadID)
 
-	// Register turn event channel
-	turnCh := make(chan *codexTurnEvent, 256)
-	a.notifyMu.Lock()
-	a.turnCh[threadID] = turnCh
-	a.notifyMu.Unlock()
+	turnCh, release := a.registerTurnChannel(threadID)
+	defer release()
 
-	defer func() {
-		a.notifyMu.Lock()
-		delete(a.turnCh, threadID)
-		a.notifyMu.Unlock()
-	}()
-
-	// turn/start 会立即返回 turn ID；取消时必须携带它调用 turn/interrupt。
-	// 短暂脱离任务取消信号，确保即使用户立刻取消也能拿到 turn ID 后完成中断。
-	input := make([]codexUserInput, 0, 1+len(request.LocalImages))
-	if text := request.PromptText(); text != "" {
-		input = append(input, codexUserInput{Type: "text", Text: text})
-	}
-	for _, imagePath := range request.LocalImages {
-		imagePath = strings.TrimSpace(imagePath)
-		if imagePath != "" {
-			input = append(input, codexUserInput{Type: "localImage", Path: imagePath})
-		}
-	}
+	// 轮次启动会立即返回轮次 ID；取消时必须携带它调用中断接口。
+	// 短暂脱离队列取消信号，确保即使用户立刻取消也能拿到轮次 ID 后完成中断。
+	input := codexInput(request)
 	if len(input) == 0 {
 		return "", fmt.Errorf("turn input is empty")
 	}
 	cwd, model := a.settings()
+	if strings.TrimSpace(request.Model) != "" {
+		model = strings.TrimSpace(request.Model)
+	}
 
 	startCtx, cancelStart := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	startResult, err := a.rpc(startCtx, "turn/start", codexTurnStartParams{
@@ -533,6 +750,7 @@ func (a *Codex) chatTurn(ctx context.Context, threadID string, request ChatReque
 		Input:          input,
 		SandboxPolicy:  map[string]interface{}{"type": "dangerFullAccess"},
 		Model:          model,
+		Effort:         strings.TrimSpace(request.Effort),
 		Cwd:            cwd,
 	})
 	cancelStart()
@@ -551,6 +769,50 @@ func (a *Codex) chatTurn(ctx context.Context, threadID string, request ChatReque
 		return "", fmt.Errorf("turn/start returned empty turn id")
 	}
 	turnID := started.Turn.ID
+	a.mu.Lock()
+	if a.activeTurns == nil {
+		a.activeTurns = make(map[string]string)
+	}
+	a.activeTurns[threadID] = turnID
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		if a.activeTurns[threadID] == turnID {
+			delete(a.activeTurns, threadID)
+		}
+		a.mu.Unlock()
+	}()
+	return a.collectTurn(ctx, threadID, turnID, turnCh, onProgress)
+}
+
+func codexInput(request ChatRequest) []codexUserInput {
+	input := make([]codexUserInput, 0, 1+len(request.LocalImages))
+	if text := request.PromptText(); text != "" {
+		input = append(input, codexUserInput{Type: "text", Text: text})
+	}
+	for _, imagePath := range request.LocalImages {
+		if imagePath = strings.TrimSpace(imagePath); imagePath != "" {
+			input = append(input, codexUserInput{Type: "localImage", Path: imagePath})
+		}
+	}
+	return input
+}
+
+func (a *Codex) registerTurnChannel(threadID string) (chan *codexTurnEvent, func()) {
+	turnCh := make(chan *codexTurnEvent, 256)
+	a.notifyMu.Lock()
+	a.turnCh[threadID] = turnCh
+	a.notifyMu.Unlock()
+	return turnCh, func() {
+		a.notifyMu.Lock()
+		if a.turnCh[threadID] == turnCh {
+			delete(a.turnCh, threadID)
+		}
+		a.notifyMu.Unlock()
+	}
+}
+
+func (a *Codex) collectTurn(ctx context.Context, threadID, turnID string, turnCh <-chan *codexTurnEvent, onProgress ProgressHandler) (string, error) {
 
 	// Codex 会把阶段说明和最终答案都作为 agentMessage 发出。
 	// 必须按 phase 分流，否则微信端会把所有中间说明拼进最终回复。
@@ -645,6 +907,80 @@ func (a *Codex) chatTurn(ctx context.Context, threadID string, request ChatReque
 			}
 		}
 	}
+}
+
+// SteerThread 把新输入追加到当前进行中的轮次；没有活动轮次时明确失败。
+func (a *Codex) SteerThread(ctx context.Context, threadID string, request ChatRequest) error {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	turnID := a.activeTurns[threadID]
+	a.mu.Unlock()
+	if turnID == "" {
+		return fmt.Errorf("thread has no active turn")
+	}
+	input := codexInput(request)
+	if len(input) == 0 {
+		return fmt.Errorf("turn steer input is empty")
+	}
+	result, err := a.rpc(ctx, "turn/steer", map[string]interface{}{
+		"threadId":       threadID,
+		"expectedTurnId": turnID,
+		"input":          input,
+	})
+	if err != nil {
+		return err
+	}
+	var response struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil || response.TurnID != turnID {
+		return fmt.Errorf("turn/steer returned an unexpected turn id")
+	}
+	return nil
+}
+
+// ReviewThread 使用 Codex 原生审查器审查当前线程对应项目，并等待审查结论。
+func (a *Codex) ReviewThread(ctx context.Context, threadID string, target ReviewTarget, onProgress ProgressHandler) (string, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return "", err
+	}
+	if err := a.ensureThreadLoaded(ctx, threadID); err != nil {
+		return "", fmt.Errorf("resume thread: %w", err)
+	}
+	turnCh, release := a.registerTurnChannel(threadID)
+	defer release()
+	result, err := a.rpc(ctx, "review/start", map[string]interface{}{
+		"threadId": threadID,
+		"delivery": "inline",
+		"target":   target,
+	})
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil || response.Turn.ID == "" {
+		return "", fmt.Errorf("review/start returned an invalid turn")
+	}
+	a.mu.Lock()
+	if a.activeTurns == nil {
+		a.activeTurns = make(map[string]string)
+	}
+	a.activeTurns[threadID] = response.Turn.ID
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		if a.activeTurns[threadID] == response.Turn.ID {
+			delete(a.activeTurns, threadID)
+		}
+		a.mu.Unlock()
+	}()
+	return a.collectTurn(ctx, threadID, response.Turn.ID, turnCh, onProgress)
 }
 
 func (a *Codex) interruptCodexTurn(threadID, turnID string) {
@@ -975,7 +1311,7 @@ func (a *Codex) handleCodexActivity(params json.RawMessage, text string) {
 	a.dispatchToTurnCh(p.ThreadID, &codexTurnEvent{Kind: "activity", Text: text})
 }
 
-// handleCodexTurnEvent handles "turn/started" and "turn/completed" notifications.
+// handleCodexTurnEvent 处理轮次开始与完成通知。
 func (a *Codex) handleCodexTurnEvent(method string, params json.RawMessage) {
 	var p struct {
 		ThreadID string `json:"threadId"`
@@ -999,7 +1335,7 @@ func (a *Codex) handleCodexTurnEvent(method string, params json.RawMessage) {
 	}
 }
 
-// dispatchToTurnCh sends an event to the turn channel for a thread.
+// dispatchToTurnCh 把事件发送到指定线程的轮次通道。
 func (a *Codex) dispatchToTurnCh(threadID string, evt *codexTurnEvent) {
 	a.notifyMu.Lock()
 	ch, ok := a.turnCh[threadID]

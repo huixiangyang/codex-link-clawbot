@@ -86,7 +86,7 @@ func (r *progressReporter) run() {
 	defer messageTimer.Stop()
 
 	r.sendTyping()
-	latest := "任务已接收，正在分析"
+	latest := "WeClaw 请求已接收，正在分析"
 	latestKind := codex.ProgressKind("")
 	sentMessages := make(map[string]struct{})
 

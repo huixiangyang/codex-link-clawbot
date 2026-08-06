@@ -75,7 +75,7 @@ func (h *Handler) SetControlStateStore(store *ControlStateStore) {
 	h.controlStates = store
 }
 
-// SetProjectManager 注入项目白名单，并让会话归属跟随当前项目切换。
+// SetProjectManager 注入 WeClaw 项目入口白名单，并让 Codex 线程归属跟随入口切换。
 func (h *Handler) SetProjectManager(manager *project.Manager) {
 	h.projects = manager
 	if h.sessions != nil && manager != nil {
@@ -296,7 +296,7 @@ func (h *Handler) sendFrozenTaskText(ctx context.Context, client *ilink.Client, 
 	}
 	if err := SendTextReply(ctx, client, msg.FromUserID, result.Reply, msg.ContextToken, clientID); err != nil {
 		log.Printf("[queue] failed to send manually recovered task text: %v", err)
-		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结文字发送失败。任务状态没有改写，可从任务详情再次尝试。", msg.ContextToken, NewClientID())
+		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结文字发送失败。执行记录没有改写，可从 WeClaw 请求队列再次尝试。", msg.ContextToken, NewClientID())
 	}
 }
 
@@ -310,7 +310,7 @@ func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg 
 	}
 	task, err := h.tasks.Retry(msg.FromUserID, taskID, sourceKey, msg.ContextToken)
 	if err != nil {
-		reply := "任务无法重试：" + err.Error()
+		reply := "请求无法重试：" + err.Error()
 		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
 			return fmt.Errorf("send retry rejection: %w", sendErr)
 		}
@@ -452,9 +452,9 @@ func queuedTaskAcknowledgement(store *taskqueue.Store, task taskqueue.Task, proj
 		positionText = "当前状态：" + task.Stage
 	}
 	return strings.Join([]string{
-		"任务已接收",
+		"WeClaw 请求已接收",
 		state,
-		"项目：" + projectName,
+		"WeClaw 项目入口：" + projectName,
 		positionText,
 		"摘要：" + task.Summary,
 	}, "\n")
@@ -476,7 +476,7 @@ func taskActivitySummary(text string, imageCount, fileCount int) string {
 		case fileCount > 0:
 			text = fmt.Sprintf("文件分析 · %d 个", fileCount)
 		default:
-			text = "Codex 任务"
+			text = "Codex 轮次"
 		}
 		return text
 	}
@@ -681,12 +681,12 @@ func isImageAnnotationIntent(text string) bool {
 
 func (h *Handler) cancelActiveTask(userID string) string {
 	if h.coordinator == nil || !h.hasActiveTask(userID) {
-		return "当前没有正在执行的任务。"
+		return "WeClaw 当前没有正在执行的请求。"
 	}
 	if !h.coordinator.Cancel(userID) {
-		return "当前任务正在取消或已进入发送阶段，请稍候。"
+		return "当前请求正在取消或已进入发送阶段，请稍候。"
 	}
-	return "已请求取消当前任务。任务会保留明确的取消记录，不会发送迟到结果。"
+	return "已请求取消 WeClaw 当前执行。如果 Codex 轮次已经启动，也会请求中断；队列会保留取消记录。"
 }
 
 func (h *Handler) buildTaskStatus(userID string) string {
@@ -694,19 +694,19 @@ func (h *Handler) buildTaskStatus(userID string) string {
 		for _, task := range h.tasks.List(userID) {
 			if task.State == taskqueue.StateRunning || task.State == taskqueue.StateDelivering {
 				return strings.Join([]string{
-					"任务状态：" + taskStateText(task.State),
+					"WeClaw 执行状态：" + taskStateText(task.State),
 					"当前阶段：" + task.Stage,
 					"摘要：" + task.Summary,
 				}, "\n")
 			}
 		}
 	}
-	return "任务状态：空闲\n" + h.buildStatus()
+	return "WeClaw 执行状态：空闲\n" + h.buildStatus()
 }
 
 func (h *Handler) sessionContext() (codex.ThreadClient, error) {
 	if h.sessions == nil {
-		return nil, fmt.Errorf("会话管理器未初始化")
+		return nil, fmt.Errorf("Codex 线程管理器未初始化")
 	}
 	if h.codex == nil {
 		return nil, fmt.Errorf("Codex 当前不可用")
@@ -721,7 +721,7 @@ func (h *Handler) sessionContext() (codex.ThreadClient, error) {
 // buildStatus 返回桥接器与唯一 Codex 运行时的完整摘要。
 func (h *Handler) buildStatus() string {
 	lines := []string{
-		"运行中心",
+		"WeClaw 运行与安全",
 		"WeClaw：运行中",
 		"版本：" + h.bridgeVersion,
 		"已运行：" + formatUptime(time.Since(h.startedAt)),
@@ -739,9 +739,9 @@ func (h *Handler) buildStatus() string {
 	}
 	lines = append(lines,
 		"Codex：运行中",
-		"协议：App Server",
+		"协议：Codex 应用服务",
 		"模型："+model,
-		"项目目录："+info.Cwd,
+		"Codex 工作目录："+info.Cwd,
 	)
 	if info.PID > 0 {
 		lines = append(lines, fmt.Sprintf("Codex PID：%d", info.PID))
