@@ -279,6 +279,25 @@ func TestEveryStyleProvidesEscapedDirectoryTemplate(t *testing.T) {
 	}
 }
 
+func TestDirectoryAcceptsComplete44ActionSurface(t *testing.T) {
+	directory := testDirectory()
+	actionCount := len(directory.Sections)
+	for _, section := range directory.Sections {
+		actionCount += len(section.Items)
+	}
+	if actionCount != 44 {
+		t.Fatalf("directory action count = %d", actionCount)
+	}
+	if _, err := prepareDirectory(directory, time.Date(2026, 8, 6, 12, 0, 0, 0, time.Local)); err != nil {
+		t.Fatalf("complete command directory was rejected: %v", err)
+	}
+
+	directory.Sections[0].Items = append(directory.Sections[0].Items, DirectoryItem{Code: "10", Label: "越界入口"})
+	if _, err := prepareDirectory(directory, time.Date(2026, 8, 6, 12, 0, 0, 0, time.Local)); err == nil || !strings.Contains(err.Error(), "invalid directory section") {
+		t.Fatalf("oversized directory section error = %v", err)
+	}
+}
+
 func newVisualTestTemplate(t *testing.T) *template.Template {
 	t.Helper()
 	tmpl, err := template.New("visual").Funcs(template.FuncMap{
@@ -294,39 +313,41 @@ func testDirectory() Directory {
 	return Directory{
 		Title: "操作总览", Subtitle: "稳定编号，一步直达",
 		Facts: []Fact{
-			{Label: "版本", Value: "v2.8.0"}, {Label: "项目", Value: "WeClaw"},
-			{Label: "会话", Value: "移动端控制重构"}, {Label: "任务", Value: "运行中"},
-			{Label: "回答", Value: "自适应"}, {Label: "队列", Value: "2 项等待"},
+			{Label: "版本", Value: "v2.8.0"}, {Label: "WeClaw 项目入口", Value: "WeClaw"},
+			{Label: "Codex 线程", Value: "移动端控制重构"}, {Label: "WeClaw 执行", Value: "运行中"},
+			{Label: "WeClaw 回复", Value: "自适应"}, {Label: "WeClaw 队列", Value: "2 项等待"},
 		},
 		Sections: []DirectorySection{
-			{Code: "1", Title: "会话管理", Icon: "messages-square", Items: []DirectoryItem{
-				{Code: "11", Label: "新建会话"}, {Code: "12", Label: "重命名当前会话"},
-				{Code: "13", Label: "切换会话"}, {Code: "14", Label: "搜索会话"},
-				{Code: "15", Label: "查看当前会话"}, {Code: "16", Label: "归档当前会话"},
-				{Code: "17", Label: "恢复归档会话"},
+			{Code: "1", Title: "Codex · 线程", Icon: "messages-square", Items: []DirectoryItem{
+				{Code: "11", Label: "新建线程"}, {Code: "12", Label: "当前线程"},
+				{Code: "13", Label: "切换线程"}, {Code: "14", Label: "搜索线程"},
+				{Code: "15", Label: "分叉当前线程"}, {Code: "16", Label: "压缩上下文"},
+				{Code: "17", Label: "设置线程目标"}, {Code: "18", Label: "归档当前线程"},
+				{Code: "19", Label: "恢复归档线程"},
 			}},
-			{Code: "2", Title: "项目与工作流", Icon: "folder-kanban", Items: []DirectoryItem{
-				{Code: "21", Label: "切换项目"}, {Code: "22", Label: "运行快捷任务", Meta: "3 项"},
-				{Code: "23", Label: "新建快捷任务"}, {Code: "24", Label: "管理快捷任务"},
-				{Code: "25", Label: "保存最近结果"},
+			{Code: "2", Title: "Codex · 执行能力", Icon: "folder-kanban", Items: []DirectoryItem{
+				{Code: "21", Label: "WeClaw 项目入口"}, {Code: "22", Label: "线程模型"},
+				{Code: "23", Label: "推理强度"}, {Code: "24", Label: "审查未提交改动"},
+				{Code: "25", Label: "刷新 Codex 能力"},
 			}},
-			{Code: "3", Title: "任务管理", Icon: "list-todo", Items: []DirectoryItem{
-				{Code: "31", Label: "查看当前任务"}, {Code: "32", Label: "最近结果"},
-				{Code: "33", Label: "暂停队列"}, {Code: "34", Label: "取消当前任务"},
-				{Code: "35", Label: "清空等待任务"},
+			{Code: "3", Title: "WeClaw · 请求队列", Icon: "list-todo", Items: []DirectoryItem{
+				{Code: "31", Label: "查看执行状态"}, {Code: "32", Label: "最近执行结果"},
+				{Code: "33", Label: "暂停队列"}, {Code: "34", Label: "取消当前执行"},
+				{Code: "35", Label: "清空等待请求"},
 			}},
-			{Code: "4", Title: "回答与视觉", Icon: "palette", Items: []DirectoryItem{
+			{Code: "4", Title: "WeClaw · 回复呈现", Icon: "palette", Items: []DirectoryItem{
 				{Code: "41", Label: "自适应回答", Meta: "当前"}, {Code: "42", Label: "阅读卡回答"},
 				{Code: "43", Label: "语音回答"}, {Code: "44", Label: "刊物风格"},
 				{Code: "45", Label: "构筑风格"}, {Code: "46", Label: "黑标风格"},
 				{Code: "47", Label: "可爱风格"}, {Code: "48", Label: "简洁风格"},
 			}},
-			{Code: "5", Title: "工具与内容", Icon: "package-open", Items: []DirectoryItem{
+			{Code: "5", Title: "WeClaw · 内容与自动化", Icon: "package-open", Items: []DirectoryItem{
 				{Code: "51", Label: "素材与交付"}, {Code: "52", Label: "链接素材"},
 				{Code: "53", Label: "交付记录"}, {Code: "54", Label: "自动化中心", Meta: "2 项"},
-				{Code: "55", Label: "语音简报"},
+				{Code: "55", Label: "语音简报"}, {Code: "56", Label: "提示词模板", Meta: "3 项"},
+				{Code: "57", Label: "保存最近结果"},
 			}},
-			{Code: "6", Title: "运行与安全", Icon: "shield-check", Items: []DirectoryItem{
+			{Code: "6", Title: "WeClaw · 运行与安全", Icon: "shield-check", Items: []DirectoryItem{
 				{Code: "61", Label: "为什么没回复"}, {Code: "62", Label: "远程锁定"},
 				{Code: "63", Label: "使用说明"}, {Code: "64", Label: "刷新操作总览"},
 			}},

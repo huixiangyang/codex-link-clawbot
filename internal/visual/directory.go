@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-const directoryCanvasHeight = 2280
+const (
+	directoryCanvasHeight    = 2280
+	directoryMaxSectionItems = 9
+)
 
 type DirectoryItem struct {
 	Code  string
@@ -68,7 +71,8 @@ func prepareDirectory(directory Directory, now time.Time) (Directory, error) {
 		section.Code = strings.TrimSpace(section.Code)
 		section.Title = strings.TrimSpace(section.Title)
 		section.Icon = strings.TrimSpace(section.Icon)
-		if !validDirectoryCode(section.Code) || section.Title == "" || len(section.Items) == 0 || len(section.Items) > 8 || seen[section.Code] {
+		// Codex 线程区使用 11–19 九个稳定编号；目录校验必须覆盖完整编号面。
+		if !validDirectoryCode(section.Code) || section.Title == "" || len(section.Items) == 0 || len(section.Items) > directoryMaxSectionItems || seen[section.Code] {
 			return Directory{}, fmt.Errorf("invalid directory section")
 		}
 		seen[section.Code] = true
