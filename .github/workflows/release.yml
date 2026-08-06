@@ -44,6 +44,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check documentation links
+        run: ./scripts/check-doc-links.sh
+
       - name: Vet
         run: go vet ./...
 
@@ -51,7 +54,7 @@ jobs:
         run: go test ./... -count=1 -race
 
       - name: Verify fuzz seed corpus
-        run: go test ./config ./ilink ./messaging ./codex -count=1
+        run: go test ./internal/config ./internal/ilink ./internal/messaging ./internal/codex -count=1
 
   build:
     needs: quality
@@ -76,8 +79,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           go build -trimpath \
-            -ldflags="-s -w -X github.com/huixiangyang/weclaw/cmd.Version=${GITHUB_REF_NAME}" \
-            -o weclaw_linux_${GOARCH} .
+            -ldflags="-s -w -X github.com/huixiangyang/weclaw/internal/cli.Version=${GITHUB_REF_NAME}" \
+            -o weclaw_linux_${GOARCH} ./cmd/weclaw
 
       - uses: actions/upload-artifact@v4
         with:

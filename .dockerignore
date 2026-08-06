@@ -1,4 +1,6 @@
-weclaw
+/weclaw
+!cmd/weclaw
+!cmd/weclaw/**
 tmp/
 .git/
 .idea/

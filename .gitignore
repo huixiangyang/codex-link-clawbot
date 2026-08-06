@@ -1,5 +1,5 @@
-# Binary
-weclaw
+# Root development binary
+/weclaw
 
 # Air hot reload
 tmp/

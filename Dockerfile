@@ -6,8 +6,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath \
-    -ldflags="-s -w -X github.com/huixiangyang/weclaw/cmd.Version=${VERSION}" \
-    -o /usr/local/bin/weclaw .
+    -ldflags="-s -w -X github.com/huixiangyang/weclaw/internal/cli.Version=${VERSION}" \
+    -o /usr/local/bin/weclaw ./cmd/weclaw
 
 FROM alpine:3.21
 
