@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 type imageCaptureAgent struct {

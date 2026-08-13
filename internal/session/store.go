@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 const (
@@ -48,7 +48,7 @@ type trackedThread struct {
 	Effort         string `json:"effort,omitempty"`
 }
 
-// Record 是会话管理器可读取的归属记录，不包含聊天正文。
+// Record 是会话管理器可读取的远程焦点记录，不包含聊天正文。
 type Record struct {
 	ID             string
 	ForkedFromID   string
@@ -66,7 +66,7 @@ type ThreadSettings struct {
 	Effort string
 }
 
-// Store 以原子文件替换持久化微信用户与 Codex 线程的归属关系。
+// Store 以原子文件替换持久化微信用户的工作空间焦点、队列关联与线程设置。
 type Store struct {
 	mu    sync.RWMutex
 	path  string
@@ -78,7 +78,7 @@ func DefaultIndexPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, ".weclaw", "session-index.json"), nil
+	return filepath.Join(home, ".codex-link-clawbot", "session-index.json"), nil
 }
 
 func OpenStore(path string) (*Store, error) {

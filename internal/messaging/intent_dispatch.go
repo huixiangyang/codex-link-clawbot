@@ -29,10 +29,8 @@ func (h *Handler) dispatchIntent(ctx context.Context, userID string, resolved Re
 		result = h.dispatchSessionIntent(ctx, userID, resolved, argument)
 	case DomainPreference:
 		result = h.dispatchPreferenceIntent(userID, resolved, argument)
-	case DomainLibrary:
-		result = h.dispatchLibraryIntent(userID, resolved)
-	case DomainAutomation:
-		result = h.dispatchAutomationIntent(userID, resolved)
+	case DomainDelivery:
+		result = h.dispatchDeliveryIntent(userID, resolved)
 	case DomainSecurity:
 		result = h.dispatchSecurityIntent(userID, resolved)
 	default:

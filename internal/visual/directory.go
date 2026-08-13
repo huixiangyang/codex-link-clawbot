@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	directoryCanvasHeight    = 2280
-	directoryMaxSectionItems = 9
+	directoryCanvasHeight    = 1600
+	directoryMaxSectionItems = 5
+	directorySectionCount    = 4
 )
 
 type DirectoryItem struct {
@@ -62,8 +63,8 @@ func prepareDirectory(directory Directory, now time.Time) (Directory, error) {
 	directory.Title = strings.TrimSpace(directory.Title)
 	directory.Subtitle = strings.TrimSpace(directory.Subtitle)
 	directory.Footer = strings.TrimSpace(directory.Footer)
-	if directory.Title == "" || len(directory.Sections) != 6 {
-		return Directory{}, fmt.Errorf("directory requires a title and six sections")
+	if directory.Title == "" || len(directory.Sections) != directorySectionCount {
+		return Directory{}, fmt.Errorf("directory requires a title and four sections")
 	}
 	seen := make(map[string]bool, 48)
 	for sectionIndex := range directory.Sections {
@@ -71,7 +72,7 @@ func prepareDirectory(directory Directory, now time.Time) (Directory, error) {
 		section.Code = strings.TrimSpace(section.Code)
 		section.Title = strings.TrimSpace(section.Title)
 		section.Icon = strings.TrimSpace(section.Icon)
-		// 首页领域最多九个直达入口，防止配置失控撑破固定画布。
+		// 二级功能目录每区固定最多五个直达入口，防止菜单重新膨胀。
 		if !validDirectoryCode(section.Code) || section.Title == "" || len(section.Items) == 0 || len(section.Items) > directoryMaxSectionItems || seen[section.Code] {
 			return Directory{}, fmt.Errorf("invalid directory section")
 		}
@@ -111,6 +112,7 @@ func directoryTemplateName(style Style) string {
 func lucideIcon(name string) template.HTML {
 	icons := map[string]string{
 		"messages-square":  `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10M7 12h6"/><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>`,
+		"braces":           `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1"/></svg>`,
 		"folder-kanban":    `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/><path d="M8 10v6M12 10v3M16 10v5"/></svg>`,
 		"list-todo":        `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 2 2 4-4M3 12l2 2 4-4M3 18l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg>`,
 		"palette":          `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a10 10 0 1 1 10-10c0 2.8-1.5 4-3.5 4H17a2 2 0 0 0-2 2v1.5c0 1.4-1.2 2.5-3 2.5Z"/><path d="M7.5 10h.01M10.5 6.5h.01M15 7.5h.01M17 11.5h.01"/></svg>`,
@@ -124,6 +126,14 @@ func lucideIcon(name string) template.HTML {
 		"corner-down-left": `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>`,
 		"square-check":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
 		"square":           `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>`,
+		"scan-search":      `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="11" cy="11" r="4"/><path d="m14 14 3 3"/></svg>`,
+		"circle-check-big": `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="m9 11 3 3L22 4"/></svg>`,
+		"file-warning":     `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M12 9v4M12 17h.01"/></svg>`,
+		"crosshair":        `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M22 12h-4M6 12H2M12 6V2M12 22v-4"/></svg>`,
+		"plus":             `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>`,
+		"list-filter":      `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M7 12h10M10 18h4"/></svg>`,
+		"layout-grid":      `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>`,
+		"refresh-cw":       `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"/><path d="M3 21v-5h5M3 12A9 9 0 0 1 18.2 5.5L21 8"/><path d="M21 3v5h-5"/></svg>`,
 	}
 	icon, exists := icons[name]
 	if !exists {

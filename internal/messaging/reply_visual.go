@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const (
@@ -61,7 +61,7 @@ func (h *Handler) sendVisualReplyWithStyle(ctx context.Context, client *ilink.Cl
 		if payloadErr != nil {
 			return 0, fmt.Errorf("prepare page %d/%d: %w", documents[index].PageNumber, documents[index].TotalPages, payloadErr)
 		}
-		payload.FileName = fmt.Sprintf("weclaw-reply-%02d.png", index+1)
+		payload.FileName = fmt.Sprintf("codex-link-clawbot-reply-%02d.png", index+1)
 		payloads = append(payloads, payload)
 	}
 

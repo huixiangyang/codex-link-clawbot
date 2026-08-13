@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 const (
@@ -89,7 +89,7 @@ func AccountsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".weclaw", "accounts"), nil
+	return filepath.Join(home, ".codex-link-clawbot", "accounts"), nil
 }
 
 // NormalizeAccountID converts raw bot ID to filesystem-safe format.
@@ -121,7 +121,7 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
-// SaveCredentials saves credentials to disk under ~/.weclaw/accounts/{id}.json.
+// SaveCredentials saves credentials to disk under ~/.codex-link-clawbot/accounts/{id}.json.
 func SaveCredentials(creds *Credentials) error {
 	if creds == nil {
 		return fmt.Errorf("credentials are required")

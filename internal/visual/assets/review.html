@@ -1,0 +1,119 @@
+{{define "review.shell"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
+    body {
+      --ground: #090c0b;
+      --surface: rgba(18, 24, 21, .93);
+      --surface-soft: rgba(255, 255, 255, .045);
+      --ink: #f3f5f0;
+      --muted: rgba(243, 245, 240, .62);
+      --line: rgba(243, 245, 240, .15);
+      --accent: #ef927e;
+      --accent-rgb: 239, 146, 126;
+      --radius: 4px;
+      position: relative;
+      color: var(--ink);
+      background: var(--ground);
+      font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body.clear { --accent: #78d9aa; --accent-rgb: 120, 217, 170; }
+    body.advisory { --accent: #edc477; --accent-rgb: 237, 196, 119; }
+    body.day { --ground: #ecece5; --surface: rgba(250, 250, 246, .9); --surface-soft: rgba(255, 255, 255, .58); --ink: #19201b; --muted: rgba(25, 32, 27, .62); --line: rgba(25, 32, 27, .17); --accent: #b54f40; --accent-rgb: 181, 79, 64; }
+    body.day.clear { --accent: #267552; --accent-rgb: 38, 117, 82; }
+    body.day.advisory { --accent: #96621f; --accent-rgb: 150, 98, 31; }
+    body::before { content: ""; position: absolute; inset: 0; background: url("{{background .Style}}") top right / 780px 780px repeat-y; opacity: .11; pointer-events: none; }
+    body::after { content: ""; position: absolute; top: 0; right: 0; width: 390px; height: 390px; border: 1px solid rgba(var(--accent-rgb), .18); transform: translate(46%, -49%) rotate(18deg); pointer-events: none; }
+    .page { position: relative; z-index: 1; height: 100%; padding: 42px 54px 36px 62px; display: flex; flex-direction: column; }
+    .rail { position: absolute; left: 28px; top: 42px; bottom: 36px; width: 3px; background: linear-gradient(var(--accent) 0 132px, var(--line) 132px); }
+    .masthead { height: 53px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .identity, .mode, .footer { display: flex; align-items: center; }
+    .identity { gap: 13px; }
+    .identity svg, .mode svg, .footer svg, .empty svg { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+    .identity svg { width: 23px; height: 23px; color: var(--accent); }
+    .brand { font-size: 16px; font-weight: 790; letter-spacing: .22em; }
+    .mode { gap: 9px; color: var(--muted); font-size: 15px; font-weight: 700; letter-spacing: .09em; }
+    .mode svg { width: 19px; height: 19px; color: var(--accent); }
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) 154px; gap: 30px; align-items: end; margin: 29px 0 24px; }
+    .eyebrow { margin-bottom: 10px; color: var(--accent); font: 760 15px/1.2 "Noto Sans Mono CJK SC", monospace; letter-spacing: .12em; }
+    h1 { margin: 0; max-width: 780px; font-size: 62px; font-weight: 790; line-height: 1.05; letter-spacing: -.052em; text-wrap: balance; overflow-wrap: anywhere; }
+    .summary { margin-top: 12px; max-width: 790px; color: var(--muted); font-size: 24px; line-height: 1.48; overflow-wrap: anywhere; }
+    .verdict { width: 154px; height: 154px; display: grid; align-content: center; justify-items: center; gap: 11px; color: var(--accent); border: 1px solid var(--line); background: var(--surface-soft); }
+    .verdict strong { font: 780 39px/1 "Noto Sans Mono CJK SC", monospace; }
+    .verdict span { color: var(--muted); font-size: 13px; font-weight: 720; letter-spacing: .12em; }
+    .scope { display: grid; grid-template-columns: 1.05fr 1.35fr .8fr; border: 1px solid var(--line); background: var(--surface); }
+    .scope-item { min-width: 0; min-height: 83px; padding: 14px 17px; border-right: 1px solid var(--line); }
+    .scope-item:last-child { border-right: 0; }
+    .scope-label { margin-bottom: 7px; color: var(--accent); font-size: 13px; font-weight: 750; letter-spacing: .1em; }
+    .scope-value { font-size: 21px; font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
+    .review-facts { display: flex; margin-top: 13px; border: 1px solid var(--line); background: var(--surface-soft); }
+    .review-fact { flex: 1 1 0; min-width: 0; min-height: 104px; padding: 14px 17px 15px; border-right: 1px solid var(--line); }
+    .review-fact:last-child { border-right: 0; }
+    .review-fact-label { color: var(--accent); font-size: 13px; font-weight: 760; letter-spacing: .12em; }
+    .review-fact-value { margin-top: 8px; font-size: 19px; font-weight: 660; line-height: 1.35; overflow-wrap: anywhere; }
+    .findings { display: grid; gap: 11px; margin-top: 20px; }
+    .finding { position: relative; min-height: 137px; display: grid; grid-template-columns: 82px minmax(0, 1fr); border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
+    .finding::after { content: ""; position: absolute; inset: auto 0 0; height: 2px; background: linear-gradient(90deg, var(--accent), transparent 56%); opacity: .67; }
+    .priority { display: grid; place-items: center; color: var(--accent); border-right: 1px solid var(--line); font: 790 23px/1 "Noto Sans Mono CJK SC", monospace; }
+    .finding-copy { min-width: 0; padding: 14px 19px 16px; }
+    .finding-title { font-size: 24px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+    .location { margin-top: 5px; color: var(--accent); font: 650 14px/1.3 "Noto Sans Mono CJK SC", monospace; overflow-wrap: anywhere; }
+    .detail { margin-top: 7px; color: var(--muted); font-size: 19px; line-height: 1.42; overflow-wrap: anywhere; }
+    .empty { min-height: 266px; margin-top: 20px; display: grid; place-items: center; align-content: center; gap: 15px; color: var(--muted); border: 1px solid var(--line); background: var(--surface); text-align: center; }
+    .empty svg { width: 42px; height: 42px; color: var(--accent); }
+    .empty strong { color: var(--ink); font-size: 28px; }
+    .empty span { max-width: 690px; font-size: 21px; line-height: 1.5; }
+    .options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+    .option { min-width: 0; min-height: 83px; display: grid; grid-template-columns: 54px minmax(0, 1fr); align-items: center; border: 1px solid var(--line); background: var(--surface-soft); }
+    .option-number { color: var(--accent); font: 780 22px/1 "Noto Sans Mono CJK SC", monospace; text-align: center; }
+    .option-copy { min-width: 0; padding: 12px 12px 12px 0; }
+    .option-label { font-size: 20px; font-weight: 670; line-height: 1.25; overflow-wrap: anywhere; }
+    .option-meta { margin-top: 5px; color: var(--accent); font-size: 12px; font-weight: 720; letter-spacing: .04em; }
+    .footer { gap: 10px; margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 17px; line-height: 1.42; }
+    .footer svg { width: 18px; height: 18px; color: var(--accent); }
+
+    body.editorial { --ground: #171410; --surface: rgba(34, 29, 24, .9); --ink: #f3ecdf; --muted: rgba(243, 236, 223, .64); --line: rgba(243, 236, 223, .18); --radius: 0; }
+    body.editorial.day { --ground: #eee7da; --surface: rgba(250, 247, 239, .9); --ink: #2d251f; --muted: rgba(45, 37, 31, .65); --line: rgba(72, 56, 45, .2); }
+    body.editorial h1, body.editorial .summary, body.editorial .finding-title, body.editorial .detail { font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; }
+    body.noir { --ground: #050505; --surface: rgba(13, 13, 13, .94); --ink: #f4f0e6; --muted: rgba(244, 240, 230, .6); --line: rgba(198, 171, 116, .26); --radius: 0; }
+    body.noir.day { --ground: #eeeae1; --surface: rgba(250, 248, 242, .92); --ink: #11110f; --muted: rgba(17, 17, 15, .62); --line: rgba(103, 84, 52, .27); }
+    body.cute { --ground: #171318; --surface: rgba(34, 29, 34, .92); --ink: #f8eff1; --muted: rgba(248, 239, 241, .65); --line: rgba(248, 239, 241, .14); --radius: 22px; }
+    body.cute.day { --ground: #f6ecdf; --surface: rgba(255, 251, 243, .92); --ink: #3b3035; --muted: rgba(59, 48, 53, .65); --line: rgba(126, 93, 91, .2); }
+    body.cute .verdict, body.cute .scope, body.cute .review-facts, body.cute .finding, body.cute .empty, body.cute .option { border-radius: var(--radius); }
+    body.minimal { --ground: #0c0d0d; --surface: transparent; --ink: #f2f3ef; --muted: rgba(242, 243, 239, .61); --line: rgba(242, 243, 239, .17); --radius: 0; }
+    body.minimal.day { --ground: #f4f4f0; --ink: #111311; --muted: rgba(17, 19, 17, .62); --line: rgba(17, 19, 17, .18); }
+  </style>
+</head>
+<body class="{{.Theme}} {{.Style}} {{.Verdict}}">
+  <main class="page">
+    <div class="rail" aria-hidden="true"></div>
+    <header class="masthead">
+      <div class="identity">{{lucide "scan-search"}}<span class="brand">CODEX_LINK_CLAWBOT REVIEW</span></div>
+      <div class="mode">{{lucide "messages-square"}}<span>CODEX · INLINE</span></div>
+    </header>
+    <section class="hero">
+      <div><div class="eyebrow">MOBILE REVIEW PACKAGE</div><h1>{{.Headline}}</h1>{{if .Summary}}<div class="summary">{{.Summary}}</div>{{end}}</div>
+      <div class="verdict"><strong>{{if .Highest}}{{.Highest}}{{else if eq .Verdict "clear"}}CLEAR{{else}}READ{{end}}</strong><span>{{if .Findings}}最高优先级{{else}}审查状态{{end}}</span></div>
+    </section>
+    <section class="scope">
+      <div class="scope-item"><div class="scope-label">工作空间</div><div class="scope-value">{{.Workspace}}</div></div>
+      <div class="scope-item"><div class="scope-label">目标线程</div><div class="scope-value">{{.Thread}}</div></div>
+      <div class="scope-item"><div class="scope-label">审查范围</div><div class="scope-value">{{.Target}}</div></div>
+    </section>
+    {{if .Facts}}<section class="review-facts">{{range .Facts}}<div class="review-fact"><div class="review-fact-label">{{.Label}}</div><div class="review-fact-value">{{.Value}}</div></div>{{end}}</section>{{end}}
+    {{if .Findings}}<section class="findings">
+      {{range .Findings}}<article class="finding"><div class="priority">{{.Priority}}</div><div class="finding-copy"><div class="finding-title">{{.Title}}</div>{{if .Location}}<div class="location">{{.Location}}</div>{{end}}{{if .Detail}}<div class="detail">{{.Detail}}</div>{{end}}</div></article>{{end}}
+    </section>{{else}}<section class="empty">{{if eq .Verdict "clear"}}{{lucide "circle-check-big"}}<strong>没有识别到明确问题</strong><span>仍建议结合测试结果与实际业务约束判断是否交付。</span>{{else}}{{lucide "file-warning"}}<strong>结论需要人工阅读</strong><span>审查输出没有标准优先级条目，完整原文已保留，可回复“文字版”查看。</span>{{end}}</section>{{end}}
+    <section class="options">{{range .Options}}<div class="option"><div class="option-number">{{.Number}}</div><div class="option-copy"><div class="option-label">{{.DisplayLabel}}</div>{{if .Meta}}<div class="option-meta">{{.Meta}}</div>{{end}}</div></div>{{end}}</section>
+    {{if .Footer}}<footer class="footer">{{lucide "corner-down-left"}}<span>{{.Footer}}</span></footer>{{end}}
+  </main>
+</body>
+</html>{{end}}
+
+{{define "review.atelier"}}{{template "review.shell" .}}{{end}}

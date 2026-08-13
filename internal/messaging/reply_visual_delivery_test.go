@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 func multiPageVisualReply(t *testing.T) string {
@@ -70,7 +70,7 @@ func TestReadingPagesStageAsOneBatchBeforeVisibility(t *testing.T) {
 	reply := multiPageVisualReply(t)
 	report := handler.deliverReplyPlan(
 		context.Background(), client, ilink.WeixinMessage{FromUserID: "owner", ContextToken: "context"},
-		reply, nil, nil, nil, "client", "project", preference.ResponseReading, visual.StyleEditorial, "Project",
+		reply, nil, nil, nil, "client", DeliverySource{}, preference.ResponseReading, visual.StyleEditorial, "Project",
 	)
 	if renderer.documentRenderCalls < 2 || stagingCalls != 2 {
 		t.Fatalf("render calls=%d staging calls=%d", renderer.documentRenderCalls, stagingCalls)
@@ -121,7 +121,7 @@ func TestReadingBatchPartialSendNeverDuplicatesFullText(t *testing.T) {
 	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot", ILinkUserID: "owner", BaseURL: server.URL})
 	report := handler.deliverReplyPlan(
 		context.Background(), client, ilink.WeixinMessage{FromUserID: "owner", ContextToken: "context"},
-		multiPageVisualReply(t), nil, nil, nil, "client", "project", preference.ResponseReading, visual.StyleEditorial, "Project",
+		multiPageVisualReply(t), nil, nil, nil, "client", DeliverySource{}, preference.ResponseReading, visual.StyleEditorial, "Project",
 	)
 	if len(sent) != 2 || sent[0].Msg.ItemList[0].Type != ilink.ItemTypeImage || sent[1].Msg.ItemList[0].Type != ilink.ItemTypeImage {
 		t.Fatalf("partial send messages = %#v", sent)

@@ -16,7 +16,7 @@ func TestCredentialsUseStrictVersionedPrivateState(t *testing.T) {
 	if err := SaveCredentials(credentials); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(home, ".weclaw", "accounts", NormalizeAccountID(credentials.ILinkBotID)+".json")
+	path := filepath.Join(home, ".codex-link-clawbot", "accounts", NormalizeAccountID(credentials.ILinkBotID)+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestCredentialsUseStrictVersionedPrivateState(t *testing.T) {
 func TestCredentialsRejectUnknownFieldsAndWrongFilename(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	directory := filepath.Join(home, ".weclaw", "accounts")
+	directory := filepath.Join(home, ".codex-link-clawbot", "accounts")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}

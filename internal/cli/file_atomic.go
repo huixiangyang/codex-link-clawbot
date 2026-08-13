@@ -11,7 +11,7 @@ func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(directory, ".weclaw-write-*")
+	temporary, err := os.CreateTemp(directory, ".codex-link-clawbot-write-*")
 	if err != nil {
 		return err
 	}

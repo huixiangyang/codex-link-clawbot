@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 // reMarkdownImage matches markdown image syntax: ![alt](url)

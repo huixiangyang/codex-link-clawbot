@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 func TestStorePersistsUnifiedOwnerPreferences(t *testing.T) {

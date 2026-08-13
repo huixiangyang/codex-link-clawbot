@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 func TestActionResultValidationRejectsAmbiguousOutput(t *testing.T) {
@@ -22,13 +22,13 @@ func TestActionResultValidationRejectsAmbiguousOutput(t *testing.T) {
 		{name: "project prompt effect", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "检查改动").withProjectID("alpha"), valid: true},
 		{name: "thread prompt effect", result: effectActionResult("queue.rerun", DomainQueue, "", EffectEnqueuePrompt, "检查改动").withProjectID("alpha").withThreadID("thread-1"), valid: true},
 		{name: "new thread prompt effect", result: effectActionResult("queue.rerun", DomainQueue, "", EffectEnqueuePrompt, "检查改动").withProjectID("alpha").withNewThread(), valid: true},
-		{name: "media effect", result: effectActionResult("library.resend", DomainLibrary, "已发送", EffectSendMedia, "/tmp/result.png"), valid: true},
+		{name: "media effect", result: effectActionResult("delivery.resend", DomainDelivery, "已发送", EffectSendMedia, "/tmp/result.png"), valid: true},
 		{name: "missing identity", result: newActionResult("", DomainSystem, "菜单")},
 		{name: "unknown domain", result: newActionResult("system.menu", "unknown", "菜单")},
 		{name: "empty text", result: newActionResult("system.menu", DomainSystem, "")},
 		{name: "empty effect value", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "")},
-		{name: "media without receipt", result: effectActionResult("library.resend", DomainLibrary, "", EffectSendMedia, "/tmp/result.png")},
-		{name: "voice with hidden value", result: effectActionResult("automation.voice", DomainAutomation, "生成中", EffectVoiceBriefing, "unexpected")},
+		{name: "media without receipt", result: effectActionResult("delivery.resend", DomainDelivery, "", EffectSendMedia, "/tmp/result.png")},
+		{name: "voice with hidden value", result: effectActionResult("result.voice", DomainQueue, "生成中", EffectVoiceBriefing, "unexpected")},
 		{name: "project on text", result: newActionResult("system.menu", DomainSystem, "菜单").withProjectID("alpha")},
 		{name: "invalid project", result: effectActionResult("project.quick", DomainProject, "", EffectEnqueuePrompt, "检查改动").withProjectID("Alpha")},
 		{name: "thread on text", result: newActionResult("system.menu", DomainSystem, "菜单").withThreadID("thread-1")},

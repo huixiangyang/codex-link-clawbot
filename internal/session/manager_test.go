@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
 )
 
 type fakeThreadClient struct {

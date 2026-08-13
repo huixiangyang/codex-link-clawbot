@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 type testDrainer struct{ draining bool }

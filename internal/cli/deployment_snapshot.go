@@ -131,7 +131,7 @@ func snapshotState(stateRoot, destination string, manifest *snapshotManifest) er
 }
 
 func snapshotTopLevelFile(name string) bool {
-	return name != "weclaw.log" && name != "cutover-status.log" && name != ".state.lock"
+	return name != "codex-link-clawbot.log" && name != "cutover-status.log" && name != ".state.lock"
 }
 
 func snapshotTreeEntry(root, source, destination string, manifest *snapshotManifest) error {
@@ -290,7 +290,7 @@ func copyRegularFile(source, destination string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(destination), ".weclaw-copy-*")
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".codex-link-clawbot-copy-*")
 	if err != nil {
 		return err
 	}

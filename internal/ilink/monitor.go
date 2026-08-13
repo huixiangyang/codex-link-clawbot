@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 const (
@@ -50,7 +50,7 @@ func NewMonitor(client *Client, handler MessageHandler, observer MonitorObserver
 		return nil, err
 	}
 	accountID := NormalizeAccountID(client.BotID())
-	bufPath := filepath.Join(home, ".weclaw", "accounts", accountID+".sync.json")
+	bufPath := filepath.Join(home, ".codex-link-clawbot", "accounts", accountID+".sync.json")
 
 	m := &Monitor{
 		client:       client,
@@ -101,7 +101,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 			log.Printf("[monitor] GetUpdates error (%d/%d, backoff=%s): %v",
 				m.failures, maxConsecutiveFailures, backoff, err)
 			if m.failures == maxConsecutiveFailures {
-				log.Printf("[monitor] WARNING: %d consecutive failures. If this persists, run `weclaw login` to re-authenticate.", maxConsecutiveFailures)
+				log.Printf("[monitor] WARNING: %d consecutive failures. If this persists, run `codex-link-clawbot login` to re-authenticate.", maxConsecutiveFailures)
 			}
 			select {
 			case <-time.After(backoff):
@@ -127,7 +127,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 			} else {
 				// Sync buf already empty but still getting session expired:
 				// the bot token itself has expired. The user needs to re-login.
-				log.Printf("[monitor] WARNING: WeChat session expired and cannot be auto-recovered. Run `weclaw login` to re-authenticate.")
+				log.Printf("[monitor] WARNING: WeChat session expired and cannot be auto-recovered. Run `codex-link-clawbot login` to re-authenticate.")
 			}
 			select {
 			case <-time.After(sessionExpiredBackoff):

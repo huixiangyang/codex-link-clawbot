@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 type State string

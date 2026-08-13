@@ -117,7 +117,7 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 		if homeErr != nil {
 			return nil, fmt.Errorf("resolve visual render root: %w", homeErr)
 		}
-		cfg.RootDir = filepath.Join(home, ".weclaw", "renders")
+		cfg.RootDir = filepath.Join(home, ".codex-link-clawbot", "renders")
 	}
 	if !filepath.IsAbs(cfg.RootDir) {
 		return nil, fmt.Errorf("visual render root must be absolute")
@@ -197,6 +197,11 @@ func (r *Renderer) currentTime() time.Time {
 }
 
 func (r *Renderer) renderArtifact(ctx context.Context, pattern string, height int, htmlBytes []byte) (*Artifact, error) {
+	return r.renderArtifactSized(ctx, pattern, CanvasWidth, height, htmlBytes)
+}
+
+// renderArtifactSized 只供明确拥有独立画布规格的视图使用，普通卡片仍固定为 1080 像素宽。
+func (r *Renderer) renderArtifactSized(ctx context.Context, pattern string, width, height int, htmlBytes []byte) (*Artifact, error) {
 	select {
 	case r.sem <- struct{}{}:
 		defer func() { <-r.sem }()
@@ -238,7 +243,7 @@ func (r *Renderer) renderArtifact(ctx context.Context, pattern string, height in
 		"--hide-scrollbars",
 		"--host-resolver-rules=MAP * ~NOTFOUND",
 		"--user-data-dir=" + profileDir,
-		fmt.Sprintf("--window-size=%d,%d", CanvasWidth, height),
+		fmt.Sprintf("--window-size=%d,%d", width, height),
 		"--screenshot=" + pngPath,
 		(&url.URL{Scheme: "file", Path: htmlPath}).String(),
 	}
@@ -282,9 +287,9 @@ func (r *Renderer) renderArtifact(ctx context.Context, pattern string, height in
 		cleanup()
 		return nil, fmt.Errorf("decode rendered card: %w", decodeErr)
 	}
-	if imageConfig.Width != CanvasWidth || imageConfig.Height != height {
+	if imageConfig.Width != width || imageConfig.Height != height {
 		cleanup()
-		return nil, fmt.Errorf("rendered image dimensions are %dx%d, expected %dx%d", imageConfig.Width, imageConfig.Height, CanvasWidth, height)
+		return nil, fmt.Errorf("rendered image dimensions are %dx%d, expected %dx%d", imageConfig.Width, imageConfig.Height, width, height)
 	}
 	return &Artifact{Path: pngPath, Width: imageConfig.Width, Height: imageConfig.Height, Cleanup: cleanup}, nil
 }
@@ -311,7 +316,7 @@ func normalizeCard(card Card) Card {
 		card.Variant = VariantNeutral
 	}
 	if strings.TrimSpace(card.Title) == "" {
-		card.Title = "WeClaw"
+		card.Title = "codex-link-clawbot"
 	}
 	if card.Theme != ThemeDay && card.Theme != ThemeNight {
 		card.Theme = ThemeNight

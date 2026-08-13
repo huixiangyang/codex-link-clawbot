@@ -24,7 +24,7 @@ var loginCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Account %s added. Run 'weclaw start' to begin.\n", creds.ILinkBotID)
+		fmt.Printf("Account %s added. Run 'codex-link-clawbot start' to begin.\n", creds.ILinkBotID)
 		return nil
 	},
 }

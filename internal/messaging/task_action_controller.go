@@ -35,6 +35,8 @@ func (h *Handler) executeTaskControlAction(ctx context.Context, userID string, o
 		} else {
 			text = "最近还没有成功执行记录。直接发送内容即可开始。"
 		}
+	case actionVoiceBriefing:
+		return h.requestVoiceBriefing(userID).withIdentity(string(option.Action), DomainQueue)
 	case actionQueuePause:
 		text = h.setQueuePaused(userID, true)
 	case actionQueueResume:
@@ -66,7 +68,7 @@ func (h *Handler) dispatchTaskIntent(ctx context.Context, userID string, resolve
 			case status == controlStateActive:
 				text = controlStateFailureResult().Text
 			default:
-				text = "WeClaw 当前没有正在执行的请求。发送 / 可以打开操作总览。"
+				text = "codex-link-clawbot 当前没有正在执行的请求。发送 / 可以打开操作总览。"
 			}
 		}
 	case IntentTaskStatus:
@@ -93,6 +95,8 @@ func (h *Handler) dispatchTaskIntent(ctx context.Context, userID string, resolve
 		text = h.setQueuePaused(userID, false)
 	case IntentQueueClear:
 		text = h.confirmClearQueue(userID)
+	case IntentVoiceBriefing:
+		return h.requestVoiceBriefing(userID).withIdentity(string(resolved.Definition.ID), DomainQueue)
 	default:
 		return invalidIntentResult(resolved)
 	}

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 type fileCaptureAgent struct {
@@ -36,15 +36,20 @@ func (a *fileCaptureAgent) ChatThread(_ context.Context, _ string, request codex
 
 func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	fileData := []byte("error: build failed\nline 42\n")
-	var sentReply ilink.SendMessageRequest
+	var sentMu sync.Mutex
+	var sent []ilink.SendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/build.log":
 			_, _ = w.Write(fileData)
 		case "/ilink/bot/sendmessage":
-			if err := json.NewDecoder(r.Body).Decode(&sentReply); err != nil {
+			var request ilink.SendMessageRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode send message: %v", err)
 			}
+			sentMu.Lock()
+			sent = append(sent, request)
+			sentMu.Unlock()
 			_, _ = w.Write([]byte(`{"ret":0}`))
 		default:
 			http.NotFound(w, r)
@@ -80,8 +85,16 @@ func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	if _, err := os.Stat(capture.request.LocalFiles[0].Path); !os.IsNotExist(err) {
 		t.Fatalf("inbound file was not cleaned after turn: %v", err)
 	}
-	if len(sentReply.Msg.ItemList) != 1 || sentReply.Msg.ItemList[0].TextItem == nil || sentReply.Msg.ItemList[0].TextItem.Text != "文件检查完成" {
-		t.Fatalf("sent reply = %#v", sentReply.Msg.ItemList)
+	sentMu.Lock()
+	defer sentMu.Unlock()
+	if len(sent) != 2 {
+		t.Fatalf("sent messages = %d, want queue confirmation and final reply", len(sent))
+	}
+	if item := sent[0].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "请求已接收") {
+		t.Fatalf("first message is not queue confirmation: %#v", item)
+	}
+	if item := sent[1].Msg.ItemList[0]; item.TextItem == nil || item.TextItem.Text != "文件检查完成" {
+		t.Fatalf("second message is not final reply: %#v", item)
 	}
 }
 

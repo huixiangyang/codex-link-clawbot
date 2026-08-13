@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/api"
-	"github.com/huixiangyang/weclaw/internal/runtimecontrol"
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/api"
+	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 const (
-	defaultServiceName = "weclaw.service"
+	defaultServiceName = "codex-link-clawbot.service"
 	systemctlPath      = "/usr/bin/systemctl"
 )
 
@@ -71,7 +71,7 @@ func fetchHealth(ctx context.Context, socketPath string) (runtimecontrol.Snapsho
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://weclaw.local/health", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://codex-link-clawbot.local/health", nil)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
@@ -107,7 +107,7 @@ func requestAdmin(ctx context.Context, socketPath, action string) (runtimecontro
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://weclaw.local/admin/"+action, http.NoBody)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://codex-link-clawbot.local/admin/"+action, http.NoBody)
 	if err != nil {
 		return runtimecontrol.Snapshot{}, err
 	}
@@ -131,30 +131,42 @@ func requestAdmin(ctx context.Context, socketPath, action string) (runtimecontro
 	return snapshot, nil
 }
 
-func requestDeploymentNotification(ctx context.Context, socketPath string, notice api.DeploymentNotice) error {
+func requestDeploymentNotification(ctx context.Context, socketPath string, notice api.DeploymentNotice) (string, error) {
 	client, err := newManagementHTTPClient(socketPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(notice); err != nil {
-		return err
+		return "", err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://weclaw.local/admin/deployment-notification", &body)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://codex-link-clawbot.local/admin/deployment-notification", &body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
-	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("deployment notification returned HTTP %d", response.StatusCode)
+	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+		return "", fmt.Errorf("deployment notification returned HTTP %d", response.StatusCode)
 	}
-	return nil
+	var result api.DeploymentNotificationResult
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return "", err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("decode deployment notification: trailing data")
+	}
+	if result.Status != api.DeploymentNotificationSent && result.Status != api.DeploymentNotificationDeferred {
+		return "", fmt.Errorf("deployment notification returned invalid status %q", result.Status)
+	}
+	return result.Status, nil
 }
 
 func waitForDrain(ctx context.Context, socketPath string, timeout time.Duration) (runtimecontrol.Snapshot, error) {
@@ -235,7 +247,7 @@ func defaultBinaryPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "bin", "weclaw"), nil
+	return filepath.Join(home, ".local", "bin", "codex-link-clawbot"), nil
 }
 
 func userUnitPath(service string) (string, error) {

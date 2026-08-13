@@ -8,12 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
-	"github.com/huixiangyang/weclaw/internal/workflow"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 	"github.com/spf13/cobra"
 )
 
@@ -45,10 +42,8 @@ type currentCredentialState struct {
 
 var migrationStateRoot string
 
-var migrationIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
-
 func init() {
-	migrateStateCmd.Flags().StringVar(&migrationStateRoot, "root", "", "absolute WeClaw state root")
+	migrateStateCmd.Flags().StringVar(&migrationStateRoot, "root", "", "absolute codex-link-clawbot state root")
 	_ = migrateStateCmd.MarkFlagRequired("root")
 	rootCmd.AddCommand(migrateStateCmd)
 }
@@ -103,21 +98,26 @@ func migrateState(root string) error {
 			return fmt.Errorf("migrate %s: %w", entry.Name(), migrateErr)
 		}
 	}
-	for _, legacyName := range []string{"task-history.json", "weclaw.pid"} {
+	for _, legacyName := range []string{"task-history.json", "codex-link-clawbot.pid"} {
 		path := filepath.Join(root, legacyName)
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove legacy %s: %w", legacyName, err)
 		}
 	}
-	ownerIDs, err := migratedOwnerIDs(accountsPath)
-	if err != nil {
-		return fmt.Errorf("resolve workflow owners: %w", err)
+	if err := removeRetiredPromptTemplates(filepath.Join(root, "workflows.json")); err != nil {
+		return fmt.Errorf("remove prompt templates: %w", err)
 	}
-	if err := migrateProjectWorkflows(filepath.Join(root, "config.json"), filepath.Join(root, "workflows.json"), ownerIDs); err != nil {
-		return fmt.Errorf("migrate project workflows: %w", err)
+	if err := validateConfigurationV5(filepath.Join(root, "config.json")); err != nil {
+		return fmt.Errorf("validate config: %w", err)
 	}
-	if err := migrateConfigurationV2(filepath.Join(root, "config.json")); err != nil {
-		return fmt.Errorf("migrate config: %w", err)
+	if err := migrateDeliveryLibrary(root); err != nil {
+		return fmt.Errorf("migrate delivery library: %w", err)
+	}
+	if err := removeRetiredProjectMonitoringState(root); err != nil {
+		return fmt.Errorf("remove retired project monitoring state: %w", err)
+	}
+	if err := removeRetiredProjectWatchNotices(filepath.Join(root, "pending-notices.json")); err != nil {
+		return fmt.Errorf("remove retired project watch notices: %w", err)
 	}
 	if err := migrateControlState(filepath.Join(root, "control-state.json")); err != nil {
 		return fmt.Errorf("migrate control state: %w", err)
@@ -125,7 +125,7 @@ func migrateState(root string) error {
 	return syncDirectoryPath(root)
 }
 
-// migrateControlState 丢弃旧版短期菜单和回执；Codex 线程、WeClaw 请求队列与提示词模板不依赖这些临时选择。
+// migrateControlState 丢弃旧版短期菜单和回执；v13 在首页平铺微信端真实可用的 Codex 命令并取消二级入口。
 func migrateControlState(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -153,154 +153,38 @@ func migrateControlState(path string) error {
 		return fmt.Errorf("control state schema is invalid")
 	}
 	switch state.Version {
-	case 5:
+	case 13:
 		return os.Chmod(path, 0o600)
-	case 1, 2, 3, 4:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12:
 		return writePrivateJSONAtomic(path, struct {
 			Version  int                        `json:"version"`
 			Owners   map[string]json.RawMessage `json:"owners"`
 			Receipts map[string]json.RawMessage `json:"receipts"`
-		}{Version: 5, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
+		}{Version: 13, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
 	default:
 		return fmt.Errorf("unsupported control state version %d", state.Version)
 	}
 }
 
-type legacyQuickTaskConfig struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Prompt string `json:"prompt"`
-}
-
-func migratedOwnerIDs(accountsPath string) ([]string, error) {
-	entries, err := os.ReadDir(accountsPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]bool)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasSuffix(entry.Name(), ".sync.json") {
-			continue
+// removeRetiredPromptTemplates 直接销毁当前命名空间中已下线的模板状态。
+// 历史配置不在这里改写，而是由严格 v5 校验直接拒绝。
+func removeRetiredPromptTemplates(workflowPath string) error {
+	workflowInfo, workflowErr := os.Lstat(workflowPath)
+	if workflowErr == nil {
+		if !workflowInfo.Mode().IsRegular() || workflowInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("workflow state must be a regular file")
 		}
-		data, err := os.ReadFile(filepath.Join(accountsPath, entry.Name()))
-		if err != nil {
-			return nil, err
-		}
-		var credential currentCredentialState
-		if err := decodeStrictJSONBytes(data, &credential); err != nil {
-			return nil, err
-		}
-		if err := validateCredentialState(credential.Version, credential.BotToken, credential.ILinkBotID, credential.BaseURL, credential.ILinkUserID); err != nil {
-			return nil, err
-		}
-		seen[credential.ILinkUserID] = true
-	}
-	owners := make([]string, 0, len(seen))
-	for ownerID := range seen {
-		owners = append(owners, ownerID)
-	}
-	sort.Strings(owners)
-	return owners, nil
-}
-
-func migrateProjectWorkflows(configPath, workflowPath string, ownerIDs []string) error {
-	info, err := os.Lstat(configPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("config must be a regular file")
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
-	var fields map[string]json.RawMessage
-	if err := decodeStrictJSONBytes(data, &fields); err != nil {
-		return err
-	}
-	projectsRaw, exists := fields["projects"]
-	if !exists {
-		return nil
-	}
-	var projects []map[string]json.RawMessage
-	if err := decodeStrictJSONBytes(projectsRaw, &projects); err != nil {
-		return fmt.Errorf("decode projects: %w", err)
-	}
-	projectIDs := make([]string, 0, len(projects))
-	projectTasks := make(map[string][]legacyQuickTaskConfig)
-	hadQuickTaskField := false
-	hasQuickTasks := false
-	for index, projectFields := range projects {
-		var projectID string
-		if rawID, ok := projectFields["id"]; !ok || json.Unmarshal(rawID, &projectID) != nil || !migrationIDPattern.MatchString(projectID) {
-			return fmt.Errorf("projects[%d].id is invalid", index)
-		}
-		projectIDs = append(projectIDs, projectID)
-		rawTasks, ok := projectFields["quick_tasks"]
-		if !ok {
-			continue
-		}
-		hadQuickTaskField = true
-		var tasks []legacyQuickTaskConfig
-		if err := decodeStrictJSONBytes(rawTasks, &tasks); err != nil {
-			return fmt.Errorf("decode projects[%d].quick_tasks: %w", index, err)
-		}
-		seenIDs := make(map[string]bool, len(tasks))
-		for taskIndex, task := range tasks {
-			if !migrationIDPattern.MatchString(task.ID) || seenIDs[task.ID] {
-				return fmt.Errorf("projects[%d].quick_tasks[%d].id is invalid or duplicated", index, taskIndex)
-			}
-			seenIDs[task.ID] = true
-		}
-		if len(tasks) > 0 {
-			hasQuickTasks = true
-			projectTasks[projectID] = tasks
-		}
-		delete(projectFields, "quick_tasks")
-	}
-	if !hadQuickTaskField {
-		return nil
-	}
-	if hasQuickTasks {
-		if len(ownerIDs) == 0 {
-			return fmt.Errorf("cannot assign configured quick tasks without a bound owner")
-		}
-		store, err := workflow.NewStore(workflowPath, projectIDs)
-		if err != nil {
+		if err := os.Remove(workflowPath); err != nil {
 			return err
 		}
-		for _, ownerID := range ownerIDs {
-			for _, projectID := range projectIDs {
-				for _, task := range projectTasks[projectID] {
-					definition := workflow.Definition{
-						ID: workflow.StableImportID(projectID, task.ID), ProjectID: projectID,
-						Name: strings.TrimSpace(task.Name), PromptTemplate: strings.TrimSpace(task.Prompt),
-						Slots: []workflow.Slot{}, CreatedAt: 1, UpdatedAt: 1,
-					}
-					if _, err := store.Import(ownerID, definition); err != nil {
-						return err
-					}
-				}
-			}
-		}
+	} else if !errors.Is(workflowErr, os.ErrNotExist) {
+		return workflowErr
 	}
-	encodedProjects, err := json.Marshal(projects)
-	if err != nil {
-		return err
-	}
-	fields["projects"] = encodedProjects
-	return writePrivateJSONAtomic(configPath, fields)
+	return nil
 }
 
-// migrateConfigurationV2 将扁平旧配置一次性重组为 Codex 与 WeClaw 两层；运行时不读取旧结构。
-func migrateConfigurationV2(path string) error {
+// validateConfigurationV5 拒绝旧品牌与旧结构；项目更名后不再迁移历史配置。
+func validateConfigurationV5(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -322,84 +206,165 @@ func migrateConfigurationV2(path string) error {
 	if fields == nil {
 		return fmt.Errorf("config must be a JSON object")
 	}
-	if rawVersion, exists := fields["schema_version"]; exists {
-		var version int
-		if err := json.Unmarshal(rawVersion, &version); err != nil || version != 2 {
-			return fmt.Errorf("unsupported configuration schema version")
-		}
-		return os.Chmod(path, 0o600)
-	}
-	allowed := map[string]bool{
-		"save_dir": true, "send_api": true, "progress": true, "projects": true,
-		"automations": true, "codex": true, "visual": true, "security": true, "voice": true,
-	}
+	allowed := map[string]bool{"schema_version": true, "codex": true, "codex-link-clawbot": true}
 	for name := range fields {
 		if !allowed[name] {
 			return fmt.Errorf("unknown field %q", name)
 		}
 	}
+	rawVersion, exists := fields["schema_version"]
+	if !exists {
+		return fmt.Errorf("schema_version is required")
+	}
+	var version int
+	if err := json.Unmarshal(rawVersion, &version); err != nil || version != 5 {
+		return fmt.Errorf("unsupported configuration schema version")
+	}
+	if _, exists := fields["codex"]; !exists {
+		return fmt.Errorf("codex is required")
+	}
+	if _, exists := fields["codex-link-clawbot"]; !exists {
+		return fmt.Errorf("codex-link-clawbot is required")
+	}
+	return os.Chmod(path, 0o600)
+}
 
-	reply := make(map[string]json.RawMessage)
-	for _, name := range []string{"progress", "visual", "voice"} {
-		if value, exists := fields[name]; exists {
-			reply[name] = value
+// migrateDeliveryLibrary 破坏性升级交付箱：v3 要求每个文件都有任务、线程与摘要校验来源。
+// 旧记录无法可靠补齐这些事实，因此销毁旧私有副本，不保留运行时兼容分支。
+func migrateDeliveryLibrary(root string) error {
+	root = filepath.Clean(root)
+	path := filepath.Join(root, "library.json")
+	archivePath := filepath.Join(root, "deliveries")
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return resetDeliveryLibrary(path, archivePath)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("delivery library must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	if header.Version == 3 {
+		return os.Chmod(path, 0o600)
+	}
+	if header.Version != 1 && header.Version != 2 {
+		return fmt.Errorf("unsupported delivery library version %d", header.Version)
+	}
+	return resetDeliveryLibrary(path, archivePath)
+}
+
+func resetDeliveryLibrary(path, archivePath string) error {
+	if info, err := os.Lstat(archivePath); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("delivery archive must be a real directory")
+		}
+		if err := os.RemoveAll(archivePath); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := writePrivateJSONAtomic(path, struct {
+		Version int                          `json:"version"`
+		Owners  map[string][]json.RawMessage `json:"owners"`
+	}{Version: 3, Owners: map[string][]json.RawMessage{}}); err != nil {
+		return err
+	}
+	return syncDirectoryPath(filepath.Dir(path))
+}
+
+// removeRetiredProjectMonitoringState 销毁所有历史监控游标，不迁入其他业务状态。
+func removeRetiredProjectMonitoringState(root string) error {
+	for _, name := range []string{"automation-state.json", "project-watch-state.json", "scheduled-reports-state.json"} {
+		path := filepath.Join(root, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("retired project monitoring state %s must be a regular file", name)
+		}
+		if err := os.Remove(path); err != nil {
+			return err
 		}
 	}
-	features := make(map[string]json.RawMessage)
-	if value, exists := fields["automations"]; exists {
-		features["automations"] = value
+	return syncDirectoryPath(root)
+}
+
+type migratedPendingNotice struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	DedupKey    string `json:"dedup_key"`
+	ReferenceID string `json:"reference_id,omitempty"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	CreatedAt   int64  `json:"created_at"`
+	ExpiresAt   int64  `json:"expires_at"`
+}
+
+// removeRetiredProjectWatchNotices 只删除已下线项目关注产生的待阅消息。
+func removeRetiredProjectWatchNotices(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	linkArchive := struct {
-		Enabled   bool   `json:"enabled"`
-		Directory string `json:"directory,omitempty"`
-	}{}
-	if value, exists := fields["save_dir"]; exists {
-		if err := json.Unmarshal(value, &linkArchive.Directory); err != nil {
-			return fmt.Errorf("decode save_dir: %w", err)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("pending notice state must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var state struct {
+		Version int                                `json:"version"`
+		Owners  map[string][]migratedPendingNotice `json:"owners"`
+	}
+	if err := decodeStrictJSONBytes(data, &state); err != nil {
+		return err
+	}
+	if state.Version != 1 || state.Owners == nil {
+		return fmt.Errorf("pending notice state schema is invalid")
+	}
+	changed := false
+	for ownerID, notices := range state.Owners {
+		kept := notices[:0]
+		for _, notice := range notices {
+			switch notice.Kind {
+			case "project_watch":
+				changed = true
+			case "deployment", "task_recovery":
+				kept = append(kept, notice)
+			default:
+				return fmt.Errorf("pending notice kind %q is unsupported", notice.Kind)
+			}
 		}
-		linkArchive.Enabled = strings.TrimSpace(linkArchive.Directory) != ""
+		if len(kept) == 0 {
+			delete(state.Owners, ownerID)
+		} else {
+			state.Owners[ownerID] = kept
+		}
 	}
-	linkArchiveJSON, err := json.Marshal(linkArchive)
-	if err != nil {
-		return err
+	if !changed {
+		return os.Chmod(path, 0o600)
 	}
-	features["link_archive"] = linkArchiveJSON
-
-	weclaw := make(map[string]json.RawMessage)
-	if value, exists := fields["projects"]; exists {
-		weclaw["project_entries"] = value
-	}
-	if value, exists := fields["security"]; exists {
-		weclaw["security"] = value
-	}
-	if value, exists := fields["send_api"]; exists {
-		weclaw["send_api"] = value
-	} else {
-		weclaw["send_api"] = json.RawMessage(`{"enabled":false}`)
-	}
-	replyJSON, err := json.Marshal(reply)
-	if err != nil {
-		return err
-	}
-	featuresJSON, err := json.Marshal(features)
-	if err != nil {
-		return err
-	}
-	weclaw["reply"] = replyJSON
-	weclaw["features"] = featuresJSON
-	weclawJSON, err := json.Marshal(weclaw)
-	if err != nil {
-		return err
-	}
-
-	current := map[string]json.RawMessage{
-		"schema_version": json.RawMessage(`2`),
-		"weclaw":         weclawJSON,
-	}
-	if value, exists := fields["codex"]; exists {
-		current["codex"] = value
-	}
-	return writePrivateJSONAtomic(path, current)
+	return writePrivateJSONAtomic(path, state)
 }
 
 func migrateCredentialFile(path string) error {

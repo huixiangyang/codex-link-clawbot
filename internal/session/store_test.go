@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
 )
 
 func TestStorePersistsOwnershipAndActiveThread(t *testing.T) {

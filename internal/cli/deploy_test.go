@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
-	"github.com/huixiangyang/weclaw/internal/workflow"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
@@ -29,7 +29,7 @@ func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
 	if err := os.WriteFile(current, []byte(`{"version":1,"get_updates_buf":"cursor-2","pending_cursor":"pending","consumed":["message:1"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"task-history.json", "weclaw.pid"} {
+	for _, name := range []string{"task-history.json", "codex-link-clawbot.pid"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("legacy"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +59,7 @@ func TestMigrateStateV26ConvertsOnlyKnownLegacyState(t *testing.T) {
 	if err := decodeStrictJSONBytes(credentialsData, &credentials); err != nil || credentials.Version != 1 || credentials.BotToken != "secret" {
 		t.Fatalf("migrated credentials = %#v, err=%v", credentials, err)
 	}
-	for _, name := range []string{"task-history.json", "weclaw.pid"} {
+	for _, name := range []string{"task-history.json", "codex-link-clawbot.pid"} {
 		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
 			t.Fatalf("legacy %s still exists: %v", name, err)
 		}
@@ -99,11 +99,60 @@ func TestMigrateStateV26RejectsRunningStateLease(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReorganizesFlatConfiguration(t *testing.T) {
+func TestMigrateStateRejectsPreRenameConfigurations(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+	}{
+		{name: "flat", config: `{"codex":{"command":"codex"},"projects":[{"id":"app","name":"App","root":"/srv/app"}]}`},
+		{name: "v2", config: `{"schema_version":2,"codex":{"command":"codex"},"codex-link-clawbot":{}}`},
+		{name: "v3", config: `{"schema_version":3,"codex":{"command":"codex"},"codex-link-clawbot":{}}`},
+		{name: "old brand key", config: `{"schema_version":5,"codex":{"command":"codex"},"weclaw":{}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(test.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := migrateState(root); err == nil {
+				t.Fatal("pre-rename configuration was accepted")
+			}
+		})
+	}
+}
+
+func TestMigrateStateAcceptsCurrentConfigurationV5(t *testing.T) {
 	root := t.TempDir()
-	legacy := `{"codex":{"command":"codex"},"projects":[{"id":"app","name":"App","root":"/srv/app"}],"progress":{"enabled":true},"save_dir":"/srv/archive"}`
+	current := `{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[],"reply":{},"security":{}}}`
 	path := filepath.Join(root, "config.json")
-	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(current), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("current config mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestMigrateStateResetsLegacyDeliveryRecords(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "library.json")
+	archive := filepath.Join(root, "deliveries", "owner")
+	if err := os.MkdirAll(archive, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "report.pdf"), []byte("pdf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v1 := `{"version":1,"owners":{"owner":[{"id":"link","kind":"link","title":"参考","url":"https://example.com","created_at":1},{"id":"file","kind":"delivery","project_id":"app","title":"report.pdf","file_path":"/srv/deliveries/report.pdf","size":3,"created_at":2}]}}`
+	if err := os.WriteFile(path, []byte(v1), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrateState(root); err != nil {
@@ -113,17 +162,51 @@ func TestMigrateStateReorganizesFlatConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"schema_version": 2`, `"weclaw"`, `"project_entries"`, `"link_archive"`, `"directory": "/srv/archive"`, `"send_api"`} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("migrated config missing %s: %s", want, data)
-		}
+	if !strings.Contains(string(data), `"version": 3`) || !strings.Contains(string(data), `"owners": {}`) || strings.Contains(string(data), `"id": "file"`) {
+		t.Fatalf("migrated delivery library = %s", data)
 	}
-	if strings.Contains(string(data), `"projects"`) || strings.Contains(string(data), `"save_dir"`) {
-		t.Fatalf("migrated config=%s", data)
+	if _, err := os.Stat(filepath.Join(root, "deliveries")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy delivery archive still exists: %v", err)
 	}
 }
 
-func TestMigrateStateReplacesLegacyControlStateWithEmptyV5(t *testing.T) {
+func TestMigrateStateDestroysProjectMonitoringState(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"automation-state.json", "project-watch-state.json", "scheduled-reports-state.json"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(`{"retired":true}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"automation-state.json", "project-watch-state.json", "scheduled-reports-state.json"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("retired monitoring state %s still exists: %v", name, err)
+		}
+	}
+}
+
+func TestMigrateStateRemovesOnlyProjectWatchNotices(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "pending-notices.json")
+	state := `{"version":1,"owners":{"owner":[{"id":"11111111111111111111111111111111","kind":"project_watch","dedup_key":"watch:daily","title":"项目关注","body":"异常","created_at":1,"expires_at":2},{"id":"22222222222222222222222222222222","kind":"deployment","dedup_key":"deploy:v4","title":"部署完成","body":"版本已更新","created_at":1,"expires_at":2}]}}`
+	if err := os.WriteFile(path, []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "project_watch") || strings.Contains(string(data), "watch:daily") || !strings.Contains(string(data), "deployment") {
+		t.Fatalf("migrated pending notices = %s", data)
+	}
+}
+
+func TestMigrateStateReplacesLegacyControlStateWithEmptyV13(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"session.new"}}}`
@@ -137,7 +220,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV5(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 5,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 13,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
@@ -145,7 +228,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV5(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesV2ControlStateWithEmptyV5(t *testing.T) {
+func TestMigrateStateReplacesV2ControlStateWithEmptyV13(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":2,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
@@ -159,15 +242,15 @@ func TestMigrateStateReplacesV2ControlStateWithEmptyV5(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 5,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 13,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }
 
-func TestMigrateStateReplacesV4ControlStateWithEmptyV5(t *testing.T) {
+func TestMigrateStateReplacesV12ControlStateWithEmptyV13(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":4,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
+	legacy := `{"version":12,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +261,7 @@ func TestMigrateStateReplacesV4ControlStateWithEmptyV5(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 5,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 13,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }
@@ -205,114 +288,39 @@ func TestMigrateStateRejectsUnknownControlStateField(t *testing.T) {
 	}
 }
 
-func TestMigrateStateMovesConfiguredQuickTasksIntoOwnerWorkflows(t *testing.T) {
+func TestMigrateStateDestroysRetiredWorkflowFile(t *testing.T) {
 	root := t.TempDir()
-	accounts := filepath.Join(root, "accounts")
-	if err := os.MkdirAll(accounts, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	credential := `{"version":1,"bot_token":"secret","ilink_bot_id":"bot","baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"owner-1"}`
-	if err := os.WriteFile(filepath.Join(accounts, "bot.json"), []byte(credential), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configData := `{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[{"id":"review","name":"审查改动","prompt":"审查当前改动"}]}]}`
+	configData := `{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{},"security":{}}}`
 	configPath := filepath.Join(root, "config.json")
 	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workflowPath := filepath.Join(root, "workflows.json")
+	if err := os.WriteFile(workflowPath, []byte(`{"version":1,"owners":{"owner-1":{}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrateState(root); err != nil {
 		t.Fatal(err)
 	}
-	migratedConfig, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(migratedConfig), "quick_tasks") {
-		t.Fatalf("legacy quick_tasks survived migration: %s", migratedConfig)
-	}
-	store, err := workflow.NewStore(filepath.Join(root, "workflows.json"), []string{"weclaw"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	definitions := store.List("owner-1", "weclaw")
-	if len(definitions) != 1 || definitions[0].Name != "审查改动" || definitions[0].PromptTemplate != "审查当前改动" || len(definitions[0].Slots) != 0 {
-		t.Fatalf("migrated workflows = %#v", definitions)
+	if _, err := os.Stat(workflowPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retired workflow state still exists: %v", err)
 	}
 	if err := migrateState(root); err != nil {
-		t.Fatalf("idempotent workflow migration error = %v", err)
-	}
-	reopened, err := workflow.NewStore(filepath.Join(root, "workflows.json"), []string{"weclaw"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if definitions := reopened.List("owner-1", "weclaw"); len(definitions) != 1 {
-		t.Fatalf("workflow migration duplicated definitions: %#v", definitions)
+		t.Fatalf("idempotent prompt template removal error = %v", err)
 	}
 }
 
-func TestMigrateStateRefusesQuickTasksWithoutBoundOwner(t *testing.T) {
+func TestMigrateStateRejectsUnsafePromptTemplateState(t *testing.T) {
 	root := t.TempDir()
-	configData := `{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[{"id":"review","name":"审查改动","prompt":"审查当前改动"}]}]}`
-	configPath := filepath.Join(root, "config.json")
-	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
+	target := filepath.Join(root, "target.json")
+	if err := os.WriteFile(target, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "without a bound owner") {
-		t.Fatalf("migration error = %v", err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil || !strings.Contains(string(data), "quick_tasks") {
-		t.Fatalf("failed migration removed source tasks: %s, %v", data, err)
-	}
-}
-
-func TestMigrateStateRemovesEmptyQuickTaskFieldWithoutOwner(t *testing.T) {
-	root := t.TempDir()
-	configPath := filepath.Join(root, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[]}]}`), 0o600); err != nil {
+	if err := os.Symlink(target, filepath.Join(root, "workflows.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateState(root); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil || strings.Contains(string(data), "quick_tasks") {
-		t.Fatalf("empty quick_tasks survived migration: %s, %v", data, err)
-	}
-}
-
-func TestMigrateStateKeepsQuickTasksWhenWorkflowConflicts(t *testing.T) {
-	root := t.TempDir()
-	accounts := filepath.Join(root, "accounts")
-	if err := os.MkdirAll(accounts, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	credential := `{"version":1,"bot_token":"secret","ilink_bot_id":"bot","baseurl":"https://ilinkai.weixin.qq.com","ilink_user_id":"owner-1"}`
-	if err := os.WriteFile(filepath.Join(accounts, "bot.json"), []byte(credential), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(root, "config.json")
-	configData := `{"projects":[{"id":"weclaw","name":"WeClaw","root":"/srv/weclaw","quick_tasks":[{"id":"review","name":"审查改动","prompt":"配置内容"}]}]}`
-	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := workflow.NewStore(filepath.Join(root, "workflows.json"), []string{"weclaw"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = store.Import("owner-1", workflow.Definition{
-		ID: workflow.StableImportID("weclaw", "review"), ProjectID: "weclaw", Name: "审查改动",
-		PromptTemplate: "用户已修改内容", Slots: []workflow.Slot{}, CreatedAt: 1, UpdatedAt: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "conflicts") {
-		t.Fatalf("migration conflict error = %v", err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil || !strings.Contains(string(data), "quick_tasks") {
-		t.Fatalf("conflicting migration removed source: %s, %v", data, err)
+	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("unsafe workflow state error = %v", err)
 	}
 }
 
@@ -320,11 +328,11 @@ func TestDeploymentSnapshotRestoresManagedStateAndLeavesWorkspace(t *testing.T) 
 	base := t.TempDir()
 	stateRoot := filepath.Join(base, "state")
 	deploymentDir := filepath.Join(stateRoot, "deployments", "tx")
-	binaryPath := filepath.Join(base, "bin", "weclaw")
-	unitPath := filepath.Join(base, "units", "weclaw.service")
+	binaryPath := filepath.Join(base, "bin", "codex-link-clawbot")
+	unitPath := filepath.Join(base, "units", "codex-link-clawbot.service")
 	mustWriteTestFile(t, filepath.Join(stateRoot, "config.json"), "old-config", 0o600)
 	mustWriteTestFile(t, filepath.Join(stateRoot, "task-history.json"), "old-history", 0o600)
-	mustWriteTestFile(t, filepath.Join(stateRoot, "weclaw.log"), "old-log", 0o600)
+	mustWriteTestFile(t, filepath.Join(stateRoot, "codex-link-clawbot.log"), "old-log", 0o600)
 	mustWriteTestFile(t, filepath.Join(stateRoot, "accounts", "owner.sync.json"), "old-sync", 0o600)
 	mustWriteTestFile(t, filepath.Join(stateRoot, "tasks", "index.json"), "old-queue", 0o600)
 	mustWriteTestFile(t, filepath.Join(stateRoot, "workspace", "user.txt"), "user-work", 0o600)
@@ -337,7 +345,7 @@ func TestDeploymentSnapshotRestoresManagedStateAndLeavesWorkspace(t *testing.T) 
 	}
 	mustWriteTestFile(t, filepath.Join(stateRoot, "config.json"), "new-config", 0o600)
 	mustWriteTestFile(t, filepath.Join(stateRoot, "new-state.json"), "new-state", 0o600)
-	mustWriteTestFile(t, filepath.Join(stateRoot, "weclaw.log"), "new-log", 0o600)
+	mustWriteTestFile(t, filepath.Join(stateRoot, "codex-link-clawbot.log"), "new-log", 0o600)
 	mustWriteTestFile(t, filepath.Join(stateRoot, "workspace", "user.txt"), "new-user-work", 0o600)
 	mustWriteTestFile(t, binaryPath, "new-binary", 0o755)
 	mustWriteTestFile(t, unitPath, "new-unit", 0o644)
@@ -348,7 +356,7 @@ func TestDeploymentSnapshotRestoresManagedStateAndLeavesWorkspace(t *testing.T) 
 	assertTestFile(t, filepath.Join(stateRoot, "config.json"), "old-config")
 	assertTestFile(t, filepath.Join(stateRoot, "accounts", "owner.sync.json"), "old-sync")
 	assertTestFile(t, filepath.Join(stateRoot, "tasks", "index.json"), "old-queue")
-	assertTestFile(t, filepath.Join(stateRoot, "weclaw.log"), "new-log")
+	assertTestFile(t, filepath.Join(stateRoot, "codex-link-clawbot.log"), "new-log")
 	assertTestFile(t, filepath.Join(stateRoot, "workspace", "user.txt"), "new-user-work")
 	assertTestFile(t, binaryPath, "old-binary")
 	assertTestFile(t, unitPath, "old-unit")
@@ -364,8 +372,8 @@ func TestDeploymentSnapshotRejectsTampering(t *testing.T) {
 	base := t.TempDir()
 	stateRoot := filepath.Join(base, "state")
 	deploymentDir := filepath.Join(stateRoot, "deployments", "tx")
-	binaryPath := filepath.Join(base, "weclaw")
-	unitPath := filepath.Join(base, "weclaw.service")
+	binaryPath := filepath.Join(base, "codex-link-clawbot")
+	unitPath := filepath.Join(base, "codex-link-clawbot.service")
 	mustWriteTestFile(t, filepath.Join(stateRoot, "config.json"), "config", 0o600)
 	mustWriteTestFile(t, binaryPath, "binary", 0o755)
 	mustWriteTestFile(t, unitPath, "unit", 0o644)
@@ -380,17 +388,17 @@ func TestDeploymentSnapshotRejectsTampering(t *testing.T) {
 }
 
 func TestRewriteSystemdUnitRemovesLegacyForeground(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "weclaw.service")
-	content := "[Service]\nExecStart=/old/weclaw start --foreground --api-addr 127.0.0.1:18011\nRestart=always\n"
+	path := filepath.Join(t.TempDir(), "codex-link-clawbot.service")
+	content := "[Service]\nExecStart=/old/codex-link-clawbot start --foreground --api-addr 127.0.0.1:18011\nRestart=always\n"
 	mustWriteTestFile(t, path, content, 0o644)
-	if err := rewriteSystemdUnit(path, "/new/weclaw", true); err != nil {
+	if err := rewriteSystemdUnit(path, "/new/codex-link-clawbot", true); err != nil {
 		t.Fatalf("rewriteSystemdUnit() error = %v", err)
 	}
-	assertTestFile(t, path, "[Service]\nExecStart=/new/weclaw start --draining\nRestart=always\n")
-	if err := rewriteSystemdUnit(path, "/new/weclaw", false); err != nil {
+	assertTestFile(t, path, "[Service]\nExecStart=/new/codex-link-clawbot start --draining\nRestart=always\n")
+	if err := rewriteSystemdUnit(path, "/new/codex-link-clawbot", false); err != nil {
 		t.Fatalf("rewriteSystemdUnit(normal) error = %v", err)
 	}
-	assertTestFile(t, path, "[Service]\nExecStart=/new/weclaw start\nRestart=always\n")
+	assertTestFile(t, path, "[Service]\nExecStart=/new/codex-link-clawbot start\nRestart=always\n")
 }
 
 func TestInspectCandidateVersionRequiresExactPlatformMetadata(t *testing.T) {
@@ -408,21 +416,21 @@ func TestInspectCandidateVersionRequiresExactPlatformMetadata(t *testing.T) {
 }
 
 func TestVerifyReleaseChecksum(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "weclaw_linux_amd64")
+	path := filepath.Join(t.TempDir(), "codex-link-clawbot_linux_amd64")
 	content := []byte("verified release")
 	mustWriteTestFile(t, path, string(content), 0o600)
 	sum := sha256.Sum256(content)
-	manifest := []byte(fmt.Sprintf("%x  weclaw_linux_amd64\n", sum))
-	if got, err := verifyReleaseChecksum(path, "weclaw_linux_amd64", manifest); err != nil || got != fmt.Sprintf("%x", sum) {
+	manifest := []byte(fmt.Sprintf("%x  codex-link-clawbot_linux_amd64\n", sum))
+	if got, err := verifyReleaseChecksum(path, "codex-link-clawbot_linux_amd64", manifest); err != nil || got != fmt.Sprintf("%x", sum) {
 		t.Fatalf("verifyReleaseChecksum() = %q, %v", got, err)
 	}
-	if _, err := verifyReleaseChecksum(path, "weclaw_linux_arm64", manifest); err == nil {
+	if _, err := verifyReleaseChecksum(path, "codex-link-clawbot_linux_arm64", manifest); err == nil {
 		t.Fatal("verifyReleaseChecksum() accepted a missing platform artifact")
 	}
 }
 
 func TestValidateDeployOptionsSeparatesReleaseAndLocalModes(t *testing.T) {
-	base := deployOptions{Service: defaultServiceName, Timeout: time.Minute, TargetBinary: "/tmp/weclaw", StateRoot: "/tmp/state"}
+	base := deployOptions{Service: defaultServiceName, Timeout: time.Minute, TargetBinary: "/tmp/codex-link-clawbot", StateRoot: "/tmp/state"}
 	release := base
 	release.ReleaseVersion = "v2.5.0-test.1"
 	if err := validateDeployOptions(release); err != nil {

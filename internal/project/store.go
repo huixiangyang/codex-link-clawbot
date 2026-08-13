@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 func (m *Manager) load() error {

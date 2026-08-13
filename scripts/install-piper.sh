@@ -2,7 +2,7 @@
 set -eu
 
 VOICE_NAME="${1:-zh_CN-huayan-medium}"
-PIPER_ROOT="${WECLAW_PIPER_ROOT:-${HOME}/.weclaw/tts/piper}"
+PIPER_ROOT="${CODEX_LINK_CLAWBOT_PIPER_ROOT:-${HOME}/.codex-link-clawbot/tts/piper}"
 VENV_DIR="${PIPER_ROOT}/venv"
 VOICE_DIR="${PIPER_ROOT}/voices"
 
@@ -15,7 +15,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   exit 1
 fi
 
-# Piper 及模型只写入 WeClaw 私有目录，不污染系统 Python。
+# Piper 及模型只写入 codex-link-clawbot 私有目录，不污染系统 Python。
 install -d -m 700 "${PIPER_ROOT}" "${VOICE_DIR}"
 uv venv --allow-existing "${VENV_DIR}"
 uv pip install --python "${VENV_DIR}/bin/python" "piper-tts==1.4.1" "pathvalidate==3.3.1"

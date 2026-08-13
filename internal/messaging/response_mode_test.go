@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
 )
 
 func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
@@ -37,7 +37,7 @@ func TestResponseModeMenuPersistsVoicePreference(t *testing.T) {
 		}
 	}
 	switched, handled := handler.handleControlInput(context.Background(), "owner-1", "3", false, nextTestControlSource())
-	if !handled || !strings.Contains(switched.Text, "WeClaw 回复方式已切换") || !strings.Contains(switched.Text, "当前：语音") {
+	if !handled || !strings.Contains(switched.Text, "codex-link-clawbot 回复方式已切换") || !strings.Contains(switched.Text, "当前：语音") {
 		t.Fatalf("voice mode switch = %q handled=%v", switched.Text, handled)
 	}
 	if got := store.Get("owner-1").ResponseMode; got != preference.ResponseVoice {
@@ -118,7 +118,7 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 	if len(sent) != 2 || sent[0].Msg.ItemList[0].Type != ilink.ItemTypeImage || sent[1].Msg.ItemList[0].Type != ilink.ItemTypeFile {
 		t.Fatalf("voice response messages = %#v", sent)
 	}
-	if got := sent[1].Msg.ItemList[0].FileItem.FileName; got != "weclaw-reply.mp3" {
+	if got := sent[1].Msg.ItemList[0].FileItem.FileName; got != "codex-link-clawbot-reply.mp3" {
 		t.Fatalf("voice response filename = %q", got)
 	}
 	if renderer.card.Title != "语音回答" || len(renderer.card.Body) != 1 || renderer.card.Body[0] != "完成了。\n\n下一步继续。" {
@@ -291,7 +291,7 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 			t.Fatalf("delivery %d is not an image: %#v", index, sent[index])
 		}
 	}
-	if last := sent[len(sent)-1].Msg.ItemList[0]; last.Type != ilink.ItemTypeFile || last.FileItem.FileName != "weclaw-reply.mp3" {
+	if last := sent[len(sent)-1].Msg.ItemList[0]; last.Type != ilink.ItemTypeFile || last.FileItem.FileName != "codex-link-clawbot-reply.mp3" {
 		t.Fatalf("last delivery = %#v", last)
 	}
 	if len(provider.texts) != 1 || provider.texts[0] != renderer.card.Body[0] || !strings.HasSuffix(provider.texts[0], "回答内容较长，完整内容已放在前面的阅读卡中。") {

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 type Store struct {
@@ -35,7 +35,7 @@ func newStore(root string, now func() time.Time) (*Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve task queue root: %w", err)
 		}
-		root = filepath.Join(home, ".weclaw", "tasks")
+		root = filepath.Join(home, ".codex-link-clawbot", "tasks")
 	}
 	root = filepath.Clean(root)
 	if !filepath.IsAbs(root) {
@@ -118,7 +118,8 @@ func (store *Store) Enqueue(input EnqueueInput) (Task, bool, error) {
 		ID: taskID, SourceMessageKey: input.SourceMessageKey,
 		OwnerID: input.OwnerID, ProjectID: input.ProjectID, ThreadID: input.ThreadID,
 		Summary: input.Summary, State: StateQueued, Stage: "等待执行",
-		ResponseMode: input.ResponseMode, VisualStyle: input.VisualStyle,
+		AwaitingAcknowledgement: input.RequireAcknowledgement,
+		ResponseMode:            input.ResponseMode, VisualStyle: input.VisualStyle,
 		Order: store.state.NextOrder, CreatedAt: now, RetryOf: input.RetryOf,
 		ImageCount: len(input.Images), FileCount: len(input.Files), PayloadBytes: payloadBytes,
 	}

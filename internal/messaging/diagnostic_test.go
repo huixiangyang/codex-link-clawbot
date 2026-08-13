@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/runtimecontrol"
-	"github.com/huixiangyang/weclaw/internal/statefile"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 type fixedRuntimeLifecycle struct {
@@ -75,7 +75,7 @@ func TestNoReplyDiagnosticExplainsPausedQueueWithoutLeakingIdentity(t *testing.T
 	}
 
 	got := handler.buildNoReplyDiagnostic(ownerID)
-	for _, want := range []string{"WeClaw 请求队列已暂停", "继续队列", "请求队列"} {
+	for _, want := range []string{"codex-link-clawbot 请求队列已暂停", "继续队列", "请求队列"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("diagnostic missing %q: %q", want, got)
 		}
@@ -115,7 +115,7 @@ func TestNoReplyDiagnosticDoesNotExposeLiveTaskStage(t *testing.T) {
 	}
 
 	got := handler.buildNoReplyDiagnostic("owner-1")
-	if !strings.Contains(got, "WeClaw 执行状态：运行中") || strings.Contains(got, privateStage) || strings.Contains(got, "/private/workspace") {
+	if !strings.Contains(got, "codex-link-clawbot 执行状态：运行中") || strings.Contains(got, privateStage) || strings.Contains(got, "/private/workspace") {
 		t.Fatalf("live task diagnostic = %q", got)
 	}
 }

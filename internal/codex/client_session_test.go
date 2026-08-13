@@ -11,6 +11,7 @@ var _ ThreadClient = (*Codex)(nil)
 var _ AdvancedThreadClient = (*Codex)(nil)
 var _ CapabilityClient = (*Codex)(nil)
 var _ ProgressClient = (*Codex)(nil)
+var _ GlobalControlClient = (*Codex)(nil)
 
 func newCodexSessionTestAgent(call func(context.Context, string, interface{}) (json.RawMessage, error)) *Codex {
 	return &Codex{
@@ -89,10 +90,19 @@ func TestCodexThreadGoalAndModelDirectoryRPCs(t *testing.T) {
 		switch method {
 		case "thread/goal/set":
 			got := params.(map[string]interface{})
-			if got["threadId"] != threadID || got["objective"] != "完成中文控制面" || got["status"] != "active" {
+			if got["threadId"] != threadID {
 				t.Fatalf("thread/goal/set params = %#v", got)
 			}
-			return json.RawMessage(`{"goal":{"threadId":"thread-goal","objective":"完成中文控制面","status":"active","tokensUsed":0,"timeUsedSeconds":0}}`), nil
+			if objective, exists := got["objective"]; exists {
+				if objective != "完成中文控制面" || got["status"] != "active" {
+					t.Fatalf("thread/goal/set objective params = %#v", got)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread-goal","objective":"完成中文控制面","status":"active","tokensUsed":0,"timeUsedSeconds":0}}`), nil
+			}
+			if len(got) != 2 || got["status"] != "paused" {
+				t.Fatalf("thread/goal/set status params = %#v", got)
+			}
+			return json.RawMessage(`{"goal":{"threadId":"thread-goal","objective":"完成中文控制面","status":"paused","tokensUsed":12,"timeUsedSeconds":3}}`), nil
 		case "thread/goal/get":
 			if got := params.(map[string]string); got["threadId"] != threadID {
 				t.Fatalf("thread/goal/get params = %#v", got)
@@ -119,6 +129,13 @@ func TestCodexThreadGoalAndModelDirectoryRPCs(t *testing.T) {
 	goal, err := a.SetThreadGoal(context.Background(), threadID, " 完成中文控制面 ", nil)
 	if err != nil || goal.Objective != "完成中文控制面" {
 		t.Fatalf("SetThreadGoal() = %#v, %v", goal, err)
+	}
+	goal, err = a.UpdateThreadGoalStatus(context.Background(), threadID, "paused")
+	if err != nil || goal.Status != "paused" {
+		t.Fatalf("UpdateThreadGoalStatus() = %#v, %v", goal, err)
+	}
+	if _, err := a.UpdateThreadGoalStatus(context.Background(), threadID, "complete"); err == nil {
+		t.Fatal("UpdateThreadGoalStatus() accepted unsupported complete status")
 	}
 	goal, exists, err := a.GetThreadGoal(context.Background(), threadID)
 	if err != nil || !exists || goal.TokensUsed != 12 {
@@ -321,6 +338,39 @@ func TestCodexResumeAndListThreads(t *testing.T) {
 	})
 	if err != nil || len(page.Threads) != 1 || page.NextCursor != "next-2" {
 		t.Fatalf("ListThreads() = %#v, %v", page, err)
+	}
+}
+
+func TestCodexReadsGlobalControlState(t *testing.T) {
+	var methods []string
+	a := newCodexSessionTestAgent(func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+		methods = append(methods, method)
+		switch method {
+		case "thread/loaded/list":
+			if params != nil {
+				t.Fatalf("thread/loaded/list params = %#v, want nil", params)
+			}
+			return json.RawMessage(`{"data":["thread-1","thread-2"]}`), nil
+		case "account/read":
+			if got := params.(map[string]bool); got["refreshToken"] {
+				t.Fatalf("account/read params = %#v", got)
+			}
+			return json.RawMessage(`{"account":{"type":"chatgpt","email":"owner@example.com","planType":"pro"},"requiresOpenaiAuth":true}`), nil
+		default:
+			t.Fatalf("unexpected rpc method %q", method)
+			return nil, nil
+		}
+	})
+	ids, err := a.ListLoadedThreadIDs(context.Background())
+	if err != nil || !reflect.DeepEqual(ids, []string{"thread-1", "thread-2"}) {
+		t.Fatalf("ListLoadedThreadIDs() = %#v, %v", ids, err)
+	}
+	account, err := a.ReadAccount(context.Background())
+	if err != nil || account.Type != "chatgpt" || account.Email != "owner@example.com" || account.PlanType != "pro" || !account.RequiresOpenAIAuth {
+		t.Fatalf("ReadAccount() = %#v, %v", account, err)
+	}
+	if !reflect.DeepEqual(methods, []string{"thread/loaded/list", "account/read"}) {
+		t.Fatalf("methods = %#v", methods)
 	}
 }
 

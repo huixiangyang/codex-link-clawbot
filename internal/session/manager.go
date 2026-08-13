@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
 )
 
 const (
@@ -29,7 +29,7 @@ type Page struct {
 	Total      int
 }
 
-// Stats 是本地所有权索引的轻量管理概览，不读取或暴露 Codex 全局线程。
+// Stats 是本地焦点索引的轻量概览，不代表 Codex 全局线程可见范围。
 type Stats struct {
 	Active     int
 	Archived   int
@@ -37,7 +37,7 @@ type Stats struct {
 	CurrentID  string
 }
 
-// Manager 把微信用户归属与 Codex 线程生命周期组合成一个事务边界。
+// Manager 把每位微信用户的远程操作焦点与 Codex 线程生命周期组合成事务边界。
 type Manager struct {
 	store     *Store
 	now       func() time.Time
@@ -107,7 +107,7 @@ func (m *Manager) Current(ctx context.Context, ownerID string, client codex.Thre
 	return ManagedThread{Info: thread, Current: true}, nil
 }
 
-// Detail 只允许读取本地索引中归属于该微信用户的会话摘要。
+// Detail 读取本地焦点索引中的线程摘要；全局发现统一走 GlobalList。
 func (m *Manager) Detail(ctx context.Context, ownerID string, client codex.ThreadClient, reference string, archived bool) (ManagedThread, error) {
 	projectID := m.currentProject(ownerID)
 	record, err := m.store.ResolveForProject(ownerID, projectID, reference, archived)
@@ -372,6 +372,14 @@ func (m *Manager) ClearCurrentGoal(ctx context.Context, ownerID string, advanced
 	return advanced.ClearThreadGoal(ctx, threadID)
 }
 
+func (m *Manager) UpdateCurrentGoalStatus(ctx context.Context, ownerID string, client codex.GoalStatusClient, status string) (codex.ThreadGoal, error) {
+	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	if !ok {
+		return codex.ThreadGoal{}, ErrNoActive
+	}
+	return client.UpdateThreadGoalStatus(ctx, threadID, status)
+}
+
 func (m *Manager) SteerCurrent(ctx context.Context, ownerID string, advanced codex.AdvancedThreadClient, request codex.ChatRequest) error {
 	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
 	if !ok {
@@ -384,6 +392,28 @@ func (m *Manager) ReviewCurrent(ctx context.Context, ownerID string, advanced co
 	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
 	if !ok {
 		return "", ErrNoActive
+	}
+	return advanced.ReviewThread(ctx, threadID, target, progress)
+}
+
+// OwnsProjectThread 校验移动端后续动作仍指向该绑定者在指定工作空间登记的线程。
+func (m *Manager) OwnsProjectThread(ownerID, projectID, threadID string) bool {
+	return m.store.OwnsProject(strings.TrimSpace(ownerID), strings.TrimSpace(projectID), strings.TrimSpace(threadID))
+}
+
+// ReviewProjectThread 使用冻结的工作空间与线程目标重新审查，避免菜单期间焦点漂移。
+func (m *Manager) ReviewProjectThread(
+	ctx context.Context,
+	ownerID, projectID, threadID string,
+	advanced codex.AdvancedThreadClient,
+	target codex.ReviewTarget,
+	progress codex.ProgressHandler,
+) (string, error) {
+	ownerID = strings.TrimSpace(ownerID)
+	projectID = strings.TrimSpace(projectID)
+	threadID = strings.TrimSpace(threadID)
+	if !m.store.OwnsProject(ownerID, projectID, threadID) {
+		return "", ErrNotOwned
 	}
 	return advanced.ReviewThread(ctx, threadID, target, progress)
 }

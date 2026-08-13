@@ -1,6 +1,6 @@
-# WeClaw 文档
+# codex-link-clawbot 文档
 
-这里描述当前 Codex-only WeClaw 的使用、架构和运维边界。根目录 README 只负责产品说明和快速开始，细节统一以本目录为准。
+这里描述当前 Codex-only `codex-link-clawbot` 的使用、架构和运维边界。项目基于 [WeClaw](https://github.com/fastclaw-ai/weclaw) 开发改造，来源、许可证与独立改造边界见[上游关系与改造边界](architecture/upstream.md)。根目录 README 只负责产品说明和快速开始，细节统一以本目录为准。
 
 ## 阅读路径
 
@@ -8,9 +8,9 @@
 
 1. [安装与启动](guides/getting-started.md)
 2. [配置参考](guides/configuration.md)
-3. [Codex 与 WeClaw 能力边界](guides/capability-boundary.md)
-4. [WeClaw 项目入口与 Codex 线程](guides/projects-and-threads.md)
-5. [Codex 轮次与 WeClaw 请求队列](guides/turns-and-queue.md)
+3. [Codex 与 codex-link-clawbot 能力边界](guides/capability-boundary.md)
+4. [Codex 工作空间与全局线程](guides/projects-and-threads.md)
+5. [Codex 轮次与 codex-link-clawbot 请求队列](guides/turns-and-queue.md)
 6. [视觉回复](guides/visual-replies.md)
 
 ## 用户指南
@@ -18,11 +18,11 @@
 | 文档 | 解决的问题 |
 | --- | --- |
 | [安装与启动](guides/getting-started.md) | 构建、登录、启动和本机服务 |
-| [配置参考](guides/configuration.md) | 项目、Codex、视觉、语音、自动化和主动发送 |
-| [Codex 与 WeClaw 能力边界](guides/capability-boundary.md) | 区分 Codex 原生能力与 WeClaw 微信增强 |
-| [Codex 轮次与 WeClaw 请求队列](guides/turns-and-queue.md) | 轮次、请求、追加指令、取消、恢复和诊断 |
-| [WeClaw 项目入口与 Codex 线程](guides/projects-and-threads.md) | 目录入口、线程、模型、目标、分叉、审查和 Codex 能力 |
-| [文件与交付](guides/media-and-deliveries.md) | 图片、附件、交付物、素材和再次发送 |
+| [配置参考](guides/configuration.md) | 工作空间、Codex、视觉、语音和安全 |
+| [Codex 与 codex-link-clawbot 能力边界](guides/capability-boundary.md) | 区分 Codex 原生能力与 codex-link-clawbot 微信增强 |
+| [Codex 轮次与 codex-link-clawbot 请求队列](guides/turns-and-queue.md) | 轮次、请求、追加指令、取消、恢复和诊断 |
+| [Codex 工作空间与全局线程](guides/projects-and-threads.md) | 全局发现、工作空间边界、目标线程、账号、模型与能力 |
+| [文件与交付箱](guides/media-and-deliveries.md) | 图片、附件、交付箱和再次发送 |
 | [视觉回复](guides/visual-replies.md) | 五套模板、阅读卡、图片批次和文字版 |
 
 ## 架构
@@ -30,15 +30,15 @@
 | 文档 | 主题 |
 | --- | --- |
 | [架构总览](architecture/overview.md) | 代码目录、依赖层次、输入与交付主链路 |
+| [上游关系与改造边界](architecture/upstream.md) | WeClaw 来源、许可证保留、独立项目身份和破坏性更名 |
 | [持久任务队列](architecture/task-queue.md) | FIFO、冻结结果、投递事务和重启恢复 |
 | [可靠控制面](architecture/control-plane.md) | 控制领域、Presenter 和状态边界 |
-| [功能与配置模型](architecture/feature-and-configuration.md) | 分层首页、功能中心、设置中心、诊断中心和配置归属 |
+| [功能与配置模型](architecture/feature-and-configuration.md) | 分层首页、上下文归属、偏好安全和配置边界 |
 | [类型化控制路由](architecture/control-routing.md) | Intent Registry、ActionResult 和副作用入口 |
 | [持久交互](architecture/persistent-interactions.md) | revision、待输入状态和幂等回执 |
 | [统一状态内核](architecture/state-kernel.md) | 原子写入、严格 schema、租约和备份 |
-| [本机管理安全](architecture/management-security.md) | Unix socket、主动发送和可信代理 |
+| [本机管理安全](architecture/management-security.md) | Unix socket 与受限通知边界 |
 | [确定性诊断](architecture/diagnostics.md) | “为什么没回复”的证据与隐私边界 |
-| [持久提示词模板](architecture/workflows.md) | 提示词模板、参数槽、复用和项目隔离 |
 
 ## 运维
 
@@ -53,7 +53,7 @@
 ## 仓库结构
 
 ```text
-cmd/weclaw/        唯一二进制入口
+cmd/codex-link-clawbot/        唯一二进制入口
 internal/          不对模块外公开的全部实现
 docs/guides/       用户可见行为与配置
 docs/architecture/ 代码边界、状态和事务设计

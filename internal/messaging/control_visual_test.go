@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 type fakeControlVisualRenderer struct {
@@ -24,11 +24,22 @@ type fakeControlVisualRenderer struct {
 	documentErr          error
 	card                 visual.Card
 	directory            visual.Directory
+	workbench            visual.Workbench
 	documents            []visual.Document
 	cleanedUp            bool
 	renderCalls          int
 	directoryRenderCalls int
+	workbenchRenderCalls int
 	documentRenderCalls  int
+}
+
+func (r *fakeControlVisualRenderer) RenderWorkbench(_ context.Context, workbench visual.Workbench) (*visual.Artifact, error) {
+	r.workbenchRenderCalls++
+	r.workbench = workbench
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &visual.Artifact{Path: r.path, Width: 1080, Height: 780, Cleanup: func() { r.cleanedUp = true }}, nil
 }
 
 func (r *fakeControlVisualRenderer) RenderDirectory(_ context.Context, directory visual.Directory) (*visual.Artifact, error) {
@@ -37,7 +48,7 @@ func (r *fakeControlVisualRenderer) RenderDirectory(_ context.Context, directory
 	if r.err != nil {
 		return nil, r.err
 	}
-	return &visual.Artifact{Path: r.path, Width: 1080, Height: 2280, Cleanup: func() { r.cleanedUp = true }}, nil
+	return &visual.Artifact{Path: r.path, Width: 1080, Height: 1600, Cleanup: func() { r.cleanedUp = true }}, nil
 }
 
 func (r *fakeControlVisualRenderer) RenderDocument(_ context.Context, document visual.Document) (*visual.Artifact, error) {
@@ -59,14 +70,14 @@ func (r *fakeControlVisualRenderer) Render(_ context.Context, card visual.Card) 
 }
 
 func TestControlCardFromMainMenu(t *testing.T) {
-	card := controlCardFromText("WeClaw\n\n版本：v1.4.0-runtime.1\nCodex 线程：视觉交互开发\nWeClaw 执行：空闲\n\n1  Codex 线程\n2  WeClaw 执行状态\n3  WeClaw 运行与安全\n\n回复数字即可，0 退出。")
-	if card.Variant != visual.VariantHome || card.Title != "WeClaw" {
+	card := controlCardFromText("codex-link-clawbot\n\n版本：v1.4.0-runtime.1\nCodex 线程：视觉交互开发\ncodex-link-clawbot 执行：空闲\n\n1  Codex 线程\n2  codex-link-clawbot 执行状态\n3  codex-link-clawbot 运行状态\n\n回复数字即可，0 退出。")
+	if card.Variant != visual.VariantHome || card.Title != "codex-link-clawbot" {
 		t.Fatalf("main card identity = %#v", card)
 	}
 	if len(card.Facts) != 3 || card.Facts[0].Label != "版本" || card.Facts[1].Label != "Codex 线程" || card.Facts[1].Value != "视觉交互开发" {
 		t.Fatalf("main card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 3 || card.Options[2].Label != "WeClaw 运行与安全" {
+	if len(card.Options) != 3 || card.Options[2].Label != "codex-link-clawbot 运行状态" {
 		t.Fatalf("main card options = %#v", card.Options)
 	}
 	if card.Footer != "回复数字即可，0 退出。" {
@@ -74,40 +85,118 @@ func TestControlCardFromMainMenu(t *testing.T) {
 	}
 }
 
-func TestControlDirectoryFromTextBuildsSixStableSections(t *testing.T) {
-	reply := "WeClaw 操作总览\n\n能力边界：Codex 工作能力与 WeClaw 管理能力分层\n版本：v2\nWeClaw 项目入口：主项目\nCodex 线程：移动端开发\nWeClaw 执行：运行中\nWeClaw 回复：自适应\nWeClaw 视觉：构筑\n\n" +
-		"[1]  Codex · 工作台\n11  当前线程\n12  新建线程\n\n" +
-		"[2]  WeClaw · 请求\n21  执行状态\n\n" +
-		"[3]  WeClaw · 回复\n31  回答方式\n\n" +
-		"[4]  WeClaw · 功能\n41  提示词模板 · 2 项\n\n" +
-		"[5]  WeClaw · 设置\n51  有效配置状态\n\n" +
-		"[6]  WeClaw · 诊断\n63  使用说明\n\n回复编号直接操作，0 退出；首页 30 分钟内有效。"
+func TestControlDirectoryFromTextBuildsFourStableSections(t *testing.T) {
+	reply := "Codex 全部功能\n\n按领域浏览 Codex 与 codex-link-clawbot 控制能力\n工作空间：2 个 · 当前 主项目\n目标线程：移动端开发\ncodex-link-clawbot 执行：运行中\n\n" +
+		"[1]  Codex · 全局\n11  全局总览\n12  全局线程 · /resume\n\n" +
+		"[2]  Codex · 工作空间\n21  工作空间\n23  模型与权限 · /model /permissions\n\n" +
+		"[3]  Codex · 执行\n31  新建工作 · /new\n\n" +
+		"[4]  codex-link-clawbot · 远程\n42  系统健康与诊断\n\n回复编号或直接发送 /command，0 退出；首页 30 分钟内有效。"
 	directory, ok := controlDirectoryFromText(reply)
-	if !ok || directory.Subtitle != "Codex 工作能力与 WeClaw 管理能力分层" || len(directory.Facts) != 6 || len(directory.Sections) != 6 {
+	if !ok || directory.Title != "Codex 全部功能" || directory.Subtitle != "按领域浏览 Codex 与 codex-link-clawbot 控制能力" || len(directory.Facts) != 3 || len(directory.Sections) != 4 {
 		t.Fatalf("directory = %#v, ok=%v", directory, ok)
 	}
-	if directory.Facts[1].Label != "WeClaw 项目入口" || directory.Facts[1].Value != "主项目" {
+	if directory.Facts[0].Label != "工作空间" || directory.Facts[0].Value != "2 个 · 当前 主项目" {
 		t.Fatalf("directory facts = %#v", directory.Facts)
 	}
-	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "messages-square" || first.Items[0].Code != "11" || first.Items[0].Label != "当前线程" {
+	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "activity" || first.Items[0].Code != "11" || first.Items[0].Label != "全局总览" {
 		t.Fatalf("first directory section = %#v", first)
 	}
-	if current := directory.Sections[3].Items[0]; current.Label != "提示词模板" || current.Meta != "2 项" {
-		t.Fatalf("directory item metadata = %#v", current)
+	if development := directory.Sections[1]; development.Icon != "folder-kanban" || development.Items[1].Label != "模型与权限" || development.Items[1].Meta != "/model /permissions" {
+		t.Fatalf("development directory section = %#v", development)
+	}
+}
+
+func TestControlWorkbenchFromTextSeparatesTargetThreadsAndActions(t *testing.T) {
+	reply := "Codex 全局工作台\n\n从微信统筹 Codex 桌面端、CLI 与远程执行\n" +
+		"全局状态：就绪\n工作空间：2 个\n全部线程：12 个\n运行中：1 个\n微信队列：1 执行\n" +
+		"当前目标：首页重构 ｜ codex-link-clawbot ｜ 空闲 ｜ 8 分钟前\n\n最近线程\n" +
+		"1  登录排障 ｜ API ｜ 运行中 ｜ 刚刚 ｜ 微信执行中\n" +
+		"2  首页重构 ｜ codex-link-clawbot ｜ 空闲 ｜ 8 分钟前 ｜ 当前目标\n\n快捷操作\n" +
+		"5  全部线程 · /resume\n6  新建线程 · /new\n7  执行与队列\n8  工作空间\n9  刷新工作台\n\nCodex 功能\n[线程与会话]\n新建线程 · /new"
+	workbench, ok := controlWorkbenchFromText(reply)
+	commandCount := 0
+	for _, group := range workbench.Commands {
+		commandCount += len(group.Commands)
+	}
+	if !ok || workbench.State != "就绪" || len(workbench.Facts) != 4 || len(workbench.Threads) != 2 || len(workbench.Actions) != 5 || len(workbench.Commands) != 3 || commandCount != 17 {
+		t.Fatalf("workbench = %#v, ok=%v", workbench, ok)
+	}
+	if workbench.Target.Title != "首页重构" || !workbench.Target.Available || workbench.Threads[0].Wechat != "微信执行中" || !workbench.Threads[1].Current {
+		t.Fatalf("workbench content = %#v", workbench)
+	}
+	if workbench.Actions[0].Code != "5" || workbench.Actions[0].Meta != "/resume" || workbench.Actions[4].Icon != "refresh-cw" {
+		t.Fatalf("workbench actions = %#v", workbench.Actions)
+	}
+}
+
+func TestRenderWorkbenchPreviewWithRegisteredCodexCommands(t *testing.T) {
+	previewRoot := strings.TrimSpace(os.Getenv("CODEX_LINK_CLAWBOT_DIRECTORY_PREVIEW_DIR"))
+	if previewRoot == "" {
+		t.Skip("preview output is not requested")
+	}
+	browser, err := visual.ResolveBrowser("")
+	if err != nil {
+		t.Skipf("Chromium is not installed: %v", err)
+	}
+	reply := "Codex 全局工作台\n\n从微信统筹 Codex 桌面端、CLI 与远程执行\n" +
+		"全局状态：就绪\n工作空间：2 个\n全部线程：12 个\n运行中：1 个\n微信队列：1 执行\n" +
+		"当前目标：首页全局工作台重构 ｜ codex-link-clawbot ｜ 空闲 ｜ 8 分钟前\n\n最近线程\n" +
+		"1  登录排障 ｜ API ｜ 运行中 ｜ 刚刚 ｜ 微信执行中\n" +
+		"2  首页全局工作台重构 ｜ codex-link-clawbot ｜ 空闲 ｜ 8 分钟前 ｜ 当前目标\n" +
+		"3  OSS 数据补偿 ｜ SYJ ｜ 未加载 ｜ 1 小时前 ｜ 普通\n\n快捷操作\n" +
+		"5  全部线程 · /resume\n6  新建线程 · /new\n7  执行与队列\n8  工作空间\n9  刷新工作台\n\nCodex 功能"
+	workbench, ok := controlWorkbenchFromText(reply)
+	if !ok {
+		t.Fatal("registered command workbench was not parsed")
+	}
+	workbench.Style = visual.StyleAtelier
+	workbench.Theme = visual.ThemeNight
+	renderer, err := visual.NewRenderer(visual.Config{
+		BrowserCommand: browser, RootDir: previewRoot, MaxConcurrent: 1,
+		Now: func() time.Time { return time.Date(2026, 8, 11, 21, 0, 0, 0, time.Local) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := renderer.RenderWorkbench(context.Background(), workbench)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.Cleanup()
+	data, err := os.ReadFile(artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(previewRoot, "workbench-registered-commands-night.png"), data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestControlCardFromRuntimeCenter(t *testing.T) {
-	reply := "WeClaw 运行与安全\nWeClaw：运行中\n版本：v1.4.0-runtime.1\n已运行：2 小时 5 分\n本地接口：127.0.0.1:18011\nCodex：运行中\n协议：Codex 应用服务\n模型：使用 Codex 默认配置\nCodex 工作目录：/workspace\nCodex PID：4242\n\n1  工作目录\n2  刷新 WeClaw 状态\n\n回复数字操作，0 返回。"
+	reply := "codex-link-clawbot 运行状态\ncodex-link-clawbot：运行中\n版本：v1.4.0-runtime.1\n已运行：2 小时 5 分\nCodex：运行中\n协议：Codex 应用服务\n模型：使用 Codex 默认配置\nCodex 工作目录：/workspace\nCodex PID：4242\n\n1  有效配置状态\n2  刷新 codex-link-clawbot 状态\n\n回复数字操作，0 返回。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantSystem || card.Title != "WeClaw 运行与安全" {
+	if card.Variant != visual.VariantSystem || card.Title != "codex-link-clawbot 运行状态" {
 		t.Fatalf("runtime card identity = %#v", card)
 	}
-	if len(card.Facts) != 9 || card.Facts[0].Label != "WeClaw" || card.Facts[8].Label != "Codex PID" {
+	if len(card.Facts) != 8 || card.Facts[0].Label != "codex-link-clawbot" || card.Facts[7].Label != "Codex PID" {
 		t.Fatalf("runtime card facts = %#v", card.Facts)
 	}
-	if len(card.Options) != 2 || card.Options[1].Label != "刷新 WeClaw 状态" {
+	if len(card.Options) != 2 || card.Options[1].Label != "刷新 codex-link-clawbot 状态" {
 		t.Fatalf("runtime card options = %#v", card.Options)
+	}
+}
+
+func TestControlCardFromCodexSlashCatalogKeepsChineseAndUsableCommand(t *testing.T) {
+	reply := "Codex 命令 · 模型与能力\n\n页码：1 / 1\n\n" +
+		"1  选择模型与推理 · /model\n" +
+		"2  浏览技能 · /skills\n\n" +
+		"回复数字执行，0 返回可用命令。"
+	card := controlCardFromText(reply)
+	if card.Variant != visual.VariantSession || card.Title != "Codex 命令 · 模型与能力" {
+		t.Fatalf("command card identity = %#v", card)
+	}
+	if len(card.Options) != 2 || card.Options[0].Label != "选择模型与推理 · /model" || card.Options[1].Label != "浏览技能 · /skills" {
+		t.Fatalf("command card options = %#v", card.Options)
 	}
 }
 
@@ -119,20 +208,6 @@ func TestControlCardUsesWarningSemanticsForArchiveConfirmation(t *testing.T) {
 	}
 	if got := controlCaption(reply, card); got != "回复 1 确认，0 返回。" {
 		t.Fatalf("archive caption = %q", got)
-	}
-}
-
-func TestControlCardFromAutomationDetail(t *testing.T) {
-	reply := "自动化详情：项目日报\n\n状态：正常\n计划：每天 09:00\n时区：Asia/Shanghai\n\n1  立即检查\n2  返回自动化中心\n\n回复数字操作，0 返回自动化中心。"
-	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantSystem || card.Title != "自动化详情" || card.Subtitle != "项目日报" {
-		t.Fatalf("report card identity = %#v", card)
-	}
-	if len(card.Facts) != 3 || card.Facts[0].Label != "状态" || card.Facts[0].Value != "正常" {
-		t.Fatalf("report card facts = %#v", card.Facts)
-	}
-	if len(card.Options) != 2 || card.Options[1].Label != "返回自动化中心" {
-		t.Fatalf("report card options = %#v", card.Options)
 	}
 }
 
@@ -151,9 +226,9 @@ func TestControlCardFromBrowsableSessionDetail(t *testing.T) {
 }
 
 func TestControlCardFromTaskHistory(t *testing.T) {
-	reply := "WeClaw 请求队列\n\n页码：1 / 2\n等待：2\n执行：1\n已暂停：否\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
+	reply := "codex-link-clawbot 请求队列\n\n页码：1 / 2\n等待：2\n执行：1\n已暂停：否\n\n1  检查发布流程 · 已完成\n2  分析失败原因 · 失败\n7  下一页 · 2/2\n\n回复数字查看详情，或说“下一页”“上一页”；0 返回。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantProgress || card.Title != "WeClaw 请求队列" {
+	if card.Variant != visual.VariantProgress || card.Title != "codex-link-clawbot 请求队列" {
 		t.Fatalf("activity card identity = %#v", card)
 	}
 	if len(card.Facts) != 4 || card.Facts[3].Label != "已暂停" {
@@ -164,7 +239,7 @@ func TestControlCardFromTaskHistory(t *testing.T) {
 	}
 }
 
-func TestHandleMessageSendsSingleVisualCommandDirectory(t *testing.T) {
+func TestHandleMessageSendsSingleVisualWorkbench(t *testing.T) {
 	imagePath := filepath.Join(t.TempDir(), "card.png")
 	if err := os.WriteFile(imagePath, []byte("test-png"), 0o600); err != nil {
 		t.Fatal(err)
@@ -214,17 +289,17 @@ func TestHandleMessageSendsSingleVisualCommandDirectory(t *testing.T) {
 	if runtime.chatThreadID != "" {
 		t.Fatalf("visual control unexpectedly started Codex thread %s", runtime.chatThreadID)
 	}
-	if renderer.directoryRenderCalls != 1 || renderer.renderCalls != 0 || renderer.directory.Style != visual.StyleNoir || len(renderer.directory.Sections) != 6 || !renderer.cleanedUp {
-		t.Fatalf("renderer state = directory calls:%d card calls:%d directory:%#v cleanup:%v", renderer.directoryRenderCalls, renderer.renderCalls, renderer.directory, renderer.cleanedUp)
+	if renderer.workbenchRenderCalls != 1 || renderer.directoryRenderCalls != 0 || renderer.renderCalls != 0 || renderer.workbench.Style != visual.StyleNoir || len(renderer.workbench.Actions) != 5 || !renderer.cleanedUp {
+		t.Fatalf("renderer state = workbench calls:%d directory calls:%d card calls:%d workbench:%#v cleanup:%v", renderer.workbenchRenderCalls, renderer.directoryRenderCalls, renderer.renderCalls, renderer.workbench, renderer.cleanedUp)
 	}
 	if len(uploaded) == 0 {
 		t.Fatal("visual card was not uploaded")
 	}
 	if len(sent) != 1 {
-		t.Fatalf("sent messages = %d, want exactly one directory image", len(sent))
+		t.Fatalf("sent messages = %d, want exactly one workbench image", len(sent))
 	}
 	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
-		t.Fatalf("directory message = %#v", item)
+		t.Fatalf("workbench message = %#v", item)
 	}
 }
 
@@ -251,7 +326,7 @@ func TestVisualRenderFailureFallsBackToFullText(t *testing.T) {
 		MessageState: ilink.MessageStateFinish,
 		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
 	})
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "11  当前线程") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "5  全部线程") {
 		t.Fatalf("fallback message = %#v", sent.Msg.ItemList)
 	}
 }
@@ -289,7 +364,7 @@ func TestVisualUploadFailureFallsBackToFullTextAndCleansArtifact(t *testing.T) {
 	if !renderer.cleanedUp {
 		t.Fatal("visual artifact was not cleaned after upload failure")
 	}
-	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "回复编号直接操作") {
+	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "首页 5 分钟内有效") {
 		t.Fatalf("upload fallback message = %#v", sent.Msg.ItemList)
 	}
 }

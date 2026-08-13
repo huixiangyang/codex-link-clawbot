@@ -17,7 +17,7 @@ test:
 	go test ./... -count=1 -race
 
 build:
-	go build ./cmd/weclaw
+	go build ./cmd/codex-link-clawbot
 
 check: docs-check format-check vet test build
 

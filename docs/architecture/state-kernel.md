@@ -2,7 +2,7 @@
 
 ## 1. 已实现范围
 
-`statefile` 是运行状态唯一的通用 JSON 文件内核。偏好、项目入口选择、远程锁、Codex 线程索引、自动化、素材库、微信同步游标、WeClaw 请求队列索引、冻结结果、配置与账号凭据已经删除各自的临时文件写入器，统一使用这一内核。
+`statefile` 是运行状态唯一的通用 JSON 文件内核。偏好、工作空间选择、远程锁、Codex 线程索引、待阅通知、交付箱、微信同步游标、codex-link-clawbot 请求队列索引、冻结结果、配置与账号凭据已经删除各自的临时文件写入器，统一使用这一内核。
 
 任务附件仍先写入唯一 staging 目录，再以整目录改名提交；部署候选、systemd 单元和回滚快照也保留专用事务。这些对象不是可独立覆盖的 JSON 状态，不能降级为普通状态文件写入。
 
@@ -36,7 +36,7 @@
 
 ## 4. 生命周期锁
 
-服务启动后持有 `~/.weclaw/.state.lock` 的非阻塞独占锁，直到进程退出。离线迁移必须获取同一把锁：
+服务启动后持有 `~/.codex-link-clawbot/.state.lock` 的非阻塞独占锁，直到进程退出。离线迁移必须获取同一把锁：
 
 - 服务运行时执行迁移，立即返回 `conflict`。
 - 部署器必须先排空并停止服务，迁移才可能开始。
@@ -48,16 +48,16 @@
 
 账号文件从无版本结构升级为严格 v1，并新增必填 `version: 1`。加载时不再静默忽略损坏文件：未知字段、错误版本、缺失令牌、非 HTTPS 服务地址、文件名与机器人 ID 不一致都会阻止启动。
 
-`weclaw deploy` 停服后的离线迁移会把已知的无版本结构一次性转换为 v1。运行时没有旧格式兼容分支，也没有双写。手工替换二进制而跳过部署事务会被明确拒绝。
+`codex-link-clawbot deploy` 停服后的离线迁移会把已知的无版本结构一次性转换为 v1。运行时没有旧格式兼容分支，也没有双写。手工替换二进制而跳过部署事务会被明确拒绝。
 
 ## 6. 清单与故障验证
 
 内核可以为明确列出的私有文件生成稳定路径、大小和 SHA-256 清单，复制后必须重新校验。清单不会遍历未声明路径。
 
-测试分别在写入、文件同步、改名和目录同步边界注入失败，并证明旧文件仍可严格读取；同时覆盖符号链接祖先、容量、未知字段、截断 JSON、事务孤儿、并发运行时/迁移锁、凭据迁移和清单篡改。
+测试分别在写入、文件同步、改名和目录同步边界注入失败，并证明旧文件仍可严格读取；同时覆盖符号链接祖先、容量、未知字段、截断 JSON、事务孤儿、并发运行时/迁移锁、凭据迁移、待阅通知去重与过期，以及清单篡改。
 
 ```bash
-go test ./internal/statefile ./internal/config ./internal/preference ./internal/project ./internal/session ./internal/reporting ./internal/ilink ./internal/taskqueue ./internal/messaging ./internal/cli
+go test ./internal/statefile ./internal/config ./internal/preference ./internal/project ./internal/session ./internal/ilink ./internal/taskqueue ./internal/messaging ./internal/cli
 go test -race ./internal/statefile ./internal/taskqueue ./internal/messaging ./internal/ilink ./internal/api ./internal/cli
 ```
 

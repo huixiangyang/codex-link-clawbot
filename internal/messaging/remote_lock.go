@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 const remoteLockVersion = 1
@@ -31,7 +31,7 @@ func NewRemoteLock(path, code string) (*RemoteLock, error) {
 		if err != nil {
 			return nil, err
 		}
-		path = filepath.Join(home, ".weclaw", "remote-lock.json")
+		path = filepath.Join(home, ".codex-link-clawbot", "remote-lock.json")
 	}
 	lock := &RemoteLock{path: path, code: code, state: remoteLockFile{Version: remoteLockVersion, Owners: make(map[string]bool)}}
 	found, err := statefile.ReadJSON(path, &lock.state, statefile.Options{
@@ -132,7 +132,7 @@ func (h *Handler) lockRemote(userID string) string {
 	if h.tasks != nil {
 		queueWasPaused = h.tasks.Status(userID).Paused
 		if err := h.tasks.SetPaused(userID, true); err != nil {
-			return fmt.Sprintf("远程锁定失败：无法暂停 WeClaw 请求队列：%v", err)
+			return fmt.Sprintf("远程锁定失败：无法暂停 codex-link-clawbot 请求队列：%v", err)
 		}
 	}
 	if err := h.remoteLock.Lock(userID); err != nil {
@@ -144,7 +144,7 @@ func (h *Handler) lockRemote(userID string) string {
 	if h.coordinator != nil {
 		h.coordinator.Cancel(userID)
 	}
-	return "WeClaw 已远程锁定。后续消息和附件不会进入 Codex。发送“解锁 解锁码”恢复。"
+	return "codex-link-clawbot 已远程锁定。后续消息和附件不会进入 Codex。发送“解锁 解锁码”恢复。"
 }
 
 func (h *Handler) confirmRemoteLock(userID string) string {
@@ -152,24 +152,24 @@ func (h *Handler) confirmRemoteLock(userID string) string {
 		return "远程锁定未配置。请先在 security.remote_lock_code 设置解锁码并重启服务。"
 	}
 	if h.remoteLock.IsLocked(userID) {
-		return "WeClaw 已处于远程锁定。发送“解锁 解锁码”恢复。"
+		return "codex-link-clawbot 已处于远程锁定。发送“解锁 解锁码”恢复。"
 	}
 	options := []controlOption{{Code: "1", Label: "确认远程锁定", Action: actionRemoteLock}}
 	if !h.storeChoiceWithBack(userID, viewSecurityLockConfirm, options, controlOption{Action: actionMain}) {
 		return controlStateFailureResult().Text
 	}
-	return "准备远程锁定\n\n锁定会取消 WeClaw 当前执行、暂停请求队列，并阻止后续内容进入 Codex。\n\n" + renderControlOptions(options) + "\n\n回复 1 确认，0 返回操作总览。"
+	return "准备远程锁定\n\n锁定会取消 codex-link-clawbot 当前执行、暂停请求队列，并阻止后续内容进入 Codex。\n\n" + renderControlOptions(options) + "\n\n回复 1 确认，0 返回操作总览。"
 }
 
 func (h *Handler) handleLockedInput(userID, text string) string {
 	argument, matched := intentArgument(text, []string{"解锁"})
 	if !matched || strings.TrimSpace(argument) == "" {
-		return "WeClaw 当前已锁定。发送“解锁 解锁码”恢复。"
+		return "codex-link-clawbot 当前已锁定。发送“解锁 解锁码”恢复。"
 	}
 	// 解锁码按字面比较，不能套用会话名称中的“改为/叫做”等自然语言清洗。
 	code := strings.Trim(strings.TrimSpace(argument), " \t\r\n：:，,。\"“”")
 	if err := h.remoteLock.Unlock(userID, code); err != nil {
 		return "解锁失败：解锁码不正确。"
 	}
-	return "WeClaw 已解锁。请求队列仍保持暂停；发送“继续队列”后才会恢复执行。"
+	return "codex-link-clawbot 已解锁。请求队列仍保持暂停；发送“继续队列”后才会恢复执行。"
 }

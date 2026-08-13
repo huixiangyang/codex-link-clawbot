@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const storeVersion = 1
@@ -78,7 +78,7 @@ func NewStore(path string) (*Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve preferences path: %w", err)
 		}
-		path = filepath.Join(userHome, ".weclaw", "preferences.json")
+		path = filepath.Join(userHome, ".codex-link-clawbot", "preferences.json")
 	}
 	store := &Store{
 		path:  filepath.Clean(path),

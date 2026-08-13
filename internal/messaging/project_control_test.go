@@ -6,32 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/config"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/project"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
-	"github.com/huixiangyang/weclaw/internal/workflow"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/project"
 )
 
-func attachProjectWorkflow(t *testing.T, handler *Handler, ownerID, projectID, name, prompt string) workflow.Definition {
-	t.Helper()
-	store, err := workflow.NewStore(filepath.Join(t.TempDir(), "workflows.json"), []string{"alpha", "beta"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	definition, err := store.Create(workflow.CreateInput{
-		OwnerID: ownerID, ProjectID: projectID, Name: name, PromptTemplate: prompt, Slots: []workflow.Slot{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler.SetWorkflowStore(store)
-	return definition
-}
-
-func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
+func TestProjectSelectionIsolatesSessions(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	projects, err := project.NewManager([]config.ProjectConfig{
 		{ID: "alpha", Name: "Alpha", Root: t.TempDir()},
@@ -41,7 +20,6 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler.SetProjectManager(projects)
-	attachProjectWorkflow(t, handler, "owner-1", "beta", "审查改动", "审查当前项目改动")
 	created := controlReply(t, handler, "owner-1", "新建线程 Alpha 线程")
 	if !strings.Contains(created, "Alpha 线程") {
 		t.Fatalf("alpha session = %q", created)
@@ -52,23 +30,6 @@ func TestProjectSelectionIsolatesSessionsAndRunsQuickTask(t *testing.T) {
 	}
 	if stats := handler.sessions.Stats("owner-1"); stats.Active != 0 || stats.HasCurrent {
 		t.Fatalf("beta sessions leaked alpha state: %#v", stats)
-	}
-	menu, handled := handler.handleControlInput(context.Background(), "owner-1", "提示词模板", false, nextTestControlSource())
-	if !handled || !strings.Contains(menu.Text, "审查改动") {
-		t.Fatalf("quick task menu = %q, %v", menu.Text, handled)
-	}
-	detail, handled := handler.handleControlInput(context.Background(), "owner-1", "2", false, nextTestControlSource())
-	if !handled || !strings.Contains(detail.Text, "提示词模板详情") {
-		t.Fatalf("quick task detail = %#v, %v", detail, handled)
-	}
-	quickTaskSource := nextTestControlSource()
-	reply, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, quickTaskSource)
-	if !handled || reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查当前项目改动" {
-		t.Fatalf("quick task action = %#v, %v", reply, handled)
-	}
-	duplicate, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, quickTaskSource)
-	if !handled || duplicate.Effect.Kind != EffectNone || !strings.Contains(duplicate.Text, "不会重复执行") {
-		t.Fatalf("duplicate quick task action = %#v, %v", duplicate, handled)
 	}
 }
 
@@ -82,95 +43,32 @@ func TestProjectEntryAndCodexCapabilityViewsHaveSeparateOwnership(t *testing.T) 
 	}
 	handler.SetProjectManager(projects)
 	entryView := handler.openProjectCenter(context.Background(), "owner-1")
-	if !strings.HasPrefix(entryView, "WeClaw 项目入口\n") || strings.Contains(entryView, "技能：") || strings.Contains(entryView, "外部工具连接：") {
+	if !strings.HasPrefix(entryView, "Codex 工作空间\n") || strings.Contains(entryView, "去重技能：") || strings.Contains(entryView, "外部工具连接：") {
 		t.Fatalf("project entry view mixed Codex capabilities: %q", entryView)
 	}
 	capabilityView := handler.openCodexCapabilities(context.Background(), "owner-1")
-	for _, want := range []string{"Codex 能力", "来源：Codex 应用服务", "技能：1 个启用", "外部工具连接：1 / 1 就绪"} {
+	for _, want := range []string{"Codex 全局技能与工具", "来源：Codex 应用服务", "去重技能：1 个启用", "外部工具连接：1 / 1 就绪"} {
 		if !strings.Contains(capabilityView, want) {
 			t.Fatalf("Codex capability view missing %q: %q", want, capabilityView)
 		}
 	}
 }
 
-func TestProjectSelectionAndQuickTaskRemainAvailableWhileAnotherTaskRuns(t *testing.T) {
-	handler, runtime := newSessionHandler(t)
-	projects, err := project.NewManager([]config.ProjectConfig{
-		{ID: "alpha", Name: "Alpha", Root: t.TempDir()},
-		{ID: "beta", Name: "Beta", Root: t.TempDir()},
-	}, filepath.Join(t.TempDir(), "project-state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler.SetProjectManager(projects)
-	definition := attachProjectWorkflow(t, handler, "owner-1", "beta", "审查改动", "审查 Beta")
-	store, err := taskqueue.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = store.Enqueue(taskqueue.EnqueueInput{
-		SourceMessageKey: "source-running-project", OwnerID: "owner-1", ProjectID: "alpha", Summary: "运行中", Text: "执行",
-		ResponseMode: preference.ResponseAdaptive, VisualStyle: visual.StyleEditorial,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
-		t.Fatalf("ClaimNext() claimed=%v err=%v", claimed, err)
-	}
-	handler.tasks = store
-
-	switched := handler.selectProject("owner-1", "beta")
-	if !strings.Contains(switched, "当前：Beta") || projects.Current("owner-1").ID != "beta" {
-		t.Fatalf("project switch while running = %q", switched)
-	}
-	if len(runtime.cwdChanges) != 0 {
-		t.Fatalf("UI project selection mutated Codex cwd: %#v", runtime.cwdChanges)
-	}
-	menu := handler.openProjectQuickTasks("owner-1")
-	if !strings.Contains(menu, "审查改动") {
-		t.Fatalf("quick tasks while running = %q", menu)
-	}
-	if reply := handler.runProjectQuickTask("owner-1", "beta", definition.ID); reply.Text != "" || reply.Effect.Kind != EffectEnqueuePrompt || reply.Effect.Value != "审查 Beta" || reply.Effect.ProjectID != "beta" {
-		t.Fatalf("quick task while running = %#v", reply)
+func TestPromptTemplatePhrasesAreNoLongerControlIntents(t *testing.T) {
+	registry := mustDefaultIntentRegistry()
+	for _, phrase := range []string{"提示词模板", "提示模板", "新建提示词模板", "保存为提示词模板"} {
+		if resolved, exists := registry.Resolve(phrase); exists {
+			t.Fatalf("removed prompt template phrase %q resolved as %s", phrase, resolved.Definition.ID)
+		}
 	}
 }
 
-func TestQuickTaskQueueFailureRestoresMenuRevision(t *testing.T) {
-	handler, _ := newSessionHandler(t)
-	projects, err := project.NewManager([]config.ProjectConfig{{
-		ID: "alpha", Name: "Alpha", Root: t.TempDir(),
-	}}, filepath.Join(t.TempDir(), "project-state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler.SetProjectManager(projects)
-	attachProjectWorkflow(t, handler, "owner-1", "alpha", "审查改动", "审查当前项目改动")
-	_ = controlReply(t, handler, "owner-1", "提示词模板")
-	_ = controlReply(t, handler, "owner-1", "2")
-	before, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive {
-		t.Fatalf("quick task menu = %#v, status=%v err=%v", before, status, err)
-	}
-	client := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1"})
-	message := ilink.WeixinMessage{
-		MessageID: 8801, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
-		MessageState: ilink.MessageStateFinish, ContextToken: "context",
-		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "1"}}},
-	}
-	if err := handler.HandleMessage(context.Background(), client, message); err == nil || !strings.Contains(err.Error(), "task queue is not initialized") {
-		t.Fatalf("HandleMessage() error = %v", err)
-	}
-	after, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || after.Revision != before.Revision {
-		t.Fatalf("restored quick task menu = %#v, status=%v err=%v", after, status, err)
-	}
-	sourceKey, err := sourceMessageKey(client, message)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := handler.controlStates.FindReceipt("owner-1", sourceKey); exists {
-		t.Fatal("failed quick task kept its control receipt")
+func TestProjectWatchPhrasesAreNoLongerControlIntents(t *testing.T) {
+	registry := mustDefaultIntentRegistry()
+	for _, phrase := range []string{"项目关注", "关注项目", "关注检查"} {
+		if resolved, exists := registry.Resolve(phrase); exists {
+			t.Fatalf("removed project watch phrase %q resolved as %s", phrase, resolved.Definition.ID)
+		}
 	}
 }
 
@@ -178,13 +76,13 @@ func TestRunningMenuUsesPersistentTaskCenter(t *testing.T) {
 	handler, cancel := testHandlerWithRunningTask(t, "owner-1")
 	defer cancel()
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"[2]  WeClaw · 请求", "21  执行状态", "25  暂停队列", "24  取消当前执行"} {
+	for _, want := range []string{"Codex 全局工作台", "微信队列：1 执行", "6  新建线程 · /new", "7  执行与队列", "8  工作空间", "Codex 功能"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("active menu missing %q: %q", want, main)
 		}
 	}
 	state, status, err := handler.controlStates.Load("owner-1")
-	if err != nil || status != controlStateActive || len(state.Options) != 35 {
-		t.Fatalf("persistent command directory = %#v status=%v err=%v", state, status, err)
+	if err != nil || status != controlStateActive || len(state.Options) != 20 {
+		t.Fatalf("persistent workbench = %#v status=%v err=%v", state, status, err)
 	}
 }

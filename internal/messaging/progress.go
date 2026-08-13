@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 // ProgressConfig 使用 duration 表达内部节奏，配置层负责从秒数转换。
@@ -86,7 +86,7 @@ func (r *progressReporter) run() {
 	defer messageTimer.Stop()
 
 	r.sendTyping()
-	latest := "WeClaw 请求已接收，正在分析"
+	latest := "codex-link-clawbot 请求已接收，正在分析"
 	latestKind := codex.ProgressKind("")
 	sentMessages := make(map[string]struct{})
 
@@ -171,10 +171,13 @@ func formatProgressEvent(event codex.ProgressEvent) string {
 
 func truncateRunes(text string, limit int) string {
 	runes := []rune(text)
-	if len(runes) <= limit {
+	if limit <= 0 || len(runes) <= limit {
 		return text
 	}
-	return string(runes[:limit]) + "…"
+	if limit == 1 {
+		return "…"
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func formatElapsed(elapsed time.Duration) string {

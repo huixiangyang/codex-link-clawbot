@@ -1,8 +1,8 @@
 package messaging
 
 import (
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 func (h *Handler) executePreferenceControlAction(userID string, option controlOption) ActionResult {

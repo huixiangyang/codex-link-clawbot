@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/config"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/project"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/project"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 func attachTestTaskQueue(t *testing.T, handler *Handler, client *ilink.Client, ownerID string) (*taskqueue.Store, context.CancelFunc) {

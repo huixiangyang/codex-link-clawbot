@@ -1,10 +1,10 @@
 [Unit]
-Description=WeClaw - WeChat to Codex Bridge
+Description=codex-link-clawbot - WeChat to Codex Bridge
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/weclaw start
+ExecStart=/usr/local/bin/codex-link-clawbot start
 Restart=always
 RestartSec=5
 StandardOutput=journal

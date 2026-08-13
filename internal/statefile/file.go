@@ -141,7 +141,7 @@ func Write(path string, data []byte, options Options) error {
 		return err
 	}
 
-	temporary, err := os.CreateTemp(directory, ".weclaw-state-"+filepath.Base(path)+"-*")
+	temporary, err := os.CreateTemp(directory, ".codex-link-clawbot-state-"+filepath.Base(path)+"-*")
 	if err != nil {
 		return wrapSystem("create temporary", path, err)
 	}
@@ -307,7 +307,7 @@ func preservePrevious(path string) (backupPath string, existed bool, err error) 
 	} else if err != nil {
 		return "", false, wrapSystem("inspect previous", path, err)
 	}
-	backup, err := os.CreateTemp(filepath.Dir(path), ".weclaw-backup-"+filepath.Base(path)+"-*")
+	backup, err := os.CreateTemp(filepath.Dir(path), ".codex-link-clawbot-backup-"+filepath.Base(path)+"-*")
 	if err != nil {
 		return "", false, wrapSystem("reserve backup", path, err)
 	}
@@ -340,7 +340,7 @@ func rollbackReplacement(path, backupPath string, hadPrevious bool) error {
 }
 
 func cleanupOrphans(directory, base string) error {
-	prefixes := []string{".weclaw-state-" + base + "-", ".weclaw-backup-" + base + "-"}
+	prefixes := []string{".codex-link-clawbot-state-" + base + "-", ".codex-link-clawbot-backup-" + base + "-"}
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return wrapSystem("list directory", directory, err)

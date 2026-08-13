@@ -42,7 +42,7 @@ func TestWriteRollbackAtEveryFaultBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, entry := range entries {
-				if strings.HasPrefix(entry.Name(), ".weclaw-state-") || strings.HasPrefix(entry.Name(), ".weclaw-backup-") {
+				if strings.HasPrefix(entry.Name(), ".codex-link-clawbot-state-") || strings.HasPrefix(entry.Name(), ".codex-link-clawbot-backup-") {
 					t.Fatalf("orphan transaction file remains: %s", entry.Name())
 				}
 			}
@@ -97,7 +97,7 @@ func TestWriteProtectsFileAndDirectoryAndCleansOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, "state.json")
-	orphan := filepath.Join(directory, ".weclaw-state-state.json-stale")
+	orphan := filepath.Join(directory, ".codex-link-clawbot-state-state.json-stale")
 	if err := os.WriteFile(orphan, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}

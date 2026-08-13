@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 func TestStoreEnqueuesPrivatePayloadPersistsAndDeduplicates(t *testing.T) {
@@ -75,6 +75,38 @@ func TestStoreEnqueuesPrivatePayloadPersistsAndDeduplicates(t *testing.T) {
 	}
 	if _, err := reloaded.LoadRequest("owner-1", task.ID); err != nil {
 		t.Fatalf("reloaded request: %v", err)
+	}
+}
+
+func TestStoreDoesNotClaimTaskBeforeAcknowledgement(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := testEnqueueInput("source:awaiting-ack", "owner", "project")
+	input.RequireAcknowledgement = true
+	task := mustEnqueue(t, store, input)
+	if !task.AwaitingAcknowledgement {
+		t.Fatalf("queued task did not retain acknowledgement gate: %#v", task)
+	}
+	if _, claimed, err := store.ClaimNext(nil); err != nil || claimed {
+		t.Fatalf("unacknowledged task claim: claimed=%v err=%v", claimed, err)
+	}
+
+	reloaded, err := NewStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := reloaded.ClaimNext(nil); err != nil || claimed {
+		t.Fatalf("reloaded unacknowledged task claim: claimed=%v err=%v", claimed, err)
+	}
+	if err := reloaded.Acknowledge("owner", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := reloaded.ClaimNext(nil)
+	if err != nil || !ok || claimed.ID != task.ID {
+		t.Fatalf("acknowledged task claim = %#v, %v, %v", claimed, ok, err)
 	}
 }
 
@@ -407,7 +439,7 @@ func TestStoreRetryCreatesNewTaskAndDeleteRemovesTerminalRecord(t *testing.T) {
 	if _, err := store.Finish("owner", original.ID, StateFailed, ReasonCodexFailed); err != nil {
 		t.Fatal(err)
 	}
-	retried, err := store.Retry("owner", original.ID, "source:retry", "new-context")
+	retried, err := store.Retry("owner", original.ID, "source:retry", "new-context", false)
 	if err != nil {
 		t.Fatal(err)
 	}

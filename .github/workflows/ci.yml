@@ -99,12 +99,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           go build -trimpath \
-            -ldflags="-s -w -X github.com/huixiangyang/weclaw/internal/cli.Version=${{ steps.version.outputs.version }}" \
-            -o weclaw_linux_${GOARCH} ./cmd/weclaw
+            -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${{ steps.version.outputs.version }}" \
+            -o codex-link-clawbot_linux_${GOARCH} ./cmd/codex-link-clawbot
 
       - uses: actions/upload-artifact@v4
         with:
-          name: weclaw_linux_${{ matrix.goarch }}
-          path: weclaw_linux_${{ matrix.goarch }}
+          name: codex-link-clawbot_linux_${{ matrix.goarch }}
+          path: codex-link-clawbot_linux_${{ matrix.goarch }}
           if-no-files-found: error
           retention-days: 7

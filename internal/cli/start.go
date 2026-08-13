@@ -14,20 +14,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/api"
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/config"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/messaging"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/project"
-	"github.com/huixiangyang/weclaw/internal/reporting"
-	"github.com/huixiangyang/weclaw/internal/runtimecontrol"
-	"github.com/huixiangyang/weclaw/internal/session"
-	"github.com/huixiangyang/weclaw/internal/statefile"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
-	"github.com/huixiangyang/weclaw/internal/workflow"
+	"github.com/huixiangyang/codex-link-clawbot/internal/api"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/messaging"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/project"
+	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/session"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
@@ -87,9 +85,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	entries := cfg.WeClaw.ProjectEntries
-	replyConfig := cfg.WeClaw.Reply
-	featureConfig := cfg.WeClaw.Features
+	entries := cfg.Clawbot.ProjectEntries
+	replyConfig := cfg.Clawbot.Reply
 	if len(entries) == 1 && entries[0].ID == "workspace" {
 		if err := os.MkdirAll(entries[0].Root, 0o700); err != nil {
 			return fmt.Errorf("create default project root: %w", err)
@@ -118,15 +115,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetControlStateStore(controlStateStore)
 	handler.SetProjectManager(projectManager)
-	projectIDs := make([]string, 0, len(entries))
-	for _, configuredProject := range entries {
-		projectIDs = append(projectIDs, configuredProject.ID)
-	}
-	workflowStore, err := workflow.NewStore("", projectIDs)
-	if err != nil {
-		return fmt.Errorf("initialize workflow store: %w", err)
-	}
-	handler.SetWorkflowStore(workflowStore)
 	preferenceStore, preferenceErr := preference.NewStore("")
 	if preferenceErr != nil {
 		return fmt.Errorf("initialize owner preferences: %w", preferenceErr)
@@ -150,6 +138,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize persistent task queue: %w", err)
 	}
+	pendingNotices, err := messaging.NewPendingNoticeStore("")
+	if err != nil {
+		return fmt.Errorf("initialize pending notice store: %w", err)
+	}
+	handler.SetPendingNoticeStore(pendingNotices)
 	coordinator, err := messaging.NewCoordinator(handler, taskStore)
 	if err != nil {
 		return fmt.Errorf("initialize task coordinator: %w", err)
@@ -166,12 +159,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	handler.SetRuntimeLifecycle(runtimeController)
 	defer runtimeController.SetStopping()
-	libraryStore, err := messaging.NewLibraryStore("")
+	deliveryStore, err := messaging.NewDeliveryStore("")
 	if err != nil {
-		return fmt.Errorf("initialize material and delivery library: %w", err)
+		return fmt.Errorf("initialize delivery store: %w", err)
 	}
-	handler.SetLibraryStore(libraryStore)
-	remoteLock, err := messaging.NewRemoteLock("", cfg.WeClaw.Security.RemoteLockCode)
+	handler.SetDeliveryStore(deliveryStore)
+	remoteLock, err := messaging.NewRemoteLock("", cfg.Clawbot.Security.RemoteLockCode)
 	if err != nil {
 		return fmt.Errorf("initialize remote lock: %w", err)
 	}
@@ -215,15 +208,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		MessageInterval:   time.Duration(replyConfig.Progress.MessageIntervalSeconds) * time.Second,
 	})
 
-	// 可选的链接归档目录，与 Codex 轮次附件沙箱无关。
-	if featureConfig.LinkArchive.Enabled {
-		handler.SetSaveDir(featureConfig.LinkArchive.Directory)
-		log.Printf("Link archive directory: %s", featureConfig.LinkArchive.Directory)
-	}
-
-	// 复用同一组已登录客户端启动本机管理面，并按配置决定是否启动主动发送面。
+	// 复用同一组已登录客户端启动仅限本机 Unix socket 的管理面。
 	var clients []*ilink.Client
-	sendTargets := make(map[string]*ilink.Client, len(accounts))
 	for _, credentials := range accounts {
 		client := ilink.NewClient(credentials)
 		clients = append(clients, client)
@@ -232,25 +218,28 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if owner == "" {
 			return fmt.Errorf("account owner is missing")
 		}
-		if _, exists := sendTargets[owner]; exists {
-			return fmt.Errorf("duplicate bound account owner")
-		}
-		sendTargets[owner] = client
 	}
 	managementSocket := filepath.Join(stateRoot, api.ManagementSocketName)
-	managementServer := api.NewManagementServer(runtimeController, managementSocket, func(notifyContext context.Context, notice api.DeploymentNotice) error {
-		message := fmt.Sprintf("WeClaw 已完成部署并恢复服务。\n版本：%s → %s\n服务：%s\n状态：已就绪", notice.FromVersion, notice.ToVersion, notice.Service)
+	managementServer := api.NewManagementServer(runtimeController, managementSocket, func(_ context.Context, notice api.DeploymentNotice) (api.DeploymentNotificationResult, error) {
+		message := fmt.Sprintf("codex-link-clawbot 已完成部署并恢复服务。\n版本：%s → %s\n服务：%s\n状态：已就绪", notice.FromVersion, notice.ToVersion, notice.Service)
 		var failures []error
-		for index, credentials := range accounts {
-			if strings.TrimSpace(credentials.ILinkUserID) == "" {
+		for _, credentials := range accounts {
+			ownerID := strings.TrimSpace(credentials.ILinkUserID)
+			if ownerID == "" {
 				failures = append(failures, fmt.Errorf("account owner is missing"))
 				continue
 			}
-			if err := messaging.SendTextReply(notifyContext, clients[index], credentials.ILinkUserID, message, "", ""); err != nil {
+			if _, _, err := pendingNotices.Enqueue(ownerID, messaging.PendingNoticeInput{
+				Kind: messaging.PendingNoticeDeployment, DedupKey: "deployment:" + notice.ToVersion + ":" + notice.Service,
+				Title: "codex-link-clawbot 部署完成", Body: message, TTL: 7 * 24 * time.Hour,
+			}); err != nil {
 				failures = append(failures, err)
 			}
 		}
-		return errors.Join(failures...)
+		if err := errors.Join(failures...); err != nil {
+			return api.DeploymentNotificationResult{}, err
+		}
+		return api.DeploymentNotificationResult{Status: api.DeploymentNotificationDeferred}, nil
 	})
 	managementErr := make(chan error, 1)
 	go func() {
@@ -264,52 +253,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return ctx.Err()
 	}
 
-	handler.SetBridgeInfo(Version, false)
-	var sendAPIErr <-chan error
-	if cfg.WeClaw.SendAPI.Enabled {
-		delivery, err := api.NewWeChatDelivery(sendTargets)
-		if err != nil {
-			return fmt.Errorf("initialize send API delivery: %w", err)
-		}
-		receipts, err := api.NewSendReceiptStore(filepath.Join(stateRoot, "send-api-state.json"))
-		if err != nil {
-			return fmt.Errorf("initialize send API receipts: %w", err)
-		}
-		tokens := make([]api.AccessToken, 0, len(cfg.WeClaw.SendAPI.Tokens))
-		for _, token := range cfg.WeClaw.SendAPI.Tokens {
-			tokens = append(tokens, api.AccessToken{CallerID: token.CallerID, TokenSHA256: token.TokenSHA256, Scopes: token.Scopes})
-		}
-		sendServer, err := api.NewServer(delivery, api.ServerConfig{
-			ListenAddr: cfg.WeClaw.SendAPI.ListenAddr, ProxyMode: cfg.WeClaw.SendAPI.ProxyMode,
-			TrustedProxyCIDRs: cfg.WeClaw.SendAPI.TrustedProxyCIDRs, Tokens: tokens,
-		}, receipts)
-		if err != nil {
-			return fmt.Errorf("initialize send API: %w", err)
-		}
-		errChannel := make(chan error, 1)
-		sendAPIErr = errChannel
-		go func() {
-			errChannel <- sendServer.Run(ctx)
-		}()
-		select {
-		case <-sendServer.Ready():
-		case err := <-errChannel:
-			return fmt.Errorf("start send API: %w", err)
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		handler.SetBridgeInfo(Version, true)
-	}
+	handler.SetBridgeInfo(Version)
 
-	// 确定性自动化复用已登录账号主动通知，状态按计划和绑定者隔离。
-	reportScheduler, err := reporting.NewScheduler(featureConfig.Automations, entries, clients)
-	if err != nil {
-		return fmt.Errorf("initialize scheduled reports: %w", err)
-	}
-	handler.SetAutomationProvider(reportScheduler)
 	// 全部持久状态均已严格打开；后续记录只代表本次运行期故障。
 	statefile.ClearLastFailure()
-	go reportScheduler.Run(ctx)
 	coordinatorErr := make(chan error, 1)
 	go func() {
 		coordinatorErr <- coordinator.Run(ctx)
@@ -363,12 +310,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		return fmt.Errorf("local management server stopped: %w", err)
-	case err := <-sendAPIErr:
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		return fmt.Errorf("send API stopped: %w", err)
 	case <-ctx.Done():
 		<-monitorsDone
 		return nil

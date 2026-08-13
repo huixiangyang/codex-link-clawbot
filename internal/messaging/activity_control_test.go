@@ -1,13 +1,34 @@
 package messaging
 
 import (
+	"context"
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
+
+func TestEmptyTaskCenterCanResumePausedQueue(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	store, err := taskqueue.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.tasks = store
+	if err := store.SetPaused("owner-1", true); err != nil {
+		t.Fatal(err)
+	}
+	prompt := handler.openActivities("owner-1", 1)
+	if !strings.Contains(prompt, "还没有执行记录") || !strings.Contains(prompt, "1  继续队列") {
+		t.Fatalf("empty paused queue = %q", prompt)
+	}
+	resumed, handled := handler.handleControlInput(context.Background(), "owner-1", "1", false, nextTestControlSource())
+	if !handled || store.Status("owner-1").Paused || !strings.Contains(resumed.Text, "已继续") {
+		t.Fatalf("resume result = %#v handled=%v status=%#v", resumed, handled, store.Status("owner-1"))
+	}
+}
 
 func TestTaskCenterUsesPersistentQueueAndKeepsDetailPage(t *testing.T) {
 	handler, _ := newSessionHandler(t)
@@ -26,7 +47,7 @@ func TestTaskCenterUsesPersistentQueueAndKeepsDetailPage(t *testing.T) {
 		}
 	}
 	first := handler.openActivities("owner-1", 1)
-	for _, want := range []string{"WeClaw 请求队列", "页码：1 / 2", "等待：8", "下一页 · 2/2"} {
+	for _, want := range []string{"codex-link-clawbot 请求队列", "页码：1 / 2", "等待：8", "下一页 · 2/2"} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("task first page missing %q: %q", want, first)
 		}
@@ -37,7 +58,7 @@ func TestTaskCenterUsesPersistentQueueAndKeepsDetailPage(t *testing.T) {
 	}
 	tasks := store.List("owner-1")
 	detail := handler.openActivityDetail("owner-1", tasks[6].ID, 2)
-	for _, want := range []string{"WeClaw 执行记录", "摘要：检查任务", "状态：排队中", "编号："} {
+	for _, want := range []string{"codex-link-clawbot 执行记录", "摘要：检查任务", "状态：排队中", "编号："} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("task detail missing %q: %q", want, detail)
 		}

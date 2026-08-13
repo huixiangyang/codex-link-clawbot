@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/api"
+	"github.com/huixiangyang/codex-link-clawbot/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -72,13 +72,13 @@ func init() {
 	deployCmd.Flags().StringVar(&deployService, "service", defaultServiceName, "systemd user service name")
 	deployCmd.Flags().DurationVar(&deployTimeout, "timeout", 10*time.Minute, "maximum drain, rollback and readiness wait")
 	deployCmd.Flags().StringVar(&deployTargetBinary, "target", "", "installed binary path")
-	deployCmd.Flags().StringVar(&deployStateRoot, "state-root", "", "WeClaw state root")
+	deployCmd.Flags().StringVar(&deployStateRoot, "state-root", "", "codex-link-clawbot state root")
 	rootCmd.AddCommand(deployCmd)
 }
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy [version]",
-	Short: "Transactionally deploy an immutable WeClaw version",
+	Short: "Transactionally deploy an immutable codex-link-clawbot version",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target, err := resolvedDeployBinaryPath(deployTargetBinary)
@@ -215,15 +215,16 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	}
 
 	receipt.Status, receipt.Phase, receipt.FinishedAt = "succeeded", "ready", time.Now().Unix()
-	if notifyErr := requestDeploymentNotification(ctx, controlSocket, api.DeploymentNotice{
+	notificationStatus, notifyErr := requestDeploymentNotification(ctx, controlSocket, api.DeploymentNotice{
 		FromVersion: current.Version,
 		ToVersion:   candidate.Version,
 		Service:     options.Service,
-	}); notifyErr != nil {
+	})
+	if notifyErr != nil {
 		receipt.NotificationStatus = "failed"
 		fmt.Fprintf(os.Stderr, "warning: deployment notification failed: %v\n", notifyErr)
 	} else {
-		receipt.NotificationStatus = "sent"
+		receipt.NotificationStatus = notificationStatus
 	}
 	if err := writeReceipt(); err != nil {
 		return fmt.Errorf("persist successful deployment receipt: %w", err)
@@ -232,7 +233,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	if err := removeSnapshotState(snapshot); err != nil {
 		return fmt.Errorf("remove sensitive deployment snapshot: %w", err)
 	}
-	fmt.Printf("WeClaw %s deployed and ready. Receipt: %s\n", candidate.Version, receiptPath)
+	fmt.Printf("codex-link-clawbot %s deployed and ready. Receipt: %s\n", candidate.Version, receiptPath)
 	return nil
 }
 
@@ -301,7 +302,7 @@ func prepareDeploymentCandidate(ctx context.Context, options deployOptions) (dep
 	path := options.Binary
 	cleanup := func() {}
 	if path == "" {
-		filename := fmt.Sprintf("weclaw_linux_%s", runtime.GOARCH)
+		filename := fmt.Sprintf("codex-link-clawbot_linux_%s", runtime.GOARCH)
 		baseURL := fmt.Sprintf("https://github.com/%s/releases/download/%s", githubRepo, options.ReleaseVersion)
 		checksumPath, err := downloadReleaseFile(baseURL+"/checksums.txt", maxChecksumBytes, false)
 		if err != nil {
@@ -466,7 +467,7 @@ func rewriteSystemdUnit(path, binaryPath string, draining bool) error {
 		}
 		fields := strings.Fields(commandLine)
 		if len(fields) < 2 || fields[1] != "start" {
-			return fmt.Errorf("systemd unit must run weclaw start")
+			return fmt.Errorf("systemd unit must run codex-link-clawbot start")
 		}
 		arguments := []string{binaryPath, "start"}
 		for argumentIndex := 2; argumentIndex < len(fields); argumentIndex++ {
@@ -525,7 +526,7 @@ func resolvedStateRoot(value string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		value = filepath.Join(home, ".weclaw")
+		value = filepath.Join(home, ".codex-link-clawbot")
 	}
 	value = filepath.Clean(value)
 	if !filepath.IsAbs(value) || value == string(filepath.Separator) {

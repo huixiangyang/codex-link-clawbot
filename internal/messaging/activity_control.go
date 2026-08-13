@@ -5,18 +5,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/session"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/session"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 func (h *Handler) openActivities(userID string, pageNumber int) string {
 	if h.tasks == nil {
-		return "WeClaw 请求队列\n\n持久请求队列当前不可用。"
+		return "codex-link-clawbot 请求队列\n\n持久请求队列当前不可用。"
 	}
 	tasks := h.tasks.List(userID)
 	status := h.tasks.Status(userID)
 	if len(tasks) == 0 {
-		return "WeClaw 请求队列\n\n还没有执行记录。直接发送文字、图片或文件即可可靠入队。"
+		queueAction := controlOption{Label: "暂停队列", Action: actionQueuePause}
+		if status.Paused {
+			queueAction = controlOption{Label: "继续队列", Action: actionQueueResume}
+		}
+		options := []controlOption{queueAction}
+		prompt := "codex-link-clawbot 请求队列\n\n还没有执行记录。直接发送文字、图片或文件即可可靠入队。\n\n" + renderControlOptions(options)
+		if !h.storeChoice(userID, viewTaskCenter, options, actionMain) {
+			return controlStateFailureResult().Text
+		}
+		return prompt + "\n\n回复数字操作，0 返回。"
 	}
 	if pageNumber <= 0 {
 		pageNumber = 1
@@ -60,7 +69,7 @@ func (h *Handler) openActivities(userID string, pageNumber int) string {
 		paused = "是"
 	}
 	prompt := strings.Join([]string{
-		"WeClaw 请求队列",
+		"codex-link-clawbot 请求队列",
 		"",
 		fmt.Sprintf("页码：%d / %d", pageNumber, totalPages),
 		fmt.Sprintf("等待：%d", status.Queued),
@@ -77,7 +86,7 @@ func (h *Handler) openActivities(userID string, pageNumber int) string {
 
 func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 	if h.tasks == nil {
-		return "WeClaw 执行记录\n\n持久请求队列当前不可用。"
+		return "codex-link-clawbot 执行记录\n\n持久请求队列当前不可用。"
 	}
 	task, ok := h.tasks.Find(userID, id)
 	if !ok {
@@ -124,22 +133,16 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 				Label: "继续这个线程", Action: actionTaskContinueSession, Value: task.ID, Page: pageNumber,
 			})
 		}
-		if prompt, err := h.tasks.LoadReusablePrompt(userID, task.ID); err == nil {
+		if _, err := h.tasks.LoadReusablePrompt(userID, task.ID); err == nil {
 			options = append(options,
 				controlOption{Label: "再次执行", Action: actionTaskRerun, Value: task.ID, Page: pageNumber},
 				controlOption{Label: "在新线程执行", Action: actionTaskRerunNewSession, Value: task.ID, Page: pageNumber},
 			)
-			if h.workflows != nil && reusablePromptCanBecomeWorkflow(prompt) {
-				options = append(options, controlOption{
-					Label: "保存为提示词模板", Action: actionPromptWorkflowSave,
-					Value: task.ID, Query: task.ProjectID, Page: pageNumber,
-				})
-			}
 		}
 	}
 	options = append(options, controlOption{Label: "返回请求队列", Action: actionActivityPage, Page: pageNumber})
 	prompt := strings.Join([]string{
-		"WeClaw 执行记录",
+		"codex-link-clawbot 执行记录",
 		"",
 		"编号：" + shortTaskID(task.ID),
 		"摘要：" + task.Summary,
@@ -148,7 +151,8 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 		"创建：" + formatSessionTime(task.CreatedAt),
 		"结束：" + finishedAt,
 		"用时：" + formatUptime(duration),
-		"WeClaw 项目入口：" + task.ProjectID,
+		"Codex 工作空间：" + task.ProjectID,
+		"交付状态：" + taskDeliveryStateText(task),
 	}, "\n")
 	if task.ThreadID != "" {
 		prompt += "\nCodex 线程：" + session.ShortCode(task.ThreadID)
@@ -161,6 +165,31 @@ func (h *Handler) openActivityDetail(userID, id string, pageNumber int) string {
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字继续，0 返回原列表。"
+}
+
+func taskDeliveryStateText(task taskqueue.Task) string {
+	switch task.State {
+	case taskqueue.StateQueued, taskqueue.StateRunning:
+		return "尚未开始"
+	case taskqueue.StateDelivering:
+		return "正在发送"
+	case taskqueue.StateSucceeded:
+		return "已成功发送"
+	case taskqueue.StateInterrupted:
+		if task.Reason == taskqueue.ReasonDeliveryAmbiguous || task.Reason == taskqueue.ReasonRestartDelivery {
+			return "发送结果不确定 · 可人工取回冻结文字"
+		}
+		return "未发送"
+	case taskqueue.StateFailed:
+		if task.Reason == taskqueue.ReasonDeliveryFailed {
+			return "微信明确发送失败"
+		}
+		return "未发送"
+	case taskqueue.StateCancelled:
+		return "未发送"
+	default:
+		return "未知"
+	}
 }
 
 func taskStateText(state taskqueue.State) string {
@@ -186,26 +215,26 @@ func taskStateText(state taskqueue.State) string {
 
 func (h *Handler) setQueuePaused(userID string, paused bool) string {
 	if h.tasks == nil {
-		return "WeClaw 请求队列当前不可用。"
+		return "codex-link-clawbot 请求队列当前不可用。"
 	}
 	if !paused && h.remoteLock != nil && h.remoteLock.IsLocked(userID) {
-		return "WeClaw 仍处于远程锁定，不能继续请求队列。"
+		return "codex-link-clawbot 仍处于远程锁定，不能继续请求队列。"
 	}
 	if err := h.tasks.SetPaused(userID, paused); err != nil {
 		return fmt.Sprintf("更新请求队列失败：%v", err)
 	}
 	if paused {
-		return "WeClaw 请求队列已暂停。已落盘请求会保留，其他绑定者不受影响。"
+		return "codex-link-clawbot 请求队列已暂停。已落盘请求会保留，其他绑定者不受影响。"
 	}
 	if h.coordinator != nil {
 		h.coordinator.Wake()
 	}
-	return "WeClaw 请求队列已继续，将按原顺序执行。"
+	return "codex-link-clawbot 请求队列已继续，将按原顺序执行。"
 }
 
 func (h *Handler) moveTaskToFront(userID, taskID string, pageNumber int) string {
 	if h.tasks == nil {
-		return "WeClaw 请求队列当前不可用。"
+		return "codex-link-clawbot 请求队列当前不可用。"
 	}
 	if _, err := h.tasks.MoveToFront(userID, taskID); err != nil {
 		return fmt.Sprintf("调整请求顺序失败：%v", err)
@@ -218,7 +247,7 @@ func (h *Handler) moveTaskToFront(userID, taskID string, pageNumber int) string 
 
 func (h *Handler) deleteTask(userID, taskID string, pageNumber int) string {
 	if h.tasks == nil {
-		return "WeClaw 请求队列当前不可用。"
+		return "codex-link-clawbot 请求队列当前不可用。"
 	}
 	if err := h.tasks.Delete(userID, taskID); err != nil {
 		return fmt.Sprintf("删除请求失败：%v", err)
@@ -228,7 +257,7 @@ func (h *Handler) deleteTask(userID, taskID string, pageNumber int) string {
 
 func (h *Handler) requestTaskRetry(userID, taskID string) ActionResult {
 	if h.tasks == nil {
-		return newActionResult(string(actionTaskRetry), DomainQueue, "WeClaw 请求队列当前不可用。")
+		return newActionResult(string(actionTaskRetry), DomainQueue, "codex-link-clawbot 请求队列当前不可用。")
 	}
 	if task, ok := h.tasks.Find(userID, taskID); !ok || task.State != taskqueue.StateFailed && task.State != taskqueue.StateInterrupted || h.hasFrozenDelivery(task) {
 		return newActionResult(string(actionTaskRetry), DomainQueue, "这条执行记录已经不能重试。发送“请求队列”刷新。")
@@ -238,7 +267,7 @@ func (h *Handler) requestTaskRetry(userID, taskID string) ActionResult {
 
 func (h *Handler) requestFrozenTaskText(userID, taskID string) ActionResult {
 	if h.tasks == nil {
-		return newActionResult(string(actionTaskFrozenText), DomainQueue, "WeClaw 请求队列当前不可用。")
+		return newActionResult(string(actionTaskFrozenText), DomainQueue, "codex-link-clawbot 请求队列当前不可用。")
 	}
 	task, ok := h.tasks.Find(userID, taskID)
 	if !ok || !h.hasFrozenDelivery(task) {
@@ -268,7 +297,7 @@ func (h *Handler) confirmClearQueue(userID string) string {
 		return "当前没有等待中的请求。"
 	}
 	options := []controlOption{{Label: "确认清空等待请求", Action: actionQueueClear}}
-	prompt := "准备清空 WeClaw 请求队列\n\n只会删除当前绑定者的等待请求；执行中请求和其他绑定者不受影响。\n\n" + renderControlOptions(options)
+	prompt := "准备清空 codex-link-clawbot 请求队列\n\n只会删除当前绑定者的等待请求；执行中请求和其他绑定者不受影响。\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewTaskClearConfirm, options, actionActivityPage) {
 		return controlStateFailureResult().Text
 	}
@@ -277,7 +306,7 @@ func (h *Handler) confirmClearQueue(userID string) string {
 
 func (h *Handler) clearQueue(userID string) string {
 	if h.tasks == nil {
-		return "WeClaw 请求队列当前不可用。"
+		return "codex-link-clawbot 请求队列当前不可用。"
 	}
 	count, err := h.tasks.ClearQueued(userID)
 	if err != nil {

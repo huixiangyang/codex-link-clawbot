@@ -23,9 +23,6 @@ const (
 	IntentQueueResume       IntentID = "queue.resume"
 	IntentQueueClear        IntentID = "queue.clear"
 	IntentProjectCenter     IntentID = "project.center"
-	IntentProjectQuickTasks IntentID = "project.quick_tasks"
-	IntentWorkflowNew       IntentID = "project.workflow_new"
-	IntentWorkflowSaveLast  IntentID = "project.workflow_save_last"
 	IntentProjectSelect     IntentID = "project.select"
 	IntentSessionCenter     IntentID = "thread.center"
 	IntentSessionSelect     IntentID = "thread.select"
@@ -50,9 +47,8 @@ const (
 	IntentResponseAdaptive  IntentID = "preference.response_adaptive"
 	IntentResponseReading   IntentID = "preference.response_reading"
 	IntentVisualStyle       IntentID = "preference.visual_style"
-	IntentLibraryCenter     IntentID = "library.center"
-	IntentAutomationCenter  IntentID = "automation.center"
-	IntentVoiceBriefing     IntentID = "automation.voice_briefing"
+	IntentDeliveryBox       IntentID = "delivery.center"
+	IntentVoiceBriefing     IntentID = "result.voice_briefing"
 	IntentRemoteLock        IntentID = "security.remote_lock"
 )
 
@@ -229,9 +225,6 @@ func defaultIntentDefinitions() []IntentDefinition {
 		{ID: IntentQueueResume, Domain: DomainQueue, ExactPhrases: []string{"继续队列", "恢复队列", "继续请求队列"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "resume_queue"},
 		{ID: IntentQueueClear, Domain: DomainQueue, ExactPhrases: []string{"清空队列", "删除排队请求"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "request_clear_queue"},
 		{ID: IntentProjectCenter, Domain: DomainProject, ExactPhrases: []string{"项目", "项目中心", "项目列表", "查看项目", "当前项目"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_project_center"},
-		{ID: IntentProjectQuickTasks, Domain: DomainProject, ExactPhrases: []string{"提示词模板", "提示模板"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_prompt_templates"},
-		{ID: IntentWorkflowNew, Domain: DomainProject, ExactPhrases: []string{"新建提示词模板", "创建提示词模板"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_template_create"},
-		{ID: IntentWorkflowSaveLast, Domain: DomainProject, ExactPhrases: []string{"保存为提示词模板", "把上次请求保存为模板"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "prompt_template_save_from_request"},
 		{ID: IntentProjectSelect, Domain: DomainProject, ArgumentPrefixes: []string{"切换项目", "切到项目", "进入项目"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "select_project"},
 		{ID: IntentSessionCenter, Domain: DomainSession, ExactPhrases: []string{"线程", "线程中心"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_thread_center"},
 		{ID: IntentSessionSelect, Domain: DomainSession, ExactPhrases: []string{"线程列表", "选择线程"}, ArgumentPrefixes: []string{"切换线程", "切换到线程"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringDrain: true, AuditEvent: "select_thread"},
@@ -256,9 +249,8 @@ func defaultIntentDefinitions() []IntentDefinition {
 		{ID: IntentResponseAdaptive, Domain: DomainPreference, ExactPhrases: []string{"关闭语音模式", "退出语音模式", "自适应模式"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "set_response_adaptive"},
 		{ID: IntentResponseReading, Domain: DomainPreference, ExactPhrases: []string{"开启阅读模式", "打开阅读模式", "阅读模式"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "set_response_reading"},
 		{ID: IntentVisualStyle, Domain: DomainPreference, ExactPhrases: []string{"主题风格"}, ArgumentPrefixes: []string{"视觉风格", "卡片风格", "更换风格", "切换风格"}, AllowEmptyArgument: true, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "set_visual_style"},
-		{ID: IntentLibraryCenter, Domain: DomainLibrary, ExactPhrases: []string{"素材箱", "素材中心", "收藏链接", "交付记录", "交付中心"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_library"},
-		{ID: IntentAutomationCenter, Domain: DomainAutomation, ExactPhrases: []string{"自动化", "自动化中心", "自动检查", "检查计划"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_automation"},
-		{ID: IntentVoiceBriefing, Domain: DomainAutomation, ExactPhrases: []string{"语音简报", "播放简报", "工作简报", "发语音", "发个语音", "来段语音", "播报一下", "读给我听"}, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, RequiresContextToken: true, AuditEvent: "send_voice_briefing"},
-		{ID: IntentRemoteLock, Domain: DomainSecurity, ExactPhrases: []string{"远程锁定", "锁定 WeClaw", "锁定WeClaw", "锁定服务"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "remote_lock"},
+		{ID: IntentDeliveryBox, Domain: DomainDelivery, ExactPhrases: []string{"交付箱", "交付记录", "交付中心"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_delivery_box"},
+		{ID: IntentVoiceBriefing, Domain: DomainQueue, ExactPhrases: []string{"语音简报", "播放简报", "工作简报", "发语音", "发个语音", "来段语音", "播报一下", "读给我听"}, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, RequiresContextToken: true, AuditEvent: "send_result_voice_briefing"},
+		{ID: IntentRemoteLock, Domain: DomainSecurity, ExactPhrases: []string{"远程锁定", "锁定 codex-link-clawbot", "锁定codex-link-clawbot", "锁定服务"}, MutatesState: true, RequiresReceipt: true, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "remote_lock"},
 	}
 }

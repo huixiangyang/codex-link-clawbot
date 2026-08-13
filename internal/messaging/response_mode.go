@@ -8,9 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const maxVoiceReplyScriptRunes = 2200
@@ -87,7 +87,7 @@ func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink
 		Style:   style,
 		Title:   "语音回答",
 		Facts: []visual.Fact{
-			{Label: "WeClaw 项目入口", Value: projectName},
+			{Label: "Codex 工作空间", Value: projectName},
 			{Label: "音频来源", Value: synthesis.ProviderID},
 		},
 		Body:   []string{script},
@@ -110,7 +110,7 @@ func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink
 	}
 	payloads = append(payloads,
 		companionPayload,
-		outboundMediaPayload{FileName: "weclaw-reply.mp3", Source: "weclaw-reply.mp3", Data: mp3, ContentType: "audio/mpeg"},
+		outboundMediaPayload{FileName: "codex-link-clawbot-reply.mp3", Source: "codex-link-clawbot-reply.mp3", Data: mp3, ContentType: "audio/mpeg"},
 	)
 
 	// 发送阶段开始后响应可能丢失，先保留完整原文，避免用户看到部分卡片却无法取回文字版。

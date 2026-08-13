@@ -30,7 +30,7 @@ var versionCmd = &cobra.Command{
 		if versionJSON {
 			return json.NewEncoder(os.Stdout).Encode(versionOutput{Version: Version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 		}
-		fmt.Printf("weclaw %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("codex-link-clawbot %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 		return nil
 	},
 }

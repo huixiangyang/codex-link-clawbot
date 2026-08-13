@@ -3,10 +3,11 @@ package messaging
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/session"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/session"
 )
 
 func (h *Handler) advancedThreadContext() (codex.ThreadClient, codex.AdvancedThreadClient, error) {
@@ -19,6 +20,38 @@ func (h *Handler) advancedThreadContext() (codex.ThreadClient, codex.AdvancedThr
 		return nil, nil, fmt.Errorf("Codex 线程高级控制面不可用")
 	}
 	return threadClient, advanced, nil
+}
+
+// openCodexDevelopmentCenter 把高频开发控制集中在一个短菜单中，避免线程管理与开发动作互相淹没。
+func (h *Handler) openCodexDevelopmentCenter(ctx context.Context, userID string) string {
+	currentName := "未创建"
+	if h.sessions != nil {
+		if threadAgent, err := h.sessionContext(); err == nil {
+			if current, currentErr := h.sessions.Current(ctx, userID, threadAgent); currentErr == nil {
+				currentName = threadTitle(current.Info)
+			}
+		}
+	}
+	options := []controlOption{
+		{Label: "模型与推理 · /model", Action: actionThreadModels},
+		{Label: "线程目标 · /goal", Action: actionCodexGoalStatus},
+		{Label: "审查未提交改动 · /review", Action: actionReviewThread},
+		{Label: "技能与工具 · /skills /mcp", Action: actionCodexCapabilities},
+		{Label: "压缩上下文 · /compact", Action: actionCompactThread},
+		{Label: "当前线程 · /status", Action: actionCurrentSession},
+		{Label: "微信可用命令", Action: actionCodexCommands},
+		{Label: "线程中心", Action: actionSessionMenu},
+	}
+	prompt := strings.Join([]string{
+		"Codex 开发", "",
+		"当前线程：" + currentName,
+		"只展示能够通过 codex-link-clawbot 真实执行的命令。", "",
+		renderControlOptions(options),
+	}, "\n")
+	if !h.storeChoice(userID, viewSessionCenter, options, actionMain) {
+		return controlStateFailureResult().Text
+	}
+	return prompt + "\n\n回复数字操作，0 返回。"
 }
 
 func (h *Handler) forkCurrentThread(ctx context.Context, userID string) string {
@@ -102,18 +135,53 @@ func (h *Handler) clearCurrentThreadGoal(ctx context.Context, userID string) str
 	return "当前线程目标已清除。"
 }
 
-func (h *Handler) reviewCurrentThread(ctx context.Context, userID string) string {
-	return h.withRuntimeMutation(func() string {
-		_, advanced, err := h.advancedThreadContext()
-		if err != nil {
-			return err.Error()
+func (h *Handler) openCurrentThreadGoal(ctx context.Context, userID string) string {
+	_, advanced, err := h.advancedThreadContext()
+	if err != nil {
+		return err.Error()
+	}
+	goal, exists, err := h.sessions.CurrentGoal(ctx, userID, advanced)
+	if err != nil {
+		return formatSessionError(err)
+	}
+	options := []controlOption{{Label: "设置或编辑目标 · /goal edit", Action: actionPromptThreadGoal}}
+	lines := []string{"Codex 线程目标 · /goal", ""}
+	if !exists {
+		lines = append(lines, "状态：未设置")
+	} else {
+		lines = append(lines,
+			"状态："+displayGoalStatus(goal.Status),
+			"目标："+normalizeSessionLine(goal.Objective, 240),
+			fmt.Sprintf("已用：%d 个令牌", goal.TokensUsed),
+		)
+		if goal.Status == "paused" {
+			options = append(options, controlOption{Label: "继续目标 · /goal resume", Action: actionResumeThreadGoal})
+		} else {
+			options = append(options, controlOption{Label: "暂停目标 · /goal pause", Action: actionPauseThreadGoal})
 		}
-		review, err := h.sessions.ReviewCurrent(ctx, userID, advanced, codex.ReviewTarget{Type: "uncommittedChanges"}, nil)
-		if err != nil {
-			return "代码审查失败：" + err.Error()
-		}
-		return "代码审查\n\n" + strings.TrimSpace(review)
-	})
+		options = append(options, controlOption{Label: "清除目标 · /goal clear", Action: actionClearThreadGoal})
+	}
+	lines = append(lines, "", renderControlOptions(options))
+	if !h.storeChoice(userID, viewSessionCurrent, options, actionCodexDevelopment) {
+		return controlStateFailureResult().Text
+	}
+	return strings.Join(lines, "\n") + "\n\n回复数字操作，0 返回 Codex 开发。"
+}
+
+func (h *Handler) updateCurrentThreadGoalStatus(ctx context.Context, userID, status string) string {
+	client, ok := h.codex.(codex.GoalStatusClient)
+	if !ok {
+		return "当前 Codex App Server 不支持线程目标状态更新。"
+	}
+	goal, err := h.sessions.UpdateCurrentGoalStatus(ctx, userID, client, status)
+	if err != nil {
+		return formatSessionError(err)
+	}
+	return strings.Join([]string{
+		"Codex 线程目标已更新",
+		"状态：" + displayGoalStatus(goal.Status),
+		"目标：" + normalizeSessionLine(goal.Objective, 240),
+	}, "\n")
 }
 
 func (h *Handler) openCodexCapabilities(ctx context.Context, userID string) string {
@@ -121,47 +189,69 @@ func (h *Handler) openCodexCapabilities(ctx context.Context, userID string) stri
 	if !ok || h.projects == nil {
 		return "Codex 能力目录当前不可用。"
 	}
-	entry := h.projects.Current(userID)
-	capabilities, err := capabilityClient.InspectProject(ctx, entry.Root)
-	if err != nil {
-		return "读取 Codex 能力目录失败：" + err.Error()
-	}
-	enabledSkills := make([]string, 0, len(capabilities.Skills))
-	for _, skill := range capabilities.Skills {
-		if !skill.Enabled {
-			continue
+	entries := h.projects.List()
+	current := h.projects.Current(userID)
+	enabledSkills := make(map[string]bool)
+	workspaceLines := make([]string, 0, len(entries))
+	mcpReady, mcpServers := 0, 0
+	for index, entry := range entries {
+		capabilities, err := capabilityClient.InspectProject(ctx, entry.Root)
+		if err != nil {
+			return "读取工作空间 “" + entry.Name + "” 的 Codex 能力失败：" + err.Error()
 		}
-		name := strings.TrimSpace(skill.Interface.DisplayName)
-		if name == "" {
-			name = skill.Name
+		enabledCount := 0
+		for _, skill := range capabilities.Skills {
+			if !skill.Enabled {
+				continue
+			}
+			enabledCount++
+			name := strings.TrimSpace(skill.Interface.DisplayName)
+			if name == "" {
+				name = skill.Name
+			}
+			enabledSkills[name] = true
 		}
-		enabledSkills = append(enabledSkills, name)
+		marker := ""
+		if entry.ID == current.ID {
+			marker = " · 默认"
+		}
+		workspaceLines = append(workspaceLines, fmt.Sprintf("%s：%d 个技能%s", entry.Name, enabledCount, marker))
+		// MCP 是 App Server 级能力，取一次全局摘要，避免按工作空间重复累计。
+		if index == 0 {
+			mcpReady, mcpServers = capabilities.MCPReady, capabilities.MCPServers
+		}
 	}
-	displayedSkills := enabledSkills
+	skillNames := make([]string, 0, len(enabledSkills))
+	for name := range enabledSkills {
+		skillNames = append(skillNames, name)
+	}
+	sort.Strings(skillNames)
+	displayedSkills := skillNames
 	if len(displayedSkills) > 5 {
 		displayedSkills = displayedSkills[:5]
 	}
 	lines := []string{
-		"Codex 能力",
+		"Codex 全局技能与工具",
 		"",
 		"来源：Codex 应用服务",
-		"工作入口：" + entry.Name,
-		fmt.Sprintf("技能：%d 个启用", len(enabledSkills)),
-		fmt.Sprintf("外部工具连接：%d / %d 就绪", capabilities.MCPReady, capabilities.MCPServers),
+		fmt.Sprintf("工作空间：%d 个", len(entries)),
+		fmt.Sprintf("去重技能：%d 个启用", len(skillNames)),
+		fmt.Sprintf("外部工具连接：%d / %d 就绪", mcpReady, mcpServers),
 	}
+	lines = append(lines, workspaceLines...)
 	if len(displayedSkills) > 0 {
 		lines = append(lines, "技能列表："+strings.Join(displayedSkills, " · "))
 	}
 	options := []controlOption{
-		{Label: "模型与推理", Action: actionThreadModels},
-		{Label: "当前线程", Action: actionCurrentSession},
-		{Label: "返回 Codex 工作台", Action: actionSessionMenu},
+		{Label: "模型与权限 · /model", Action: actionCodexModelOverview},
+		{Label: "工作空间", Action: actionProjectCenter},
+		{Label: "返回全局总览", Action: actionCodexGlobalOverview},
 	}
 	lines = append(lines, "", renderControlOptions(options))
-	if !h.storeChoice(userID, viewSessionCenter, options, actionSessionMenu) {
+	if !h.storeChoice(userID, viewSessionCenter, options, actionCodexGlobalOverview) {
 		return controlStateFailureResult().Text
 	}
-	return strings.Join(lines, "\n") + "\n\n回复数字操作，0 返回 Codex 工作台。"
+	return strings.Join(lines, "\n") + "\n\n回复数字操作，0 返回全局总览。"
 }
 
 func (h *Handler) steerCurrentTurn(ctx context.Context, userID, instruction string) string {
@@ -211,7 +301,7 @@ func (h *Handler) deleteCurrentThread(ctx context.Context, userID string) string
 		if err := h.sessions.DeleteCurrent(ctx, userID, advanced); err != nil {
 			return formatSessionError(err)
 		}
-		return "当前线程及其派生历史已永久删除。下一条普通消息会在当前 WeClaw 项目入口中新建 Codex 线程。"
+		return "当前线程及其派生历史已永久删除。下一条普通消息会在当前 Codex 工作空间中新建线程。"
 	})
 }
 

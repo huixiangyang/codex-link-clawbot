@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 type coordinatorTask struct {
@@ -166,12 +166,12 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 
 	requestPayload, err := coordinator.tasks.LoadRequest(task.OwnerID, task.ID)
 	if err != nil {
-		coordinator.failBeforeExecution(client, task, active, "WeClaw 请求输入损坏，已停止执行。", taskqueue.ReasonPayloadInvalid, err)
+		coordinator.failBeforeExecution(client, task, active, "codex-link-clawbot 请求输入损坏，已停止执行。", taskqueue.ReasonPayloadInvalid, err)
 		return
 	}
 	projectDefinition, ok := coordinator.handler.projects.Get(task.ProjectID)
 	if !ok {
-		coordinator.failBeforeExecution(client, task, active, "请求绑定的 WeClaw 项目入口已不存在，未改用其他目录。", taskqueue.ReasonProjectUnavailable, nil)
+		coordinator.failBeforeExecution(client, task, active, "请求绑定的 Codex 工作空间已不存在，未改用其他目录。", taskqueue.ReasonProjectUnavailable, nil)
 		return
 	}
 	coordinator.handler.codex.SetCwd(projectDefinition.Root)
@@ -242,7 +242,7 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 		return
 	}
 	if err != nil {
-		coordinator.failTask(client, task, "Codex 轮次执行失败，WeClaw 请求输入保留 24 小时供手动重试。", taskqueue.ReasonCodexFailed, err)
+		coordinator.failTask(client, task, "Codex 轮次执行失败，codex-link-clawbot 请求输入保留 24 小时供手动重试。", taskqueue.ReasonCodexFailed, err)
 		return
 	}
 	log.Printf("[queue] Codex completed task %s (elapsed=%s chars=%d)", shortTaskID(task.ID), time.Since(started), len([]rune(reply)))
@@ -278,6 +278,7 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 	if err := coordinator.tasks.RecordDelivery(task.OwnerID, task.ID, receipt); err != nil {
 		log.Printf("[queue] failed to persist delivery receipt for %s: %v", shortTaskID(task.ID), err)
 		_, _ = coordinator.tasks.Finish(task.OwnerID, task.ID, taskqueue.StateInterrupted, taskqueue.ReasonDeliveryAmbiguous)
+		coordinator.deferTaskRecoveryNotice(task, taskqueue.ReasonDeliveryAmbiguous)
 		return
 	}
 	terminalState := taskqueue.StateSucceeded
@@ -292,6 +293,9 @@ func (coordinator *Coordinator) execute(taskContext context.Context, task taskqu
 	if _, err := coordinator.tasks.Finish(task.OwnerID, task.ID, terminalState, reason); err != nil {
 		log.Printf("[queue] failed to finish delivery task %s: %v", shortTaskID(task.ID), err)
 	}
+	if reason != "" {
+		coordinator.deferTaskRecoveryNotice(task, reason)
+	}
 }
 
 func queuedChatRequest(payload taskqueue.LoadedRequest, outbox string) codex.ChatRequest {
@@ -305,7 +309,7 @@ func queuedChatRequest(payload taskqueue.LoadedRequest, outbox string) codex.Cha
 		})
 	}
 	if len(request.LocalImages) > 0 && isImageAnnotationIntent(request.Text) {
-		request.Text = strings.TrimSpace(request.Text + "\n\n[WeClaw 图片批注模式]\n请先理解图片和用户意图，再生成一张带有清晰、克制、移动端可读批注的 PNG。必须把最终图片写入本次 WeClaw 交付目录并回传；不得覆盖入站原图。")
+		request.Text = strings.TrimSpace(request.Text + "\n\n[codex-link-clawbot 图片批注模式]\n请先理解图片和用户意图，再生成一张带有清晰、克制、移动端可读批注的 PNG。必须把最终图片写入本次 codex-link-clawbot 交付目录并回传；不得覆盖入站原图。")
 	}
 	return request
 }
@@ -332,7 +336,38 @@ func (coordinator *Coordinator) failTask(client *ilink.Client, task taskqueue.Ta
 	if loadErr == nil && client != nil {
 		if sendErr := SendTextReply(context.Background(), client, task.OwnerID, notice, payload.ContextToken, NewClientID()); sendErr != nil {
 			log.Printf("[queue] failed to send task failure notice: %v", sendErr)
+			if !outboundMayBeVisible(sendErr) {
+				coordinator.deferTaskRecoveryNotice(task, reason)
+			}
 		}
+	} else {
+		coordinator.deferTaskRecoveryNotice(task, reason)
+	}
+}
+
+func (coordinator *Coordinator) deferTaskRecoveryNotice(task taskqueue.Task, reason string) {
+	if coordinator.handler.pendingNotices == nil {
+		return
+	}
+	title := "codex-link-clawbot 请求需要处理"
+	action := "发送“请求队列”查看详情。"
+	switch reason {
+	case taskqueue.ReasonDeliveryFailed:
+		title = "Codex 结果待取回"
+		action = "Codex 已完成，但微信明确拒绝了本次交付。发送“请求队列”取回冻结结果。"
+	case taskqueue.ReasonDeliveryAmbiguous:
+		title = "Codex 结果发送状态待确认"
+		action = "Codex 已完成，但微信发送结果不确定。请先检查是否已收到，再从“请求队列”处理。"
+	case taskqueue.ReasonCodexFailed:
+		title = "Codex 执行失败"
+		action = "请求输入暂时保留，可从“请求队列”查看并手动重试。"
+	}
+	_, _, err := coordinator.handler.pendingNotices.Enqueue(task.OwnerID, PendingNoticeInput{
+		Kind: PendingNoticeTaskRecovery, DedupKey: "task-recovery:" + task.ID + ":" + reason,
+		ReferenceID: task.ID, Title: title, Body: "请求：" + task.Summary + "\n" + action, TTL: 24 * time.Hour,
+	})
+	if err != nil {
+		log.Printf("[queue] defer task recovery notice for %s failed: %v", shortTaskID(task.ID), err)
 	}
 }
 

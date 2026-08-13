@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const (
@@ -55,29 +55,30 @@ func (state State) Terminal() bool {
 }
 
 type Task struct {
-	ID               string                  `json:"id"`
-	SourceMessageKey string                  `json:"source_message_key"`
-	OwnerID          string                  `json:"owner_id"`
-	ProjectID        string                  `json:"project_id"`
-	ThreadID         string                  `json:"thread_id,omitempty"`
-	Summary          string                  `json:"summary"`
-	State            State                   `json:"state"`
-	Stage            string                  `json:"stage"`
-	Reason           string                  `json:"reason,omitempty"`
-	ResponseMode     preference.ResponseMode `json:"response_mode"`
-	VisualStyle      visual.Style            `json:"visual_style"`
-	Order            int64                   `json:"order"`
-	CreatedAt        int64                   `json:"created_at"`
-	StartedAt        int64                   `json:"started_at,omitempty"`
-	FinishedAt       int64                   `json:"finished_at,omitempty"`
-	PayloadExpiresAt int64                   `json:"payload_expires_at,omitempty"`
-	RetryOf          string                  `json:"retry_of,omitempty"`
-	ImageCount       int                     `json:"image_count,omitempty"`
-	FileCount        int                     `json:"file_count,omitempty"`
-	PayloadBytes     int64                   `json:"payload_bytes,omitempty"`
-	InputTokens      int64                   `json:"input_tokens,omitempty"`
-	OutputTokens     int64                   `json:"output_tokens,omitempty"`
-	TotalTokens      int64                   `json:"total_tokens,omitempty"`
+	ID                      string                  `json:"id"`
+	SourceMessageKey        string                  `json:"source_message_key"`
+	OwnerID                 string                  `json:"owner_id"`
+	ProjectID               string                  `json:"project_id"`
+	ThreadID                string                  `json:"thread_id,omitempty"`
+	Summary                 string                  `json:"summary"`
+	State                   State                   `json:"state"`
+	Stage                   string                  `json:"stage"`
+	Reason                  string                  `json:"reason,omitempty"`
+	AwaitingAcknowledgement bool                    `json:"awaiting_acknowledgement,omitempty"`
+	ResponseMode            preference.ResponseMode `json:"response_mode"`
+	VisualStyle             visual.Style            `json:"visual_style"`
+	Order                   int64                   `json:"order"`
+	CreatedAt               int64                   `json:"created_at"`
+	StartedAt               int64                   `json:"started_at,omitempty"`
+	FinishedAt              int64                   `json:"finished_at,omitempty"`
+	PayloadExpiresAt        int64                   `json:"payload_expires_at,omitempty"`
+	RetryOf                 string                  `json:"retry_of,omitempty"`
+	ImageCount              int                     `json:"image_count,omitempty"`
+	FileCount               int                     `json:"file_count,omitempty"`
+	PayloadBytes            int64                   `json:"payload_bytes,omitempty"`
+	InputTokens             int64                   `json:"input_tokens,omitempty"`
+	OutputTokens            int64                   `json:"output_tokens,omitempty"`
+	TotalTokens             int64                   `json:"total_tokens,omitempty"`
 }
 
 type OwnerQueue struct {
@@ -128,18 +129,19 @@ type InputAttachment struct {
 }
 
 type EnqueueInput struct {
-	SourceMessageKey string
-	OwnerID          string
-	ProjectID        string
-	ThreadID         string
-	Summary          string
-	Text             string
-	ContextToken     string
-	ResponseMode     preference.ResponseMode
-	VisualStyle      visual.Style
-	RetryOf          string
-	Images           []InputAttachment
-	Files            []InputAttachment
+	SourceMessageKey       string
+	OwnerID                string
+	ProjectID              string
+	ThreadID               string
+	Summary                string
+	Text                   string
+	ContextToken           string
+	ResponseMode           preference.ResponseMode
+	VisualStyle            visual.Style
+	RetryOf                string
+	RequireAcknowledgement bool
+	Images                 []InputAttachment
+	Files                  []InputAttachment
 }
 
 type OwnerStatus struct {
@@ -311,18 +313,30 @@ func validateTask(task Task, ownerID string) error {
 			return fmt.Errorf("invalid queued task timestamps")
 		}
 	case StateRunning, StateDelivering:
+		if task.AwaitingAcknowledgement {
+			return fmt.Errorf("active task still awaits acknowledgement")
+		}
 		if task.StartedAt < task.CreatedAt || task.FinishedAt != 0 || task.PayloadExpiresAt != 0 {
 			return fmt.Errorf("invalid active task timestamps")
 		}
 	case StateSucceeded:
+		if task.AwaitingAcknowledgement {
+			return fmt.Errorf("successful task still awaits acknowledgement")
+		}
 		if task.StartedAt < task.CreatedAt || task.FinishedAt < task.StartedAt || task.PayloadExpiresAt != 0 {
 			return fmt.Errorf("invalid successful task timestamps")
 		}
 	case StateCancelled:
+		if task.AwaitingAcknowledgement {
+			return fmt.Errorf("cancelled task still awaits acknowledgement")
+		}
 		if task.FinishedAt < task.CreatedAt || task.PayloadExpiresAt != 0 {
 			return fmt.Errorf("invalid cancelled task timestamps")
 		}
 	case StateFailed, StateInterrupted:
+		if task.AwaitingAcknowledgement {
+			return fmt.Errorf("failed task still awaits acknowledgement")
+		}
 		if task.StartedAt < task.CreatedAt || task.FinishedAt < task.StartedAt || task.PayloadExpiresAt < task.FinishedAt {
 			return fmt.Errorf("invalid retained task timestamps")
 		}

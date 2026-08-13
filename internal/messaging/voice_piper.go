@@ -32,7 +32,7 @@ func NewPiperVoiceProvider(id string, config PiperVoiceProviderConfig) *PiperVoi
 func (v *PiperVoiceProvider) ID() string { return v.id }
 
 func (v *PiperVoiceProvider) Generate(ctx context.Context, text string) (VoiceAudio, error) {
-	dir, err := os.MkdirTemp("", "weclaw-piper-*")
+	dir, err := os.MkdirTemp("", "codex-link-clawbot-piper-*")
 	if err != nil {
 		return VoiceAudio{}, fmt.Errorf("创建 Piper 临时目录: %w", err)
 	}

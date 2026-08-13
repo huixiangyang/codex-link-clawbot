@@ -19,11 +19,11 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	first.SetControlStateStore(firstStore)
 	attachTestSessionManager(t, first)
 	menu, handled := first.handleControlInput(context.Background(), "owner-1", "/", false, nextTestControlSource())
-	if !handled || !strings.Contains(menu.Text, "WeClaw 操作总览") || !strings.Contains(menu.Text, "12  新建线程") {
+	if !handled || !strings.Contains(menu.Text, "Codex 全局工作台") || !strings.Contains(menu.Text, "5  全部线程") {
 		t.Fatalf("main menu = %#v, handled=%v", menu, handled)
 	}
 	before, status, err := firstStore.Load("owner-1")
-	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 35 || before.Options[1].Code != "11" {
+	if err != nil || status != controlStateActive || before.View != viewSystemMain || len(before.Options) != 20 || before.Options[0].Code != "5" {
 		t.Fatalf("stored main menu = %#v, status=%v, err=%v", before, status, err)
 	}
 
@@ -33,12 +33,12 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	}
 	restarted := NewHandler(newHandlerThreadClient())
 	restarted.SetControlStateStore(restartedStore)
-	result, handled := restarted.handleControlInput(context.Background(), "owner-1", "63", false, nextTestControlSource())
-	if !handled || result.Domain != DomainSystem || !strings.Contains(result.Text, "使用说明") {
+	result, handled := restarted.handleControlInput(context.Background(), "owner-1", "9", false, nextTestControlSource())
+	if !handled || result.Domain != DomainSystem || !strings.Contains(result.Text, "Codex 全局工作台") {
 		t.Fatalf("resumed menu action = %#v, handled=%v", result, handled)
 	}
 	after, status, err := restartedStore.Load("owner-1")
-	if err != nil || status != controlStateActive || after.View != viewSystemGuide || after.Revision == before.Revision {
+	if err != nil || status != controlStateActive || after.View != viewSystemMain || len(after.Options) != 20 || after.Revision == before.Revision {
 		t.Fatalf("next menu revision = %#v, status=%v, err=%v", after, status, err)
 	}
 }
@@ -241,15 +241,15 @@ func TestControlReceiptRollbackRestoresRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := store.Put("owner-1", controlState{
-		View: viewProjectQuickTasks, Mode: controlChoice,
-		Options: []controlOption{{Action: actionRunQuickTask, Value: "review"}},
-		Back:    controlOption{Action: actionProjectCenter},
+		View: viewTaskDetail, Mode: controlChoice,
+		Options: []controlOption{{Action: actionTaskRerun, Value: "task-0123456789abcdef0123456789abcdef"}},
+		Back:    controlOption{Action: actionActivityPage, Page: 1},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	consumed, duplicate, err := store.ConsumeAndReserve(
-		"owner-1", state.Revision, "account:message:82", string(actionRunQuickTask), DomainProject,
+		"owner-1", state.Revision, "account:message:82", string(actionTaskRerun), DomainQueue,
 	)
 	if err != nil || !consumed || duplicate {
 		t.Fatalf("ConsumeAndReserve() = %v, %v, %v", consumed, duplicate, err)
@@ -311,5 +311,15 @@ func TestControlStateStoreRejectsUnknownSchema(t *testing.T) {
 	}
 	if _, err := NewControlStateStore(path); err == nil {
 		t.Fatal("unknown control state field was accepted")
+	}
+}
+
+func TestControlStateStoreRejectsRetiredV12(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-state.json")
+	if err := os.WriteFile(path, []byte(`{"version":12,"owners":{},"receipts":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewControlStateStore(path); err == nil || !strings.Contains(err.Error(), "invalid control state schema") {
+		t.Fatalf("retired v12 control state error = %v", err)
 	}
 }

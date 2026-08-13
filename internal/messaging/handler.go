@@ -11,14 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/project"
-	"github.com/huixiangyang/weclaw/internal/session"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
-	"github.com/huixiangyang/weclaw/internal/workflow"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/project"
+	"github.com/huixiangyang/codex-link-clawbot/internal/session"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 var (
@@ -30,28 +29,24 @@ var (
 // Handler processes incoming WeChat messages and dispatches replies.
 type Handler struct {
 	codex               codex.Runtime
-	contextTokens       sync.Map // map[userID]contextToken
-	saveDir             string   // Linkhoard archive directory
 	controlStates       *ControlStateStore
 	intents             *IntentRegistry
 	progress            ProgressConfig
 	projects            *project.Manager
-	workflows           *workflow.Store
 	sessions            *session.Manager
 	visual              controlVisualRenderer
 	preferences         *preference.Store
 	visualReplies       sync.Map // map[userID]*cachedVisualReply — 最近一条可取回的视觉长回复
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
-	automations         AutomationProvider
 	tasks               *taskqueue.Store
 	coordinator         *Coordinator
 	lifecycle           ingressLifecycle
-	library             *LibraryStore
+	deliveries          *DeliveryStore
+	pendingNotices      *PendingNoticeStore
 	remoteLock          *RemoteLock
 	voice               *VoiceBriefing
 	bridgeVersion       string
-	sendAPIEnabled      bool
 	startedAt           time.Time
 }
 
@@ -75,7 +70,7 @@ func (h *Handler) SetControlStateStore(store *ControlStateStore) {
 	h.controlStates = store
 }
 
-// SetProjectManager 注入 WeClaw 项目入口白名单，并让 Codex 线程归属跟随入口切换。
+// SetProjectManager 注入 Codex 工作空间白名单，并让远程线程焦点跟随工作空间切换。
 func (h *Handler) SetProjectManager(manager *project.Manager) {
 	h.projects = manager
 	if h.sessions != nil && manager != nil {
@@ -83,11 +78,6 @@ func (h *Handler) SetProjectManager(manager *project.Manager) {
 			return manager.Current(ownerID).ID
 		})
 	}
-}
-
-// SetWorkflowStore 注入按绑定者和项目隔离的持久快捷工作流。
-func (h *Handler) SetWorkflowStore(store *workflow.Store) {
-	h.workflows = store
 }
 
 // SetVisualRenderer 注入可信模板的微信视觉卡片渲染器。
@@ -100,11 +90,6 @@ func (h *Handler) SetPreferenceStore(store *preference.Store) {
 	h.preferences = store
 }
 
-// SetAutomationProvider 注入确定性自动化中心和手动检查能力。
-func (h *Handler) SetAutomationProvider(provider AutomationProvider) {
-	h.automations = provider
-}
-
 func (h *Handler) SetTaskQueue(store *taskqueue.Store, coordinator *Coordinator) {
 	h.tasks = store
 	h.coordinator = coordinator
@@ -114,8 +99,12 @@ func (h *Handler) SetRuntimeLifecycle(lifecycle ingressLifecycle) {
 	h.lifecycle = lifecycle
 }
 
-func (h *Handler) SetLibraryStore(store *LibraryStore) {
-	h.library = store
+func (h *Handler) SetDeliveryStore(store *DeliveryStore) {
+	h.deliveries = store
+}
+
+func (h *Handler) SetPendingNoticeStore(store *PendingNoticeStore) {
+	h.pendingNotices = store
 }
 
 func (h *Handler) SetRemoteLock(lock *RemoteLock) {
@@ -127,13 +116,12 @@ func (h *Handler) SetVoiceBriefing(voice *VoiceBriefing) {
 }
 
 // SetBridgeInfo 设置部署身份；运行期间保持不变，可安全用于微信状态快照。
-func (h *Handler) SetBridgeInfo(version string, sendAPIEnabled bool) {
+func (h *Handler) SetBridgeInfo(version string) {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		version = "dev"
 	}
 	h.bridgeVersion = version
-	h.sendAPIEnabled = sendAPIEnabled
 }
 
 // NewHandler 创建只路由到 Codex 的微信消息处理器。
@@ -152,11 +140,6 @@ func NewHandler(codex codex.Runtime) *Handler {
 // SetProgressConfig 设置微信长任务的输入状态和文字进度节奏。
 func (h *Handler) SetProgressConfig(progress ProgressConfig) {
 	h.progress = progress
-}
-
-// SetSaveDir sets the Linkhoard archive directory.
-func (h *Handler) SetSaveDir(dir string) {
-	h.saveDir = dir
 }
 
 // HandleMessage processes a single incoming message.
@@ -200,9 +183,6 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		log.Printf("[handler] received from %s (chars=%d)", userLabel, len([]rune(text)))
 	}
 
-	// Store context token for this user
-	h.contextTokens.Store(msg.FromUserID, msg.ContextToken)
-
 	trimmed := strings.TrimSpace(text)
 	clientID := NewClientID()
 	controlSourceKey, _ := sourceMessageKey(client, msg)
@@ -216,6 +196,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		}
 		return nil
 	}
+	h.flushPendingNotices(ctx, client, msg.FromUserID, msg.ContextToken)
 	if len(images) == 0 && len(files) == 0 && h.sendCachedVisualReply(ctx, client, msg, trimmed, clientID) {
 		return nil
 	}
@@ -227,12 +208,6 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			// 入队和重试使用持久来源键，失败可以安全交给微信长轮询重投。
 			// 其他控制动作可能已经修改本地状态，投递失败不能再次执行。
 			if result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask {
-				if result.workflowRollback != nil && h.workflows != nil {
-					if rollbackErr := h.workflows.RollbackSubmission(result.workflowRollback); rollbackErr != nil {
-						logControlStateError(msg.FromUserID, rollbackErr)
-						return fmt.Errorf("present action result: %w; restore workflow run: %v", err, rollbackErr)
-					}
-				}
 				if result.rollback != nil && h.controlStates != nil {
 					var rollbackErr error
 					if result.rollback.State != nil {
@@ -256,32 +231,6 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		return nil
 	}
 
-	// 纯链接归档直接处理，不消耗 Codex turn。
-	if len(images) == 0 && len(files) == 0 && h.saveDir != "" && IsURL(trimmed) {
-		rawURL := ExtractURL(trimmed)
-		if rawURL != "" {
-			log.Printf("[handler] saving URL to linkhoard for %s", userLabel)
-			title, err := SaveLinkToLinkhoard(ctx, h.saveDir, rawURL)
-			var reply string
-			if err != nil {
-				log.Printf("[handler] link save failed: %v", err)
-				reply = fmt.Sprintf("保存失败: %v", err)
-			} else {
-				reply = fmt.Sprintf("已保存: %s", title)
-				if h.library != nil {
-					projectID := h.currentProjectID(msg.FromUserID)
-					if _, recordErr := h.library.RecordLink(msg.FromUserID, projectID, title, rawURL); recordErr != nil {
-						log.Printf("[library] failed to record link: %v", recordErr)
-					}
-				}
-			}
-			if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
-				log.Printf("[handler] failed to send reply to %s: %v", userLabel, err)
-			}
-			return nil
-		}
-	}
-
 	return h.enqueueCodexTask(ctx, client, msg, text, images, files, clientID)
 }
 
@@ -296,7 +245,7 @@ func (h *Handler) sendFrozenTaskText(ctx context.Context, client *ilink.Client, 
 	}
 	if err := SendTextReply(ctx, client, msg.FromUserID, result.Reply, msg.ContextToken, clientID); err != nil {
 		log.Printf("[queue] failed to send manually recovered task text: %v", err)
-		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结文字发送失败。执行记录没有改写，可从 WeClaw 请求队列再次尝试。", msg.ContextToken, NewClientID())
+		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结文字发送失败。执行记录没有改写，可从 codex-link-clawbot 请求队列再次尝试。", msg.ContextToken, NewClientID())
 	}
 }
 
@@ -308,7 +257,7 @@ func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg 
 	if err != nil {
 		return err
 	}
-	task, err := h.tasks.Retry(msg.FromUserID, taskID, sourceKey, msg.ContextToken)
+	task, err := h.tasks.Retry(msg.FromUserID, taskID, sourceKey, msg.ContextToken, true)
 	if err != nil {
 		reply := "请求无法重试：" + err.Error()
 		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
@@ -322,6 +271,11 @@ func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg 
 	}
 	if err := h.sendControlReply(ctx, client, msg.FromUserID, queuedTaskAcknowledgement(h.tasks, task, projectName, false), msg.ContextToken, clientID); err != nil {
 		return fmt.Errorf("confirm retried task: %w", err)
+	}
+	if task.AwaitingAcknowledgement {
+		if err := h.tasks.Acknowledge(msg.FromUserID, task.ID); err != nil {
+			return fmt.Errorf("persist retried task acknowledgement: %w", err)
+		}
 	}
 	h.coordinator.Wake()
 	return nil
@@ -362,6 +316,11 @@ func (h *Handler) enqueueCodexTaskInProject(
 		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			return fmt.Errorf("confirm existing queued task: %w", err)
 		}
+		if existing.AwaitingAcknowledgement {
+			if err := h.tasks.Acknowledge(msg.FromUserID, existing.ID); err != nil {
+				return fmt.Errorf("persist existing task acknowledgement: %w", err)
+			}
+		}
 		h.coordinator.Wake()
 		return nil
 	}
@@ -382,7 +341,7 @@ func (h *Handler) enqueueCodexTaskInProject(
 		var exists bool
 		currentProject, exists = h.projects.Get(strings.TrimSpace(projectID))
 		if !exists {
-			return fmt.Errorf("workflow project is unavailable")
+			return fmt.Errorf("frozen project is unavailable")
 		}
 	}
 	taskThreadID := strings.TrimSpace(threadID)
@@ -391,17 +350,18 @@ func (h *Handler) enqueueCodexTaskInProject(
 	}
 	preferences := h.preferences.Get(msg.FromUserID)
 	task, existed, err := h.tasks.Enqueue(taskqueue.EnqueueInput{
-		SourceMessageKey: sourceKey,
-		OwnerID:          msg.FromUserID,
-		ProjectID:        currentProject.ID,
-		ThreadID:         taskThreadID,
-		Summary:          taskActivitySummary(text, len(queuedImages), len(queuedFiles)),
-		Text:             text,
-		ContextToken:     msg.ContextToken,
-		ResponseMode:     preferences.ResponseMode,
-		VisualStyle:      preferences.Style,
-		Images:           queuedImages,
-		Files:            queuedFiles,
+		SourceMessageKey:       sourceKey,
+		OwnerID:                msg.FromUserID,
+		ProjectID:              currentProject.ID,
+		ThreadID:               taskThreadID,
+		Summary:                taskActivitySummary(text, len(queuedImages), len(queuedFiles)),
+		Text:                   text,
+		ContextToken:           msg.ContextToken,
+		ResponseMode:           preferences.ResponseMode,
+		VisualStyle:            preferences.Style,
+		RequireAcknowledgement: true,
+		Images:                 queuedImages,
+		Files:                  queuedFiles,
 	})
 	if err != nil {
 		// 写盘失败必须向上返回，监控器不能推进微信同步游标。
@@ -411,6 +371,9 @@ func (h *Handler) enqueueCodexTaskInProject(
 	if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 		// 确认失败也不推进游标；同一来源键重投只会返回已有任务。
 		return fmt.Errorf("confirm queued task: %w", err)
+	}
+	if err := h.tasks.Acknowledge(msg.FromUserID, task.ID); err != nil {
+		return fmt.Errorf("persist queued task acknowledgement: %w", err)
 	}
 	h.coordinator.Wake()
 	return nil
@@ -452,9 +415,9 @@ func queuedTaskAcknowledgement(store *taskqueue.Store, task taskqueue.Task, proj
 		positionText = "当前状态：" + task.Stage
 	}
 	return strings.Join([]string{
-		"WeClaw 请求已接收",
+		"codex-link-clawbot 请求已接收",
 		state,
-		"WeClaw 项目入口：" + projectName,
+		"Codex 工作空间：" + projectName,
 		positionText,
 		"摘要：" + task.Summary,
 	}, "\n")
@@ -503,7 +466,8 @@ func (h *Handler) sendReplyWithMedia(ctx context.Context, client *ilink.Client, 
 	if collectErr != nil {
 		failed = append(failed, collectErr.Error())
 	}
-	return h.deliverReplyPlan(ctx, client, msg, reply, artifacts.Paths, failed, ExtractImageURLs(reply), clientID, h.currentProjectID(msg.FromUserID), h.currentResponseMode(msg.FromUserID), h.currentVisualStyle(msg.FromUserID), "")
+	return h.deliverReplyPlan(ctx, client, msg, reply, artifacts.Paths, failed, ExtractImageURLs(reply), clientID,
+		DeliverySource{ProjectID: h.currentProjectID(msg.FromUserID)}, h.currentResponseMode(msg.FromUserID), h.currentVisualStyle(msg.FromUserID), "")
 }
 
 func (h *Handler) sendReplyWithMediaForTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, task taskqueue.Task, result taskqueue.Result, clientID string) deliveryReport {
@@ -517,7 +481,8 @@ func (h *Handler) sendReplyWithMediaForTask(ctx context.Context, client *ilink.C
 	for _, artifact := range result.Artifacts {
 		paths = append(paths, filepath.Join(h.tasks.Root(), task.ID, artifact.Path))
 	}
-	return h.deliverReplyPlan(ctx, client, msg, result.Reply, paths, nil, result.ImageURLs, clientID, task.ProjectID, task.ResponseMode, task.VisualStyle, projectName)
+	return h.deliverReplyPlan(ctx, client, msg, result.Reply, paths, nil, result.ImageURLs, clientID,
+		DeliverySource{ProjectID: task.ProjectID, ThreadID: task.ThreadID, TaskID: task.ID}, task.ResponseMode, task.VisualStyle, projectName)
 }
 
 type deliveryReport struct {
@@ -527,7 +492,7 @@ type deliveryReport struct {
 	Failure   string
 }
 
-func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, reply string, artifactPaths, initialFailures, imageURLs []string, clientID, projectID string, mode preference.ResponseMode, style visual.Style, projectName string) deliveryReport {
+func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, reply string, artifactPaths, initialFailures, imageURLs []string, clientID string, source DeliverySource, mode preference.ResponseMode, style visual.Style, projectName string) deliveryReport {
 	report := deliveryReport{Outcome: taskqueue.DeliverySucceeded}
 	var sentPaths []string
 	failed := append([]string(nil), initialFailures...)
@@ -543,9 +508,9 @@ func (h *Handler) deliverReplyPlan(ctx context.Context, client *ilink.Client, ms
 		}
 		sentPaths = append(sentPaths, attachmentPath)
 		report.MediaSent++
-		if h.library != nil {
-			if _, recordErr := h.library.RecordDelivery(msg.FromUserID, projectID, attachmentPath); recordErr != nil {
-				log.Printf("[library] failed to archive delivery: %v", recordErr)
+		if h.deliveries != nil && validateDeliverySource(source) == nil {
+			if _, recordErr := h.deliveries.RecordDelivery(msg.FromUserID, source, attachmentPath); recordErr != nil {
+				log.Printf("[delivery-store] failed to archive delivery: %v", recordErr)
 			}
 		}
 	}
@@ -681,12 +646,12 @@ func isImageAnnotationIntent(text string) bool {
 
 func (h *Handler) cancelActiveTask(userID string) string {
 	if h.coordinator == nil || !h.hasActiveTask(userID) {
-		return "WeClaw 当前没有正在执行的请求。"
+		return "codex-link-clawbot 当前没有正在执行的请求。"
 	}
 	if !h.coordinator.Cancel(userID) {
 		return "当前请求正在取消或已进入发送阶段，请稍候。"
 	}
-	return "已请求取消 WeClaw 当前执行。如果 Codex 轮次已经启动，也会请求中断；队列会保留取消记录。"
+	return "已请求取消 codex-link-clawbot 当前执行。如果 Codex 轮次已经启动，也会请求中断；队列会保留取消记录。"
 }
 
 func (h *Handler) buildTaskStatus(userID string) string {
@@ -694,14 +659,14 @@ func (h *Handler) buildTaskStatus(userID string) string {
 		for _, task := range h.tasks.List(userID) {
 			if task.State == taskqueue.StateRunning || task.State == taskqueue.StateDelivering {
 				return strings.Join([]string{
-					"WeClaw 执行状态：" + taskStateText(task.State),
+					"codex-link-clawbot 执行状态：" + taskStateText(task.State),
 					"当前阶段：" + task.Stage,
 					"摘要：" + task.Summary,
 				}, "\n")
 			}
 		}
 	}
-	return "WeClaw 执行状态：空闲\n" + h.buildStatus()
+	return "codex-link-clawbot 执行状态：空闲\n" + h.buildStatus()
 }
 
 func (h *Handler) sessionContext() (codex.ThreadClient, error) {
@@ -721,13 +686,10 @@ func (h *Handler) sessionContext() (codex.ThreadClient, error) {
 // buildStatus 返回桥接器与唯一 Codex 运行时的完整摘要。
 func (h *Handler) buildStatus() string {
 	lines := []string{
-		"WeClaw 运行与安全",
-		"WeClaw：运行中",
+		"codex-link-clawbot 运行状态",
+		"codex-link-clawbot：运行中",
 		"版本：" + h.bridgeVersion,
 		"已运行：" + formatUptime(time.Since(h.startedAt)),
-	}
-	if h.sendAPIEnabled {
-		lines = append(lines, "主动发送：已启用")
 	}
 	if h.codex == nil {
 		return strings.Join(append(lines, "Codex：不可用"), "\n")

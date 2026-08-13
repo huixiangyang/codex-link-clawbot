@@ -42,7 +42,7 @@ var restartCmd = &cobra.Command{
 		if _, err := waitForReady(ctx, controlSocket, draining.Version, restartTimeout); err != nil {
 			return err
 		}
-		fmt.Printf("WeClaw %s restarted and ready.\n", draining.Version)
+		fmt.Printf("codex-link-clawbot %s restarted and ready.\n", draining.Version)
 		return nil
 	},
 }

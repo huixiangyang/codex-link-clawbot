@@ -11,18 +11,18 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/session"
-	"github.com/huixiangyang/weclaw/internal/statefile"
-	"github.com/huixiangyang/weclaw/internal/visual"
-	"github.com/huixiangyang/weclaw/internal/workflow"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/session"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const (
 	controlStateTTL        = 10 * time.Minute
 	controlDirectoryTTL    = 30 * time.Minute
+	controlWorkbenchTTL    = 5 * time.Minute
 	controlSessionPageSize = 6
 )
 
@@ -33,10 +33,7 @@ const (
 	controlNewSessionName
 	controlRenameSession
 	controlSessionSearch
-	controlWorkflowCreate
-	controlWorkflowRename
-	controlWorkflowEdit
-	controlWorkflowSave
+	controlGlobalThreadSearch
 	controlThreadGoal
 )
 
@@ -45,7 +42,21 @@ type controlAction string
 const (
 	actionExit                  controlAction = "exit"
 	actionMain                  controlAction = "main"
+	actionFunctionDirectory     controlAction = "function_directory"
 	actionSessionMenu           controlAction = "thread_menu"
+	actionCodexDevelopment      controlAction = "codex_development"
+	actionCodexCommands         controlAction = "codex_slash_commands"
+	actionCodexCommandPage      controlAction = "codex_slash_command_page"
+	actionCodexSlashCommand     controlAction = "codex_slash_command"
+	actionCodexUsage            controlAction = "codex_usage"
+	actionCodexPermissions      controlAction = "codex_permissions"
+	actionCodexGoalStatus       controlAction = "codex_goal_status"
+	actionCodexGlobalOverview   controlAction = "codex_global_overview"
+	actionCodexGlobalThreadPage controlAction = "codex_global_thread_page"
+	actionCodexUseGlobalThread  controlAction = "codex_use_global_thread"
+	actionCodexAccount          controlAction = "codex_account"
+	actionCodexModelOverview    controlAction = "codex_model_overview"
+	actionPromptGlobalSearch    controlAction = "codex_global_search_prompt"
 	actionCurrentSession        controlAction = "current_thread"
 	actionPickSession           controlAction = "pick_thread"
 	actionBrowseSessions        controlAction = "browse_threads"
@@ -66,7 +77,12 @@ const (
 	actionCompactThread         controlAction = "thread_compact"
 	actionPromptThreadGoal      controlAction = "thread_goal_prompt"
 	actionClearThreadGoal       controlAction = "thread_goal_clear"
+	actionPauseThreadGoal       controlAction = "thread_goal_pause"
+	actionResumeThreadGoal      controlAction = "thread_goal_resume"
 	actionReviewThread          controlAction = "thread_review"
+	actionReviewContinue        controlAction = "thread_review_continue"
+	actionReviewAccept          controlAction = "thread_review_accept"
+	actionReviewRerun           controlAction = "thread_review_rerun"
 	actionCodexCapabilities     controlAction = "codex_capabilities"
 	actionConfirmDeleteThread   controlAction = "thread_delete_confirm"
 	actionDeleteThread          controlAction = "thread_delete"
@@ -93,36 +109,19 @@ const (
 	actionQueueClear            controlAction = "queue_clear"
 	actionRuntimeInfo           controlAction = "runtime_info"
 	actionNoReplyDiagnostic     controlAction = "no_reply_diagnostic"
-	actionFeatureCenter         controlAction = "feature_center"
+	actionResultsDeliveryCenter controlAction = "results_delivery_center"
 	actionSettingsCenter        controlAction = "settings_center"
 	actionConfigurationStatus   controlAction = "configuration_status"
 	actionDiagnosticsCenter     controlAction = "diagnostics_center"
 	actionProjectCenter         controlAction = "project_center"
 	actionSelectProject         controlAction = "select_project"
-	actionProjectQuickTasks     controlAction = "project_quick_tasks"
-	actionRunQuickTask          controlAction = "run_quick_task"
-	actionWorkflowDetail        controlAction = "workflow_detail"
-	actionPromptWorkflowCreate  controlAction = "prompt_workflow_create"
-	actionWorkflowCreate        controlAction = "workflow_create"
-	actionPromptWorkflowRename  controlAction = "prompt_workflow_rename"
-	actionWorkflowRename        controlAction = "workflow_rename"
-	actionPromptWorkflowEdit    controlAction = "prompt_workflow_edit"
-	actionWorkflowEdit          controlAction = "workflow_edit"
-	actionConfirmWorkflowDelete controlAction = "confirm_workflow_delete"
-	actionWorkflowDelete        controlAction = "workflow_delete"
-	actionPromptWorkflowSave    controlAction = "prompt_workflow_save_from_task"
-	actionSaveRecentWorkflow    controlAction = "save_recent_as_workflow"
-	actionWorkflowSave          controlAction = "workflow_save_from_task"
-	actionLibraryCenter         controlAction = "library_center"
-	actionLibraryPage           controlAction = "library_page"
-	actionLibraryDetail         controlAction = "library_detail"
+	actionDeliveryBox           controlAction = "delivery_box"
+	actionDeliveryPage          controlAction = "delivery_page"
+	actionDeliveryDetail        controlAction = "delivery_detail"
 	actionResendDelivery        controlAction = "resend_delivery"
 	actionRemoteLock            controlAction = "remote_lock"
 	actionConfirmRemoteLock     controlAction = "confirm_remote_lock"
 	actionVoiceBriefing         controlAction = "voice_briefing"
-	actionAutomations           controlAction = "automations"
-	actionAutomation            controlAction = "automation"
-	actionRunAutomation         controlAction = "run_automation"
 	actionVisualStyles          controlAction = "visual_styles"
 	actionSetVisualStyle        controlAction = "set_visual_style"
 	actionResponseModes         controlAction = "response_modes"
@@ -165,30 +164,13 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 	if registry == nil {
 		registry = mustDefaultIntentRegistry()
 	}
-	if h.workflows != nil && strings.TrimSpace(sourceKey) != "" && h.workflows.HasRunReceipt(userID, sourceKey) {
-		return duplicateControlResult(string(actionRunQuickTask), DomainProject), true
-	}
 	if h.controlStates != nil && strings.TrimSpace(sourceKey) != "" {
 		if receipt, exists := h.controlStates.FindReceipt(userID, sourceKey); exists {
 			return duplicateControlResult(receipt.ActionID, receipt.Domain), true
 		}
 	}
-	if h.workflows != nil {
-		pending, exists, err := h.workflows.PendingRun(userID)
-		if err != nil {
-			return newActionResult(string(actionRunQuickTask), DomainProject, workflowUnavailableText()), true
-		}
-		if exists {
-			// 参数收集中仍允许临时打开并操作数字菜单；没有活动菜单时，纯数字就是参数值。
-			if state, stateStatus, stateErr := h.loadControlState(userID); stateErr != nil {
-				return controlStateFailureResult(), true
-			} else if stateStatus == controlStateActive && isControlContinuation(text) {
-				if result, handled := h.handlePendingControl(ctx, userID, text, state, sourceKey); handled {
-					return result, true
-				}
-			}
-			return h.handlePendingWorkflowInput(ctx, userID, text, hasAttachments, sourceKey, registry, pending), true
-		}
+	if strings.HasPrefix(text, "/") && text != "/" {
+		return h.handleCodexSlashCommand(ctx, userID, text, sourceKey, hasAttachments)
 	}
 	if hasAttachments {
 		if !h.deleteControlState(userID) {
@@ -218,12 +200,12 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		}
 	}
 
-	// 旧斜杠命令不再执行，也不转发到 Codex，避免看似成功却走错通道。
+	// 未知斜杠命令不会转发到 Codex，避免把客户端控制语法伪装成普通提示词。
 	if strings.HasPrefix(text, "/") {
 		return newActionResult(
 			"system.invalid_slash",
 			DomainSystem,
-			"斜杠命令已取消。发送一个 / 打开操作菜单，或直接用中文描述操作。",
+			"没有这个可用的 Codex 斜杠命令。发送 / 查看 codex-link-clawbot 可直接执行的命令。",
 		), true
 	}
 
@@ -231,76 +213,6 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		return h.dispatchIntent(ctx, userID, resolved, sourceKey), true
 	}
 	return ActionResult{}, false
-}
-
-// handlePendingWorkflowInput 在参数收集期间接管普通文本，避免参数被误送到 Codex。
-// 菜单可以临时打开，但运行状态仍留在 workflow 状态域中，重启后也能继续。
-func (h *Handler) handlePendingWorkflowInput(
-	ctx context.Context,
-	userID, text string,
-	hasAttachments bool,
-	sourceKey string,
-	registry *IntentRegistry,
-	status workflow.RunStatus,
-) ActionResult {
-	if hasAttachments {
-		return newActionResult(
-			string(actionRunQuickTask), DomainProject,
-			"提示词模板参数只接受文字。请发送当前参数值，或回复“取消”停止本次运行。",
-		)
-	}
-	cancelRequested := text == "0" || isOneOf(text, "取消", "返回", "回到菜单", "停止填写")
-	if resolved, ok := registry.Resolve(text); ok && resolved.Definition.ID == IntentCancel {
-		cancelRequested = true
-	}
-	if cancelRequested {
-		if strings.TrimSpace(sourceKey) == "" {
-			return newActionResult(string(actionRunQuickTask), DomainProject, "这条微信消息没有稳定来源编号，无法安全取消提示词模板。")
-		}
-		reserved, result := h.reserveControlReceipt(userID, sourceKey, string(actionRunQuickTask), DomainProject)
-		if !reserved {
-			return result
-		}
-		if err := h.workflows.CancelRun(userID); err != nil {
-			return newActionResult(string(actionRunQuickTask), DomainProject, workflowUnavailableText())
-		}
-		h.deleteControlState(userID)
-		return newActionResult(string(actionRunQuickTask), DomainProject, "已取消本次模板运行。发送“提示词模板”可以重新开始。")
-	}
-	if resolved, ok := registry.Resolve(text); ok {
-		switch resolved.Definition.ID {
-		case IntentMenu:
-			return h.dispatchIntent(ctx, userID, resolved, sourceKey)
-		case IntentProjectQuickTasks:
-			if !h.deleteControlState(userID) {
-				return controlStateFailureResult()
-			}
-			return newActionResult(string(IntentProjectQuickTasks), DomainProject, workflowParameterPrompt(status))
-		}
-	}
-	if strings.TrimSpace(sourceKey) == "" {
-		return newActionResult(string(actionRunQuickTask), DomainProject, "这条微信消息没有稳定来源编号，无法安全保存参数。")
-	}
-	if !h.deleteControlState(userID) {
-		return controlStateFailureResult()
-	}
-	submission, err := h.workflows.SubmitRunValue(userID, sourceKey, text)
-	if err != nil {
-		return newActionResult(
-			string(actionRunQuickTask), DomainProject,
-			"参数没有保存。请输入 1,000 字以内的非空文字，或回复“取消”停止本次运行。",
-		)
-	}
-	if submission.Duplicate {
-		return duplicateControlResult(string(actionRunQuickTask), DomainProject)
-	}
-	if !submission.Completed {
-		return newActionResult(string(actionRunQuickTask), DomainProject, workflowParameterPrompt(submission.Next))
-	}
-	h.deleteControlState(userID)
-	return effectActionResult(
-		string(actionRunQuickTask), DomainProject, "", EffectEnqueuePrompt, submission.Prompt,
-	).withProjectID(status.ProjectID).withWorkflowRollback(submission.Rollback())
 }
 
 func (h *Handler) handlePendingControl(ctx context.Context, userID, text string, state *controlState, sourceKey string) (ActionResult, bool) {
@@ -413,6 +325,17 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return failure, true
 		}
 		return sessionResult(string(IntentSessionSearch), h.openSessionBrowser(ctx, userID, false, text)), true
+	case controlGlobalThreadSearch:
+		if text == "0" {
+			if consumed, failure := consume(string(actionCodexGlobalOverview), DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+				return failure, true
+			}
+			return sessionResult(string(actionCodexGlobalOverview), h.openCodexGlobalOverview(ctx, userID)), true
+		}
+		if consumed, failure := consume(string(actionPromptGlobalSearch), DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			return failure, true
+		}
+		return sessionResult(string(actionCodexGlobalThreadPage), h.openCodexGlobalThreadPage(ctx, userID, false, false, text, 1)), true
 	case controlThreadGoal:
 		if text == "0" {
 			if consumed, failure := consume(string(actionSessionMenu), DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
@@ -424,76 +347,6 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return failure, true
 		}
 		return sessionResult(string(actionPromptThreadGoal), h.setCurrentThreadGoal(ctx, userID, text)), true
-	case controlWorkflowCreate:
-		if text == "0" {
-			if consumed, failure := consume(string(state.Back.Action), DomainProject, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-				return failure, true
-			}
-			return h.executeControlAction(ctx, userID, state.Back), true
-		}
-		form, err := parseWorkflowCreateForm(text)
-		if err != nil {
-			return newActionResult(string(actionWorkflowCreate), DomainProject, "格式未通过："+err.Error()+"。请修改后重新发送，或回复 0 返回。"), true
-		}
-		if consumed, failure := consume(string(actionWorkflowCreate), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-			return failure, true
-		}
-		return newActionResult(string(actionWorkflowCreate), DomainProject, h.createWorkflow(userID, state.Back.Query, form)), true
-	case controlWorkflowRename:
-		if text == "0" {
-			if consumed, failure := consume(string(state.Back.Action), DomainProject, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-				return failure, true
-			}
-			return h.executeControlAction(ctx, userID, state.Back), true
-		}
-		if !validWorkflowDisplayName(text) {
-			return newActionResult(string(actionWorkflowRename), DomainProject, "名称不能为空，且最多 32 个字。请重新发送，或回复 0 返回。"), true
-		}
-		if consumed, failure := consume(string(actionWorkflowRename), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-			return failure, true
-		}
-		return newActionResult(
-			string(actionWorkflowRename), DomainProject,
-			h.renameWorkflow(userID, state.Back.Query, state.Back.Value, text, state.Back.Page),
-		), true
-	case controlWorkflowEdit:
-		if text == "0" {
-			if consumed, failure := consume(string(state.Back.Action), DomainProject, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-				return failure, true
-			}
-			return h.executeControlAction(ctx, userID, state.Back), true
-		}
-		content, err := compileReadableWorkflowContent(text)
-		if err != nil {
-			return newActionResult(string(actionWorkflowEdit), DomainProject, "内容未通过："+err.Error()+"。请修改后重新发送，或回复 0 返回。"), true
-		}
-		if consumed, failure := consume(string(actionWorkflowEdit), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-			return failure, true
-		}
-		return newActionResult(
-			string(actionWorkflowEdit), DomainProject,
-			h.editWorkflow(userID, state.Back.Query, state.Back.Value, content, state.Back.Page),
-		), true
-	case controlWorkflowSave:
-		if text == "0" {
-			if consumed, failure := consume(
-				string(state.Back.Action), controlActionDomain(state.Back.Action), false,
-				"这个操作已经处理。发送 / 重新打开菜单。",
-			); !consumed {
-				return failure, true
-			}
-			return h.executeControlAction(ctx, userID, state.Back), true
-		}
-		if !validWorkflowDisplayName(text) {
-			return newActionResult(string(actionWorkflowSave), DomainProject, "名称不能为空，且最多 32 个字。请重新发送，或回复 0 返回。"), true
-		}
-		if consumed, failure := consume(string(actionWorkflowSave), DomainProject, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
-			return failure, true
-		}
-		return newActionResult(
-			string(actionWorkflowSave), DomainProject,
-			h.saveTaskAsWorkflow(userID, state.Back.Query, state.Back.Value, text, 1),
-		), true
 	default:
 		if !h.deleteControlState(userID) {
 			return controlStateFailureResult(), true
@@ -503,18 +356,18 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 }
 
 func (h *Handler) openMainMenu(ctx context.Context, userID string) string {
-	return h.openCommandDirectory(ctx, userID)
+	return h.openGlobalWorkbench(ctx, userID)
 }
 
 func (h *Handler) openTaskStatus(userID string) string {
 	options := []controlOption{
 		{Label: "刷新状态", Action: actionTaskStatus},
-		{Label: "WeClaw 请求队列", Action: actionActivityPage, Page: 1},
+		{Label: "codex-link-clawbot 请求队列", Action: actionActivityPage, Page: 1},
 	}
 	if h.hasActiveTask(userID) {
 		options = append(options, controlOption{Label: "取消当前执行", Action: actionConfirmCancelTask})
 	} else {
-		options = append(options, controlOption{Label: "WeClaw 运行与安全", Action: actionRuntimeInfo})
+		options = append(options, controlOption{Label: "codex-link-clawbot 运行状态", Action: actionRuntimeInfo})
 	}
 	prompt := h.buildTaskStatus(userID) + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewTaskStatus, options, actionMain) {
@@ -528,7 +381,7 @@ func (h *Handler) confirmCancelTask(userID string) string {
 		return h.openTaskStatus(userID)
 	}
 	options := []controlOption{{Label: "确认取消执行", Action: actionCancelTask}}
-	prompt := "准备取消 WeClaw 当前执行\n\n如果 Codex 轮次已经启动，WeClaw 会请求中断；本次迟到的进度和最终结果都不会发送。\n\n" + renderControlOptions(options)
+	prompt := "准备取消 codex-link-clawbot 当前执行\n\n如果 Codex 轮次已经启动，codex-link-clawbot 会请求中断；本次迟到的进度和最终结果都不会发送。\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewTaskCancelConfirm, options, actionTaskStatus) {
 		return controlStateFailureResult().Text
 	}
@@ -539,7 +392,7 @@ func (h *Handler) openRuntimeInfo(userID string) string {
 	options := []controlOption{
 		{Label: "为什么没回复", Action: actionNoReplyDiagnostic},
 		{Label: "有效配置状态", Action: actionConfigurationStatus},
-		{Label: "刷新 WeClaw 状态", Action: actionRuntimeInfo},
+		{Label: "刷新 codex-link-clawbot 状态", Action: actionRuntimeInfo},
 	}
 	prompt := h.buildStatus() + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSystemRuntime, options, actionDiagnosticsCenter) {
@@ -548,30 +401,24 @@ func (h *Handler) openRuntimeInfo(userID string) string {
 	return prompt + "\n\n回复数字操作，0 返回。"
 }
 
-func (h *Handler) openFeatureCenter(userID string) string {
-	projectID := ""
-	workflowCount := 0
-	if h.projects != nil {
-		projectID = h.projects.Current(userID).ID
-		if h.workflows != nil {
-			workflowCount = len(h.workflows.List(userID, projectID))
-		}
+func (h *Handler) openResultsDeliveryCenter(userID string) string {
+	deliveryCount := 0
+	if h.deliveries != nil {
+		deliveryCount = len(h.deliveries.List(userID))
 	}
 	options := []controlOption{
-		{Label: fmt.Sprintf("提示词模板 · %d 项", workflowCount), Action: actionProjectQuickTasks, Query: projectID, Page: 1},
-		{Label: "保存最近成功结果", Action: actionSaveRecentWorkflow},
-		{Label: "素材与交付", Action: actionLibraryCenter},
-		{Label: fmt.Sprintf("自动化检查 · %d 项", len(h.automationStatuses(userID))), Action: actionAutomations, Page: 1},
+		{Label: "最近成功结果", Action: actionRecentResult},
+		{Label: fmt.Sprintf("交付箱 · %d 项", deliveryCount), Action: actionDeliveryBox},
 	}
 	if h.voice != nil {
-		options = append(options, controlOption{Label: "语音简报", Action: actionVoiceBriefing})
+		options = append(options, controlOption{Label: "播报最近成功结果", Action: actionVoiceBriefing})
 	}
 	prompt := strings.Join([]string{
-		"WeClaw 功能中心", "",
-		"这里只放 WeClaw 增强能力，不包含 Codex 线程和模型设置。", "",
+		"最近结果与交付箱", "",
+		"从最近一次成功执行继续工作，或重新发送已归档的交付文件。", "",
 		renderControlOptions(options),
 	}, "\n")
-	if !h.storeChoice(userID, viewSystemFeatures, options, actionMain) {
+	if !h.storeChoice(userID, viewSystemResults, options, actionMain) {
 		return controlStateFailureResult().Text
 	}
 	return prompt + "\n\n回复数字操作，0 返回。"
@@ -579,15 +426,14 @@ func (h *Handler) openFeatureCenter(userID string) string {
 
 func (h *Handler) openSettingsCenter(userID string) string {
 	options := []controlOption{
-		{Label: "有效配置状态", Action: actionConfigurationStatus},
-		{Label: "WeClaw 项目入口", Action: actionProjectCenter},
 		{Label: "回复方式与视觉", Action: actionResponseModes},
-		{Label: "WeClaw 请求队列", Action: actionActivityPage, Page: 1},
-		{Label: "远程锁定", Action: actionConfirmRemoteLock},
+	}
+	if h.remoteLock != nil && h.remoteLock.Enabled() {
+		options = append(options, controlOption{Label: "远程锁定", Action: actionConfirmRemoteLock})
 	}
 	prompt := strings.Join([]string{
-		"WeClaw 设置中心", "",
-		"个人偏好可在微信即时修改；机器级配置中的目录、密钥、服务和网络监听只允许在本机修改。", "",
+		"呈现与安全", "",
+		"微信端只管理个人回复呈现和远程锁定；机器级目录、命令与密钥只允许在本机修改。", "",
 		renderControlOptions(options),
 	}, "\n")
 	if !h.storeChoice(userID, viewSystemSettings, options, actionMain) {
@@ -606,29 +452,25 @@ func (h *Handler) openConfigurationStatus(userID string) string {
 	preference := h.currentResponseMode(userID)
 	style := h.currentVisualStyle(userID)
 	options := []controlOption{
-		{Label: "切换项目入口", Action: actionProjectCenter},
 		{Label: "修改回复偏好", Action: actionResponseModes},
-		{Label: "返回设置中心", Action: actionSettingsCenter},
+		{Label: "返回呈现与安全", Action: actionSettingsCenter},
 	}
 	prompt := strings.Join([]string{
-		"WeClaw 有效配置", "",
+		"codex-link-clawbot 有效配置", "",
 		fmt.Sprintf("项目入口：%s · 共 %d 项", currentProject, projectCount),
 		"回答方式：" + preference.Definition().Name,
 		"视觉风格：" + style.Definition().Name,
 		"视觉渲染：" + enabledText(h.visual != nil),
 		"语音交付：" + enabledText(h.voice != nil),
 		"进度提示：" + enabledText(h.progress.Enabled),
-		fmt.Sprintf("自动化检查：%d 项", len(h.automationStatuses(userID))),
-		"链接归档：" + enabledText(strings.TrimSpace(h.saveDir) != ""),
-		"主动发送接口：" + enabledText(h.sendAPIEnabled),
 		"远程锁定：" + enabledText(h.remoteLock != nil && h.remoteLock.Enabled()),
-		"", "机器级配置只读。本机执行 weclaw config 查看脱敏后的完整状态。", "",
+		"", "机器级配置只读。本机执行 codex-link-clawbot config 查看脱敏后的完整状态。", "",
 		renderControlOptions(options),
 	}, "\n")
 	if !h.storeChoice(userID, viewSystemSettings, options, actionSettingsCenter) {
 		return controlStateFailureResult().Text
 	}
-	return prompt + "\n\n回复数字操作，0 返回设置中心。"
+	return prompt + "\n\n回复数字操作，0 返回呈现与安全。"
 }
 
 func (h *Handler) openDiagnosticsCenter(userID string) string {
@@ -638,7 +480,7 @@ func (h *Handler) openDiagnosticsCenter(userID string) string {
 		{Label: "有效配置状态", Action: actionConfigurationStatus},
 		{Label: "使用说明", Action: actionGuide},
 	}
-	prompt := "WeClaw 诊断中心\n\n故障判断只读取确定性运行状态，不把诊断问题交给 Codex。\n\n" + renderControlOptions(options)
+	prompt := "codex-link-clawbot 诊断中心\n\n故障判断只读取确定性运行状态，不把诊断问题交给 Codex。\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSystemDiagnostics, options, actionMain) {
 		return controlStateFailureResult().Text
 	}
@@ -655,7 +497,7 @@ func enabledText(enabled bool) string {
 func (h *Handler) openGuide(userID string) string {
 	options := []controlOption{
 		{Label: "Codex 线程", Action: actionSessionMenu},
-		{Label: "WeClaw 执行状态", Action: actionTaskStatus},
+		{Label: "codex-link-clawbot 执行状态", Action: actionTaskStatus},
 	}
 	if h.preferences != nil {
 		options = append(options, controlOption{Label: "偏好设置", Action: actionResponseModes})
@@ -689,12 +531,9 @@ func (h *Handler) openResponseModes(userID string) string {
 	if h.visual != nil {
 		options = append(options, controlOption{Label: "视觉风格", Action: actionVisualStyles})
 	}
-	if h.voice != nil {
-		options = append(options, controlOption{Label: "立即发送语音简报", Action: actionVoiceBriefing})
-	}
 	styleName := current.Style.Definition().Name
 	prompt := strings.Join([]string{
-		"WeClaw 回复呈现",
+		"codex-link-clawbot 回复呈现",
 		"",
 		"当前：" + current.ResponseMode.Definition().Name,
 		"视觉：" + styleName,
@@ -710,7 +549,7 @@ func (h *Handler) openResponseModes(userID string) string {
 
 func (h *Handler) setResponseMode(userID string, mode preference.ResponseMode) string {
 	if h.preferences == nil || !mode.Valid() {
-		return "WeClaw 回复方式当前不可用。"
+		return "codex-link-clawbot 回复方式当前不可用。"
 	}
 	if mode == preference.ResponseReading && h.visual == nil {
 		return "阅读模式需要启用视觉卡片。"
@@ -720,15 +559,15 @@ func (h *Handler) setResponseMode(userID string, mode preference.ResponseMode) s
 	}
 	if err := h.preferences.SetResponseMode(userID, mode); err != nil {
 		log.Printf("[preference] failed to persist response mode for %s: %v", ilink.LogLabel(userID), err)
-		return "WeClaw 回复方式保存失败，请稍后重试。"
+		return "codex-link-clawbot 回复方式保存失败，请稍后重试。"
 	}
 	definition := mode.Definition()
 	options := []controlOption{
-		{Label: "选择其他 WeClaw 回复方式", Action: actionResponseModes},
+		{Label: "选择其他 codex-link-clawbot 回复方式", Action: actionResponseModes},
 		{Label: "返回主菜单", Action: actionMain},
 	}
 	prompt := strings.Join([]string{
-		"WeClaw 回复方式已切换",
+		"codex-link-clawbot 回复方式已切换",
 		"",
 		"当前：" + definition.Name,
 		"说明：" + definition.Description,
@@ -799,42 +638,7 @@ func (h *Handler) setVisualStyle(userID string, style visual.Style) string {
 }
 
 func (h *Handler) openSessionMenu(ctx context.Context, userID string) string {
-	currentName := "未创建"
-	stats := session.Stats{}
-	if h.sessions != nil {
-		stats = h.sessions.Stats(userID)
-	}
-	if threadAgent, err := h.sessionContext(); err == nil {
-		if current, currentErr := h.sessions.Current(ctx, userID, threadAgent); currentErr == nil {
-			currentName = threadTitle(current.Info)
-		}
-	}
-	options := []controlOption{
-		{Label: "当前线程", Action: actionCurrentSession},
-		{Label: "线程列表", Action: actionBrowseSessions},
-		{Label: "搜索线程", Action: actionPromptSessionSearch},
-		{Label: "新建线程", Action: actionPromptNewSession},
-		{Label: "分叉当前线程", Action: actionForkThread},
-		{Label: "压缩上下文", Action: actionCompactThread},
-		{Label: "设置线程目标", Action: actionPromptThreadGoal},
-		{Label: "线程模型与推理", Action: actionThreadModels},
-		{Label: "Codex 能力", Action: actionCodexCapabilities},
-		{Label: "归档当前线程", Action: actionConfirmArchive},
-		{Label: "恢复已归档线程", Action: actionPickArchivedSession},
-	}
-	prompt := strings.Join([]string{
-		"Codex 线程",
-		"",
-		"当前：" + currentName,
-		fmt.Sprintf("活跃：%d", stats.Active),
-		fmt.Sprintf("已归档：%d", stats.Archived),
-		"",
-		renderControlOptions(options),
-	}, "\n")
-	if !h.storeChoice(userID, viewSessionCenter, options, actionMain) {
-		return controlStateFailureResult().Text
-	}
-	return prompt + "\n\n回复数字即可，0 返回。"
+	return h.openCodexGlobalOverview(ctx, userID)
 }
 
 func (h *Handler) currentSessionDetail(ctx context.Context, userID string) string {
@@ -846,10 +650,10 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 	if err != nil {
 		if errors.Is(err, session.ErrNoActive) {
 			options := []controlOption{
-				{Label: "新建线程", Action: actionPromptNewSession},
-				{Label: "恢复已归档线程", Action: actionPickArchivedSession},
+				{Label: "新建线程 · /new", Action: actionPromptNewSession},
+				{Label: "从全局目录选择 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
 			}
-			prompt := "当前 WeClaw 项目入口没有 Codex 线程。发送普通内容会自动创建，也可以现在新建。\n\n" + renderControlOptions(options)
+			prompt := "当前没有目标线程。发送普通内容会在当前工作空间新建，也可以从 Codex 全局目录接管。\n\n" + renderControlOptions(options)
 			if !h.storeChoice(userID, viewSessionCurrent, options, actionSessionMenu) {
 				return controlStateFailureResult().Text
 			}
@@ -858,17 +662,17 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 		return formatSessionError(err)
 	}
 	options := []controlOption{
-		{Label: "重命名线程", Action: actionPromptRenameSession},
-		{Label: "分叉线程", Action: actionForkThread},
+		{Label: "重命名线程 · /rename", Action: actionPromptRenameSession},
+		{Label: "分叉线程 · /fork", Action: actionForkThread},
 		{Label: pinThreadLabel(current.Info.IsPinned), Action: actionToggleThreadPin, Value: fmt.Sprintf("%t", !current.Info.IsPinned)},
-		{Label: "压缩上下文", Action: actionCompactThread},
-		{Label: "设置线程目标", Action: actionPromptThreadGoal},
-		{Label: "清除线程目标", Action: actionClearThreadGoal},
-		{Label: "模型与推理强度", Action: actionThreadModels},
-		{Label: "审查未提交改动", Action: actionReviewThread},
-		{Label: "切换其他线程", Action: actionPickSession},
-		{Label: "归档线程", Action: actionConfirmArchive},
-		{Label: "永久删除线程", Action: actionConfirmDeleteThread},
+		{Label: "压缩上下文 · /compact", Action: actionCompactThread},
+		{Label: "设置线程目标 · /goal", Action: actionPromptThreadGoal},
+		{Label: "清除线程目标 · /goal clear", Action: actionClearThreadGoal},
+		{Label: "模型与推理强度 · /model", Action: actionThreadModels},
+		{Label: "审查未提交改动 · /review", Action: actionReviewThread},
+		{Label: "切换其他线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
+		{Label: "归档线程 · /archive", Action: actionConfirmArchive},
+		{Label: "永久删除线程 · /delete", Action: actionConfirmDeleteThread},
 	}
 	prompt := formatSessionDetail("当前线程", current) + h.currentThreadSettingsSummary(userID) + h.currentGoalSummary(ctx, userID) + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSessionCurrent, options, actionSessionMenu) {
@@ -1016,22 +820,22 @@ func (h *Handler) sessionDetail(ctx context.Context, userID string, source contr
 	}
 	options := make([]controlOption, 0, 3)
 	if source.Archived {
-		options = append(options, controlOption{Label: "恢复这个线程", Action: actionRestoreSession, Value: detail.Info.ID})
+		options = append(options, controlOption{Label: "恢复这个线程 · /resume", Action: actionRestoreSession, Value: detail.Info.ID})
 	} else if detail.Current {
 		options = append(options,
-			controlOption{Label: "重命名线程", Action: actionPromptRenameSession},
+			controlOption{Label: "重命名线程 · /rename", Action: actionPromptRenameSession},
 			controlOption{Label: pinThreadLabel(detail.Info.IsPinned), Action: actionToggleThreadPin, Value: fmt.Sprintf("%t", !detail.Info.IsPinned)},
-			controlOption{Label: "分叉线程", Action: actionForkThread},
+			controlOption{Label: "分叉线程 · /fork", Action: actionForkThread},
 			controlOption{
-				Label: "归档这个线程", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
+				Label: "归档这个线程 · /archive", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
 				Page: source.Page, Query: source.Query,
 			},
 		)
 	} else {
 		options = append(options,
-			controlOption{Label: "切换到这个线程", Action: actionUseSession, Value: detail.Info.ID},
+			controlOption{Label: "切换到这个线程 · /resume", Action: actionUseSession, Value: detail.Info.ID},
 			controlOption{
-				Label: "归档这个线程", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
+				Label: "归档这个线程 · /archive", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
 				Page: source.Page, Query: source.Query,
 			},
 		)
@@ -1094,8 +898,8 @@ func (h *Handler) archiveSessionUnlocked(ctx context.Context, userID, threadID s
 		currentName = "暂不可读"
 	}
 	options := []controlOption{
-		{Label: "线程列表", Action: actionBrowseSessions},
-		{Label: "恢复已归档线程", Action: actionPickArchivedSession},
+		{Label: "线程列表 · /resume", Action: actionBrowseSessions},
+		{Label: "恢复已归档线程 · /resume", Action: actionPickArchivedSession},
 	}
 	prompt := "线程已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
@@ -1196,7 +1000,7 @@ func (h *Handler) withRuntimeMutation(action func() string) string {
 	}
 	result := ""
 	if !h.coordinator.TryRuntimeControl(func() { result = action() }) {
-		return "Codex 正在执行另一个轮次，线程修改暂不可用。WeClaw 项目入口切换和新请求排队不受影响。"
+		return "Codex 正在执行另一个轮次，线程修改暂不可用。Codex 工作空间切换和新请求排队不受影响。"
 	}
 	return result
 }
@@ -1233,8 +1037,8 @@ func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID stri
 	}
 	if nextActive == "" {
 		options := []controlOption{
-			{Label: "新建线程", Action: actionPromptNewSession},
-			{Label: "恢复已归档线程", Action: actionPickArchivedSession},
+			{Label: "新建线程 · /new", Action: actionPromptNewSession},
+			{Label: "恢复已归档线程 · /resume", Action: actionPickArchivedSession},
 		}
 		prompt := "线程已归档。\n当前：未创建\n\n下一条普通消息会自动创建新线程。\n\n" + renderControlOptions(options)
 		if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
@@ -1247,8 +1051,8 @@ func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID stri
 		currentName = threadTitle(current.Info)
 	}
 	options := []controlOption{
-		{Label: "查看当前线程", Action: actionCurrentSession},
-		{Label: "恢复已归档线程", Action: actionPickArchivedSession},
+		{Label: "查看当前线程 · /status", Action: actionCurrentSession},
+		{Label: "恢复已归档线程 · /resume", Action: actionPickArchivedSession},
 		{Label: "Codex 线程", Action: actionSessionMenu},
 	}
 	prompt := "线程已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
@@ -1274,11 +1078,11 @@ func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID s
 	options := make([]controlOption, 0, 3)
 	stats := h.sessions.Stats(userID)
 	if stats.CurrentID == thread.ID {
-		options = append(options, controlOption{Label: "查看当前线程", Action: actionCurrentSession})
+		options = append(options, controlOption{Label: "查看当前线程 · /status", Action: actionCurrentSession})
 	} else {
 		options = append(options,
-			controlOption{Label: "切换到已恢复线程", Action: actionUseSession, Value: thread.ID},
-			controlOption{Label: "查看当前线程", Action: actionCurrentSession},
+			controlOption{Label: "切换到已恢复线程 · /resume", Action: actionUseSession, Value: thread.ID},
+			controlOption{Label: "查看当前线程 · /status", Action: actionCurrentSession},
 		)
 	}
 	options = append(options, controlOption{Label: "Codex 线程", Action: actionSessionMenu})
@@ -1291,8 +1095,8 @@ func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID s
 
 func (h *Handler) sessionSuccess(userID, headline string, thread codex.ThreadInfo) string {
 	options := []controlOption{
-		{Label: "查看当前线程", Action: actionCurrentSession},
-		{Label: "线程列表", Action: actionBrowseSessions},
+		{Label: "查看当前线程 · /status", Action: actionCurrentSession},
+		{Label: "线程列表 · /resume", Action: actionBrowseSessions},
 		{Label: "Codex 线程", Action: actionSessionMenu},
 	}
 	prompt := headline + "\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
@@ -1379,7 +1183,7 @@ func (h *Handler) deleteControlState(userID string) bool {
 }
 
 func logControlStateError(userID string, err error) {
-	log.Printf("[control] persistent state failed category=%s for %s", statefile.ErrorCategory(err), ilink.LogLabel(userID))
+	log.Printf("[control] persistent state failed category=%s for %s: %v", statefile.ErrorCategory(err), ilink.LogLabel(userID), err)
 }
 
 func controlStateFailureResult() ActionResult {
@@ -1434,7 +1238,7 @@ func controlNavigationOption(text string, options []controlOption) (controlOptio
 		return controlOption{}, false
 	}
 	for _, option := range options {
-		if option.Action != actionSessionPage && option.Action != actionAutomations && option.Action != actionActivityPage {
+		if option.Action != actionSessionPage && option.Action != actionCodexGlobalThreadPage && option.Action != actionActivityPage {
 			continue
 		}
 		if forward && option.Navigate == navigationNext {
@@ -1452,17 +1256,18 @@ func controlGuide() string {
 		"直接发送文字、图片或文件，内容会交给 Codex。",
 		"发送“回答方式”可选择自适应、阅读或语音；语音会配套发送阅读卡和 MP3。",
 		"阅读卡回复支持发送“文字版”获取可复制原文。",
-		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。",
-		"设置中心只修改个人偏好；目录、命令、密钥和网络监听必须在本机配置。",
+		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。菜单中的 Codex 操作会同时显示中文与 /command。",
+		"可直接发送 /new、/status、/model、/goal、/review、/skills、/mcp 或 /compact；发送 / 可查看全部微信可用命令。",
+		"偏好与安全只修改个人回复偏好；目录、命令和密钥必须在本机配置。",
 		"发送“视觉风格”可在五套完整模板间切换，选择会自动保存。",
 		"也可以直接说“切换项目”“新建线程”“搜索线程”“切换线程 登录”或“运行中心”。",
-		"WeClaw 请求开始执行后，发送“状态”查看投递进度，发送“取消”可中止当前执行。",
+		"codex-link-clawbot 请求开始执行后，发送“状态”查看投递进度，发送“取消”可中止当前执行。",
 		"仅当 Codex 轮次正在运行时，发送“追加指令 …”才会调整该轮次方向。",
 	}, "\n")
 }
 
 func mutationBusyText() string {
-	return "当前 Codex 轮次仍在运行，暂时不能切换项目或修改线程。发送“状态”查看 WeClaw 执行进度，发送“追加指令 …”可调整轮次方向，或发送“取消”中止。"
+	return "当前 Codex 轮次仍在运行，暂时不能切换项目或修改线程。发送“状态”查看 codex-link-clawbot 执行进度，发送“追加指令 …”可调整轮次方向，或发送“取消”中止。"
 }
 
 func sessionKind(archived bool) string {
@@ -1684,7 +1489,7 @@ func threadSearchTitle(thread codex.ThreadInfo) string {
 
 func sanitizeThreadPreview(preview string) string {
 	preview = strings.ReplaceAll(preview, "\r\n", "\n")
-	for _, marker := range []string{"[WeClaw 入站文件]", "[WeClaw 交付物回传]"} {
+	for _, marker := range []string{"[codex-link-clawbot 入站文件]", "[codex-link-clawbot 交付物回传]"} {
 		if index := strings.Index(preview, marker); index >= 0 {
 			preview = preview[:index]
 		}
@@ -1735,9 +1540,9 @@ func formatSessionTime(timestamp int64) string {
 func formatSessionError(err error) string {
 	switch {
 	case errors.Is(err, session.ErrNoActive):
-		return "当前 WeClaw 项目入口没有 Codex 线程。发送普通内容会自动创建，或发送“新建线程”。"
+		return "当前工作空间没有目标线程。发送普通内容会自动创建，或从全局目录接管。"
 	case errors.Is(err, session.ErrNotOwned):
-		return "没有找到属于当前微信用户与 WeClaw 项目入口的 Codex 线程。"
+		return "本地焦点索引中没有这个线程；请从 Codex 全局目录重新接管。"
 	case errors.Is(err, session.ErrAmbiguousCode):
 		return "线程编号不唯一，请输入更完整的名称或编号。"
 	default:

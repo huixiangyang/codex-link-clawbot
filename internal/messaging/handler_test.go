@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 var testControlSourceCounter atomic.Uint64
@@ -38,14 +38,14 @@ func attachTestControlState(t *testing.T, handler *Handler) {
 
 func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	handler.SetBridgeInfo("v1.4.0-runtime.1", true)
+	handler.SetBridgeInfo("v1.4.0-runtime.1")
 	handler.startedAt = time.Now().Add(-2*time.Hour - 5*time.Minute)
 	status := controlReply(t, handler, "owner-1", "运行中心")
 	for _, want := range []string{
-		"WeClaw 运行与安全", "WeClaw：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
-		"主动发送：已启用", "Codex：运行中", "协议：Codex 应用服务",
+		"codex-link-clawbot 运行状态", "codex-link-clawbot：运行中", "版本：v1.4.0-runtime.1", "已运行：2 小时 5 分",
+		"Codex：运行中", "协议：Codex 应用服务",
 		"模型：使用 Codex 默认配置", "Codex 工作目录：/workspace", "Codex PID：4242",
-		"1  为什么没回复", "2  有效配置状态", "3  刷新 WeClaw 状态",
+		"1  为什么没回复", "2  有效配置状态", "3  刷新 codex-link-clawbot 状态",
 	} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("runtime center missing %q: %q", want, status)
@@ -60,13 +60,16 @@ func TestRuntimeCenterShowsBridgeAndCodexIdentity(t *testing.T) {
 func TestSettingsCenterSeparatesPreferencesFromMachineConfiguration(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	settings := handler.openSettingsCenter("owner-1")
-	for _, want := range []string{"WeClaw 设置中心", "个人偏好可在微信即时修改", "机器级配置", "有效配置状态", "WeClaw 项目入口", "回复方式与视觉"} {
+	for _, want := range []string{"呈现与安全", "微信端只管理个人回复呈现", "机器级", "回复方式与视觉"} {
 		if !strings.Contains(settings, want) {
 			t.Fatalf("settings center missing %q: %q", want, settings)
 		}
 	}
+	if strings.Contains(settings, "有效配置状态") {
+		t.Fatalf("settings center retained duplicated configuration entry: %q", settings)
+	}
 	status := handler.openConfigurationStatus("owner-1")
-	for _, want := range []string{"WeClaw 有效配置", "项目入口：", "回答方式：", "视觉渲染：", "进度提示：已启用", "机器级配置只读", "weclaw config"} {
+	for _, want := range []string{"codex-link-clawbot 有效配置", "项目入口：", "回答方式：", "视觉渲染：", "进度提示：已启用", "机器级配置只读", "codex-link-clawbot config"} {
 		if !strings.Contains(status, want) {
 			t.Fatalf("configuration status missing %q: %q", want, status)
 		}
@@ -89,13 +92,13 @@ func TestFormatUptimeUsesMobileFriendlyUnits(t *testing.T) {
 	}
 }
 
-func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {
+func TestControlGuideDocumentsMenuAndCodexSlashCommands(t *testing.T) {
 	text := controlGuide()
 	if text == "" {
 		t.Error("guide text is empty")
 	}
 	if !strings.Contains(text, "发送 / 打开操作菜单") {
-		t.Error("guide should mention the single menu entry")
+		t.Error("guide should mention the menu entry")
 	}
 	if !strings.Contains(text, "发送“取消”") {
 		t.Error("guide should mention natural-language cancellation")
@@ -103,18 +106,18 @@ func TestControlGuideKeepsOnlyMenuEntry(t *testing.T) {
 	if !strings.Contains(text, "发送“视觉风格”") {
 		t.Error("guide should mention visual style selection")
 	}
-	if strings.Contains(text, "/status") || strings.Contains(text, "/session") {
-		t.Error("guide must not expose legacy slash commands")
+	if !strings.Contains(text, "/status") || !strings.Contains(text, "/goal") || !strings.Contains(text, "全部微信可用命令") {
+		t.Error("guide should expose the codex-link-clawbot slash command entry points")
 	}
 }
 
 func TestTaskControlStatusAndCancel(t *testing.T) {
 	h, cancel := testHandlerWithRunningTask(t, "user-1")
 	defer cancel()
-	if got := h.buildTaskStatus("user-1"); !strings.Contains(got, "WeClaw 执行状态：运行中") {
+	if got := h.buildTaskStatus("user-1"); !strings.Contains(got, "codex-link-clawbot 执行状态：运行中") {
 		t.Fatalf("unexpected active status: %q", got)
 	}
-	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "已请求取消 WeClaw 当前执行") {
+	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "已请求取消 codex-link-clawbot 当前执行") {
 		t.Fatalf("unexpected cancellation result: %q", got)
 	}
 	if got := h.cancelActiveTask("user-1"); !strings.Contains(got, "正在取消") {
@@ -127,11 +130,11 @@ func TestNaturalTaskControlsAcceptCommonPunctuation(t *testing.T) {
 	defer cancel()
 
 	status, handled := h.handleControlInput(context.Background(), "user-1", "状态？", false, nextTestControlSource())
-	if !handled || !strings.Contains(status.Text, "WeClaw 执行状态：运行中") {
+	if !handled || !strings.Contains(status.Text, "codex-link-clawbot 执行状态：运行中") {
 		t.Fatalf("natural status = %q, handled=%v", status.Text, handled)
 	}
 	cancelled, handled := h.handleControlInput(context.Background(), "user-1", "取消！", false, nextTestControlSource())
-	if !handled || !strings.Contains(cancelled.Text, "已请求取消 WeClaw 当前执行") {
+	if !handled || !strings.Contains(cancelled.Text, "已请求取消 codex-link-clawbot 当前执行") {
 		t.Fatalf("natural cancellation = %q, handled=%v", cancelled.Text, handled)
 	}
 }

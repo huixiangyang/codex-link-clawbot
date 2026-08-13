@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/google/uuid"
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 type textSendError struct {

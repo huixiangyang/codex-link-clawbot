@@ -1,6 +1,6 @@
-/weclaw
-!cmd/weclaw
-!cmd/weclaw/**
+/codex-link-clawbot
+!cmd/codex-link-clawbot
+!cmd/codex-link-clawbot/**
 tmp/
 .git/
 .idea/

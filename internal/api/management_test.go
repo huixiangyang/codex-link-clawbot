@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/runtimecontrol"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 func TestManagementServerUsesPrivateUnixSocket(t *testing.T) {
@@ -53,7 +53,7 @@ func TestManagementServerUsesPrivateUnixSocket(t *testing.T) {
 	}
 
 	client := unixHTTPClient(socketPath)
-	response, err := client.Get("http://weclaw.local/health")
+	response, err := client.Get("http://codex-link-clawbot.local/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestManagementServerUsesPrivateUnixSocket(t *testing.T) {
 		t.Fatalf("health status=%d snapshot=%#v", response.StatusCode, snapshot)
 	}
 
-	request, err := http.NewRequest(http.MethodPost, "http://weclaw.local/admin/drain", http.NoBody)
+	request, err := http.NewRequest(http.MethodPost, "http://codex-link-clawbot.local/admin/drain", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,15 +136,16 @@ func TestManagementSocketRejectsBroadPermissions(t *testing.T) {
 
 func TestDeploymentNotificationIsTypedAndLocal(t *testing.T) {
 	var received DeploymentNotice
-	server := NewManagementServer(nil, filepath.Join(t.TempDir(), ManagementSocketName), func(_ context.Context, notice DeploymentNotice) error {
+	server := NewManagementServer(nil, filepath.Join(t.TempDir(), ManagementSocketName), func(_ context.Context, notice DeploymentNotice) (DeploymentNotificationResult, error) {
 		received = notice
-		return nil
+		return DeploymentNotificationResult{Status: DeploymentNotificationDeferred}, nil
 	})
-	valid := `{"from_version":"v2.5","to_version":"v2.6","service":"weclaw.service"}`
+	valid := `{"from_version":"v2.5","to_version":"v2.6","service":"codex-link-clawbot.service"}`
 	request := httptest.NewRequest(http.MethodPost, "/admin/deployment-notification", strings.NewReader(valid))
 	response := httptest.NewRecorder()
 	server.handler().ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent || received.ToVersion != "v2.6" {
+	var result DeploymentNotificationResult
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Status != DeploymentNotificationDeferred || received.ToVersion != "v2.6" {
 		t.Fatalf("notification status=%d notice=%#v", response.Code, received)
 	}
 

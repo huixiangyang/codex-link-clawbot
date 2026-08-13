@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 const cdnBaseURL = "https://novac2c.cdn.weixin.qq.com/c2c"

@@ -38,7 +38,7 @@ var stopCmd = &cobra.Command{
 			_, _ = requestAdmin(ctx, controlSocket, "resume")
 			return err
 		}
-		fmt.Println("WeClaw drained and stopped.")
+		fmt.Println("codex-link-clawbot drained and stopped.")
 		return nil
 	},
 }

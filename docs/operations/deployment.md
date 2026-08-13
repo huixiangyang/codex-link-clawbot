@@ -2,13 +2,13 @@
 
 ## 构建候选
 
-唯一二进制入口是 `./cmd/weclaw`：
+唯一二进制入口是 `./cmd/codex-link-clawbot`：
 
 ```bash
 version=v2.7.0-local.1
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-  -ldflags="-s -w -X github.com/huixiangyang/weclaw/internal/cli.Version=${version}" \
-  -o /absolute/path/to/weclaw ./cmd/weclaw
+  -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${version}" \
+  -o /absolute/path/to/codex-link-clawbot ./cmd/codex-link-clawbot
 ```
 
 候选必须先通过：
@@ -24,8 +24,8 @@ make check
 已进入当前管理面后的生产环境统一使用：
 
 ```bash
-weclaw deploy v2.7.0
-weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.7.0-local.1
+codex-link-clawbot deploy v2.7.0
+codex-link-clawbot deploy --binary /absolute/path/to/codex-link-clawbot --expect-version v2.7.0-local.1
 ```
 
 部署事务依次执行候选校验、旧服务排空、停机状态快照、离线迁移、原子安装、新服务排空启动、健康验收、正式单元恢复和队列放行。
@@ -42,11 +42,11 @@ weclaw deploy --binary /absolute/path/to/weclaw --expect-version v2.7.0-local.1
 ## 部署后验证
 
 ```bash
-weclaw status
-systemctl --user status weclaw.service
+codex-link-clawbot status
+systemctl --user status codex-link-clawbot.service
 ```
 
-然后在微信检查 `/`、WeClaw 执行状态、Codex 线程列表、阅读回复、“为什么没回复”和一次图片或文件请求。完整矩阵见 [验收清单](acceptance.md)。
+然后在微信检查 `/`、codex-link-clawbot 执行状态、Codex 线程列表、阅读回复、“为什么没回复”和一次图片或文件请求。完整矩阵见 [验收清单](acceptance.md)。
 
 ## 首次跨管理面切换
 
@@ -58,4 +58,4 @@ systemctl --user status weclaw.service
 - 不启动第二个微信轮询进程验证候选。
 - 不绕过排空直接覆盖二进制。
 - 不把包含任务正文、附件或令牌的状态快照长期保留。
-- 部署成功只发送固定纯文字通知，不允许部署器借管理面发送任意内容。
+- 部署成功只写入固定格式待阅通知，并在绑定者下一次有效交互中补送；不允许部署器借管理面发送任意内容。

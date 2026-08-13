@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 // prepareQueuedInput 在确认入队前完成所有微信附件的下载与内容校验。

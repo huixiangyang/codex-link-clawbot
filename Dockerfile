@@ -6,14 +6,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath \
-    -ldflags="-s -w -X github.com/huixiangyang/weclaw/internal/cli.Version=${VERSION}" \
-    -o /usr/local/bin/weclaw ./cmd/weclaw
+    -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${VERSION}" \
+    -o /usr/local/bin/codex-link-clawbot ./cmd/codex-link-clawbot
 
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates ffmpeg tzdata
-COPY --from=builder /usr/local/bin/weclaw /usr/local/bin/weclaw
+COPY --from=builder /usr/local/bin/codex-link-clawbot /usr/local/bin/codex-link-clawbot
 
-VOLUME /root/.weclaw
-ENTRYPOINT ["weclaw"]
+VOLUME /root/.codex-link-clawbot
+ENTRYPOINT ["codex-link-clawbot"]
 CMD ["start"]

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/huixiangyang/weclaw/internal/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
 )
 
 const stateVersion = 1
@@ -17,11 +17,9 @@ const stateVersion = 1
 var ErrUnknownProject = errors.New("unknown project")
 
 type Definition struct {
-	ID          string
-	Name        string
-	Root        string
-	ServiceName string
-	HealthURL   string
+	ID   string
+	Name string
+	Root string
 }
 
 type stateFile struct {
@@ -43,7 +41,7 @@ func DefaultStatePath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, ".weclaw", "project-state.json"), nil
+	return filepath.Join(home, ".codex-link-clawbot", "project-state.json"), nil
 }
 
 func NewManager(projects []config.ProjectConfig, path string) (*Manager, error) {
@@ -70,10 +68,7 @@ func NewManager(projects []config.ProjectConfig, path string) (*Manager, error) 
 		if !info.IsDir() {
 			return nil, fmt.Errorf("project %q root is not a directory", source.ID)
 		}
-		definition := Definition{
-			ID: source.ID, Name: strings.TrimSpace(source.Name), Root: source.Root,
-			ServiceName: source.ServiceName, HealthURL: source.HealthURL,
-		}
+		definition := Definition{ID: source.ID, Name: strings.TrimSpace(source.Name), Root: source.Root}
 		m.ordered = append(m.ordered, definition)
 		m.byID[definition.ID] = definition
 	}

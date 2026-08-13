@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 func TestPrepareQueuedInputDownloadsAndValidatesWithoutWritingTurns(t *testing.T) {

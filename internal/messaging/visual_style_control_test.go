@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 func TestVisualStyleMenuSwitchesPersistsAndIsolatesOwners(t *testing.T) {
@@ -81,9 +81,24 @@ func TestCommandDirectoryOpensVisualStyleManagement(t *testing.T) {
 	handler.SetPreferenceStore(store)
 	handler.openMainMenu(context.Background(), "owner-1")
 
-	result, handled := handler.handleControlInput(context.Background(), "owner-1", "32", false, nextTestControlSource())
+	result, handled := handler.handleControlInput(context.Background(), "owner-1", "43", false, nextTestControlSource())
+	if !handled || !strings.Contains(result.Text, "呈现与安全") {
+		t.Fatalf("settings center = %#v handled=%v", result, handled)
+	}
+	result, handled = handler.handleControlInput(context.Background(), "owner-1", "1", false, nextTestControlSource())
+	if !handled || !strings.Contains(result.Text, "codex-link-clawbot 回复呈现") {
+		t.Fatalf("directory response center = %#v handled=%v", result, handled)
+	}
+	state, status, loadErr := handler.controlStates.Load("owner-1")
+	if loadErr != nil || status != controlStateActive {
+		t.Fatalf("response center state = %#v status=%v err=%v", state, status, loadErr)
+	}
+	if len(state.Options) != 3 || state.Options[2].Action != actionVisualStyles {
+		t.Fatalf("response center options = %#v", state.Options)
+	}
+	result, handled = handler.handleControlInput(context.Background(), "owner-1", "3", false, nextTestControlSource())
 	if !handled || !strings.Contains(result.Text, "视觉风格") {
-		t.Fatalf("directory style center = %#v handled=%v", result, handled)
+		t.Fatalf("style center = %#v handled=%v state=%#v", result, handled, state)
 	}
 	result, handled = handler.handleControlInput(context.Background(), "owner-1", "5", false, nextTestControlSource())
 	if !handled || !strings.Contains(result.Text, "当前：简洁") || store.Get("owner-1").Style != visual.StyleMinimal {

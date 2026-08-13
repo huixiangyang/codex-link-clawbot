@@ -13,8 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 const (
@@ -180,7 +180,7 @@ func turnRoot() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("获取用户目录: %w", err)
 	}
-	return filepath.Join(home, ".weclaw", "turns"), nil
+	return filepath.Join(home, ".codex-link-clawbot", "turns"), nil
 }
 
 func downloadInboundImage(ctx context.Context, image *ilink.ImageItem) ([]byte, error) {

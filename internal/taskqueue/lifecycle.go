@@ -122,7 +122,7 @@ func (store *Store) Delete(ownerID, taskID string) error {
 }
 
 // Retry 从仍在保留期内的失败输入创建全新任务，绝不回退原任务状态。
-func (store *Store) Retry(ownerID, taskID, sourceMessageKey, contextToken string) (Task, error) {
+func (store *Store) Retry(ownerID, taskID, sourceMessageKey, contextToken string, requireAcknowledgement bool) (Task, error) {
 	original, ok := store.Find(ownerID, taskID)
 	if !ok || original.State != StateFailed && original.State != StateInterrupted {
 		return Task{}, fmt.Errorf("only a failed or interrupted task can be retried")
@@ -135,7 +135,7 @@ func (store *Store) Retry(ownerID, taskID, sourceMessageKey, contextToken string
 		SourceMessageKey: strings.TrimSpace(sourceMessageKey), OwnerID: original.OwnerID,
 		ProjectID: original.ProjectID, ThreadID: original.ThreadID, Summary: original.Summary,
 		Text: request.Text, ContextToken: contextToken, ResponseMode: original.ResponseMode,
-		VisualStyle: original.VisualStyle, RetryOf: original.ID,
+		VisualStyle: original.VisualStyle, RetryOf: original.ID, RequireAcknowledgement: requireAcknowledgement,
 	}
 	for _, attachment := range request.Images {
 		data, err := readRetryAttachment(attachment)
@@ -159,6 +159,17 @@ func (store *Store) Retry(ownerID, taskID, sourceMessageKey, contextToken string
 		return Task{}, fmt.Errorf("retry source message already belongs to another task")
 	}
 	return retried, nil
+}
+
+// Acknowledge 只在微信入队确认已经发送后开放请求给全局协调器。
+func (store *Store) Acknowledge(ownerID, taskID string) error {
+	return store.updateTask(ownerID, taskID, func(task *Task) error {
+		if task.State != StateQueued {
+			return fmt.Errorf("only a queued task can be acknowledged")
+		}
+		task.AwaitingAcknowledgement = false
+		return nil
+	})
 }
 
 func readRetryAttachment(attachment LoadedAttachment) ([]byte, error) {
@@ -234,7 +245,7 @@ func (store *Store) ClaimNext(blockedOwners map[string]bool) (Task, bool, error)
 			continue
 		}
 		for index, task := range owner.Tasks {
-			if task.State != StateQueued {
+			if task.State != StateQueued || task.AwaitingAcknowledgement {
 				continue
 			}
 			if selectedIndex < 0 || task.Order < selected.Order || task.Order == selected.Order && task.ID < selected.ID {

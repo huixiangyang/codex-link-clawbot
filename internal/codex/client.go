@@ -192,7 +192,7 @@ func (a *Codex) Start(ctx context.Context) error {
 	log.Printf("[codex] sending initialize handshake (pid=%d)...", pid)
 	result, err := a.rpc(initCtx, "initialize", map[string]interface{}{
 		"clientInfo": map[string]string{
-			"name": "weclaw", "title": "WeClaw", "version": "1.0.0",
+			"name": "codex-link-clawbot", "title": "codex-link-clawbot", "version": "1.0.0",
 		},
 	})
 	if err == nil {
@@ -279,7 +279,7 @@ func (a *Codex) StartThread(ctx context.Context) (ThreadInfo, error) {
 		"approvalPolicy": "never",
 		"cwd":            cwd,
 		"sandbox":        "danger-full-access",
-		"serviceName":    "weclaw",
+		"serviceName":    "codex-link-clawbot",
 	}
 	if model != "" {
 		params["model"] = model
@@ -318,7 +318,7 @@ func (a *Codex) ResumeThread(ctx context.Context, threadID string) (ThreadInfo, 
 		"approvalPolicy": "never",
 		"cwd":            cwd,
 		"sandbox":        "danger-full-access",
-		"serviceName":    "weclaw",
+		"serviceName":    "codex-link-clawbot",
 	}
 	if model != "" {
 		params["model"] = model
@@ -369,7 +369,7 @@ func (a *Codex) ReadThread(ctx context.Context, threadID string) (ThreadInfo, er
 	return thread, nil
 }
 
-// ListThreads 查询 Codex 线程页；上层仍必须按 WeClaw 归属索引过滤。
+// ListThreads 查询 Codex 全局线程页；上层必须按受信任工作空间过滤工作目录。
 func (a *Codex) ListThreads(ctx context.Context, options ThreadListOptions) (ThreadPage, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return ThreadPage{}, err
@@ -413,6 +413,46 @@ func (a *Codex) ListThreads(ctx context.Context, options ThreadListOptions) (Thr
 		page.NextCursor = *response.NextCursor
 	}
 	return page, nil
+}
+
+func (a *Codex) ListLoadedThreadIDs(ctx context.Context) ([]string, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return nil, err
+	}
+	result, err := a.rpc(ctx, "thread/loaded/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Data []string `json:"data"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, fmt.Errorf("parse thread/loaded/list result: %w", err)
+	}
+	return append([]string(nil), response.Data...), nil
+}
+
+func (a *Codex) ReadAccount(ctx context.Context) (AccountInfo, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return AccountInfo{}, err
+	}
+	result, err := a.rpc(ctx, "account/read", map[string]bool{"refreshToken": false})
+	if err != nil {
+		return AccountInfo{}, err
+	}
+	var response struct {
+		Account            *AccountInfo `json:"account"`
+		RequiresOpenAIAuth bool         `json:"requiresOpenaiAuth"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		return AccountInfo{}, fmt.Errorf("parse account/read result: %w", err)
+	}
+	if response.Account == nil {
+		return AccountInfo{RequiresOpenAIAuth: response.RequiresOpenAIAuth}, nil
+	}
+	account := *response.Account
+	account.RequiresOpenAIAuth = response.RequiresOpenAIAuth
+	return account, nil
 }
 
 func (a *Codex) SetThreadName(ctx context.Context, threadID, name string) error {
@@ -500,6 +540,24 @@ func (a *Codex) SetThreadGoal(ctx context.Context, threadID, objective string, t
 		params["tokenBudget"] = *tokenBudget
 	}
 	result, err := a.rpc(ctx, "thread/goal/set", params)
+	if err != nil {
+		return ThreadGoal{}, err
+	}
+	return decodeThreadGoal(result, "thread/goal/set")
+}
+
+func (a *Codex) UpdateThreadGoalStatus(ctx context.Context, threadID, status string) (ThreadGoal, error) {
+	if err := a.ensureCodexReady(ctx); err != nil {
+		return ThreadGoal{}, err
+	}
+	status = strings.TrimSpace(status)
+	if status != "active" && status != "paused" {
+		return ThreadGoal{}, fmt.Errorf("unsupported thread goal status %q", status)
+	}
+	result, err := a.rpc(ctx, "thread/goal/set", map[string]interface{}{
+		"threadId": threadID,
+		"status":   status,
+	})
 	if err != nil {
 		return ThreadGoal{}, err
 	}
@@ -1126,7 +1184,7 @@ func (a *Codex) readLoop() {
 		case "account/rateLimits/updated":
 			a.handleRateLimitsUpdated(msg.Params)
 		case "thread/started", "thread/archived", "thread/unarchived", "thread/closed",
-			"thread/name/updated",
+			"thread/name/updated", "thread/goal/updated", "thread/goal/cleared",
 			"serverRequest/resolved", "remoteControl/status/changed":
 			// 已知但无需转发到微信的稳定事件。
 

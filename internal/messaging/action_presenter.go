@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
 // presentActionResult 是控制动作唯一的微信副作用出口。

@@ -1,0 +1,236 @@
+{{define "workbench"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
+    body {
+      --ground: #08090c;
+      --ground-soft: #101116;
+      --surface: rgba(22, 23, 30, .82);
+      --surface-current: rgba(118, 110, 255, .14);
+      --ink: #f2f1f5;
+      --muted: #9796a0;
+      --faint: #5d5d68;
+      --line: rgba(255, 255, 255, .085);
+      --grid: rgba(255, 255, 255, .055);
+      --accent: #8e87ff;
+      --accent-ink: #c2beff;
+      --live: #69d4a3;
+      --idle: #92939c;
+      --offline: #5d5f68;
+      color: var(--ink);
+      background: var(--ground);
+      font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body.day {
+      --ground: #f2f1ee;
+      --ground-soft: #e9e8e4;
+      --surface: rgba(255, 255, 255, .76);
+      --surface-current: rgba(96, 86, 207, .1);
+      --ink: #16161a;
+      --muted: #686871;
+      --faint: #a0a0a6;
+      --line: rgba(16, 16, 20, .085);
+      --grid: rgba(16, 16, 20, .055);
+      --accent: #655ed3;
+      --accent-ink: #5048bd;
+      --live: #21805b;
+      --idle: #6d6e75;
+      --offline: #a0a1a7;
+    }
+    svg { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .canvas {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      isolation: isolate;
+      background:
+        radial-gradient(circle at 76% 19%, color-mix(in srgb, var(--accent) 14%, transparent) 0, transparent 29%),
+        radial-gradient(circle at 49% 78%, color-mix(in srgb, var(--live) 5%, transparent) 0, transparent 27%),
+        radial-gradient(var(--grid) .75px, transparent .75px),
+        var(--ground);
+      background-size: auto, auto, 26px 26px, auto;
+    }
+    .canvas::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 390px;
+      z-index: 1;
+      pointer-events: none;
+      background: linear-gradient(90deg, color-mix(in srgb, var(--ground) 98%, transparent) 0 43%, transparent 70%);
+    }
+
+    .topology { position: absolute; left: 0; right: 0; top: 0; z-index: 0; width: 100%; height: 390px; }
+    .topology .grid-line { stroke: var(--grid); stroke-width: 1; }
+    .topology .orbit { stroke: color-mix(in srgb, var(--ink) 10%, transparent); stroke-width: 1; stroke-dasharray: 3 10; }
+    .topology .orbit-strong { stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: 1.4; stroke-dasharray: 2 9; }
+    .topology .thread-line { stroke: url(#threadGradient); stroke-width: 1.6; }
+    .topology .thread-soft { stroke: color-mix(in srgb, var(--accent) 16%, transparent); stroke-width: 18; filter: blur(14px); }
+    .topology .core { fill: color-mix(in srgb, var(--ground) 80%, transparent); stroke: color-mix(in srgb, var(--accent) 48%, transparent); stroke-width: 1.5; }
+    .topology .core-inner { fill: var(--accent); stroke: none; filter: url(#nodeGlow); }
+    .field-label { position: absolute; z-index: 2; right: 31px; top: 28px; color: var(--faint); font: 650 10px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .16em; writing-mode: vertical-rl; }
+    .coordinate { position: absolute; z-index: 2; color: var(--faint); font: 560 10px/1.2 "Noto Sans Mono CJK SC", monospace; letter-spacing: .08em; }
+    .coordinate.a { left: 604px; top: 66px; }
+
+    .telemetry {
+      position: absolute;
+      z-index: 4;
+      top: 24px;
+      right: 58px;
+      width: 450px;
+      height: 42px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ground-soft) 62%, transparent));
+    }
+    .metric { min-width: 0; padding: 7px 10px 5px; border-left: 1px solid var(--line); }
+    .metric:first-child { border-left: 0; }
+    .metric span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 8px; font-weight: 620; line-height: 9px; }
+    .metric strong { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 650 10px/11px "Noto Sans Mono CJK SC", monospace; }
+
+    .map-nodes { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+    .map-node { position: absolute; width: 38px; height: 38px; display: grid; place-items: center; color: var(--muted); border: 1px solid color-mix(in srgb, var(--muted) 36%, transparent); border-radius: 50%; background: color-mix(in srgb, var(--ground-soft) 88%, transparent); box-shadow: 0 0 0 8px color-mix(in srgb, var(--ground) 52%, transparent); font: 680 11px/1 "Noto Sans Mono CJK SC", monospace; }
+    .map-node::after { content: ""; position: absolute; right: -2px; top: 2px; width: 7px; height: 7px; border: 2px solid var(--ground); border-radius: 50%; background: currentColor; }
+    .map-node.live { color: var(--live); border-color: color-mix(in srgb, var(--live) 58%, transparent); }
+    .map-node.idle { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 58%, transparent); }
+    .map-node.offline { color: var(--offline); }
+    .map-node:nth-child(1) { left: 620px; top: 105px; }
+    .map-node:nth-child(2) { left: 862px; top: 118px; }
+    .map-node:nth-child(3) { left: 687px; top: 303px; }
+    .map-node:nth-child(4) { left: 954px; top: 286px; }
+
+    .rail { position: absolute; z-index: 4; left: 34px; top: 24px; width: 500px; }
+    .rail-head { height: 32px; display: flex; align-items: center; justify-content: space-between; }
+    .identity { display: flex; align-items: center; gap: 9px; }
+    .identity svg { width: 17px; height: 17px; color: var(--accent-ink); stroke: currentColor; stroke-width: 1.8; }
+    .brand { font-size: 13px; font-weight: 760; letter-spacing: .13em; }
+    .remote { color: var(--muted); font-size: 11px; font-weight: 550; }
+    .system { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 580; }
+    .system i { width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
+    .section-label { height: 18px; margin-top: 8px; display: flex; align-items: flex-start; justify-content: space-between; color: var(--muted); font-size: 10px; font-weight: 640; }
+    .section-label span:last-child { color: var(--faint); font-weight: 520; }
+    .session-list { display: grid; gap: 2px; }
+    .empty { height: 52px; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+    .session { height: 52px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; padding: 0 11px 0 8px; border-radius: 10px; }
+    .session.current { background: var(--surface-current); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
+    .session-key { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font: 650 10px/1 "Noto Sans Mono CJK SC", monospace; }
+    .session-main { min-width: 0; padding: 0 9px; }
+    .session-title { min-width: 0; display: flex; align-items: center; gap: 6px; }
+    .session-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 670; line-height: 1.12; letter-spacing: -.01em; }
+    .current-label { flex: 0 0 auto; color: var(--accent-ink); font-size: 9px; font-weight: 680; }
+    .session-meta { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; font-weight: 510; }
+    .wechat { color: var(--accent-ink); }
+    .session-state { min-width: 53px; display: flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--idle); font-size: 10px; font-weight: 590; white-space: nowrap; }
+    .session-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .session-state.live { color: var(--live); }
+    .session-state.offline { color: var(--offline); }
+    .tools { height: 36px; margin-top: 9px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .tool { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--muted); }
+    .tool svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 1.8; }
+    .tool code { color: var(--faint); font: 620 9px/1 "Noto Sans Mono CJK SC", monospace; }
+    .tool strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 590; }
+
+    .command-dock {
+      position: absolute;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      top: 390px;
+      bottom: 0;
+      padding: 20px 34px 22px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--ground) 94%, transparent) 0, var(--ground) 12%);
+      border-top: 1px solid var(--line);
+    }
+    .command-kicker { height: 36px; display: flex; align-items: flex-start; justify-content: space-between; color: var(--muted); font-size: 10px; font-weight: 620; }
+    .command-kicker strong { color: var(--ink); font-size: 12px; font-weight: 680; letter-spacing: .025em; }
+    .command-legend { display: flex; align-items: center; gap: 13px; color: var(--faint); font: 540 9px/1 "Noto Sans Mono CJK SC", monospace; }
+    .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-item i { width: 5px; height: 5px; border-radius: 50%; background: var(--live); }
+    .command-grid { height: 312px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .command-group {
+      min-width: 0;
+      padding: 0 11px 12px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 70%, transparent), color-mix(in srgb, var(--ground-soft) 42%, transparent));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 72%, transparent);
+    }
+    .command-head { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 2px; border-bottom: 1px solid var(--line); }
+    .command-head strong { font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
+    .command-head span { min-width: 22px; height: 18px; display: grid; place-items: center; color: var(--faint); border: 1px solid var(--line); border-radius: 999px; font: 600 9px/1 "Noto Sans Mono CJK SC", monospace; }
+    .command-list { min-width: 0; }
+    .command-item { position: relative; height: 42px; min-width: 0; padding: 7px 10px 4px 13px; border-bottom: 1px solid color-mix(in srgb, var(--line) 52%, transparent); }
+    .command-item:last-child { border-bottom: 0; }
+    .command-item::before { content: ""; position: absolute; left: 1px; top: 12px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .command-item.native::before { background: var(--live); }
+    .command-item.adapted::before { background: var(--accent); }
+    .command-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 630; line-height: 13px; }
+    .command-slash { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-ink); font: 590 10px/11px "Noto Sans Mono CJK SC", monospace; }
+
+    body.editorial { --ground: #171310; --ground-soft: #211a16; --surface: rgba(39, 31, 26, .8); --surface-current: rgba(201, 103, 77, .13); --ink: #f3eae2; --muted: #aa9c91; --faint: #6f6259; --line: rgba(243, 234, 226, .09); --grid: rgba(243, 234, 226, .05); --accent: #d77861; --accent-ink: #efa18d; --live: #78c99f; font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; }
+    body.editorial.day { --ground: #f0e9df; --ground-soft: #e7ded2; --surface: rgba(255, 251, 245, .75); --surface-current: rgba(157, 73, 58, .1); --ink: #2b231e; --muted: #75675d; --faint: #a39488; --line: rgba(43, 35, 30, .09); --grid: rgba(43, 35, 30, .055); --accent: #9d493a; --accent-ink: #843a2e; --live: #277656; }
+    body.editorial .rail-head, body.editorial .section-label, body.editorial .session-meta, body.editorial .session-state, body.editorial .tools, body.editorial .current-label { font-family: "Noto Sans CJK SC", sans-serif; }
+    body.noir { --ground: #080706; --ground-soft: #171411; --surface: rgba(29, 26, 21, .8); --surface-current: rgba(184, 145, 76, .13); --ink: #f3ede3; --muted: #a79d8f; --faint: #6c6459; --line: rgba(243, 237, 227, .09); --grid: rgba(243, 237, 227, .05); --accent: #ba9658; --accent-ink: #d5b574; --live: #74c99d; }
+    body.noir.day { --ground: #efebe4; --ground-soft: #e5e0d7; --surface: rgba(255, 252, 246, .75); --surface-current: rgba(128, 102, 56, .1); --ink: #1b1814; --muted: #6e675d; --faint: #9b9387; --line: rgba(27, 24, 20, .09); --grid: rgba(27, 24, 20, .05); --accent: #806638; --accent-ink: #6e552c; --live: #247153; }
+    body.cute { --ground: #161216; --ground-soft: #221a21; --surface: rgba(39, 30, 38, .8); --surface-current: rgba(200, 107, 143, .14); --ink: #f6eef2; --muted: #b4a2ab; --faint: #766770; --line: rgba(246, 238, 242, .09); --grid: rgba(246, 238, 242, .05); --accent: #d682a3; --accent-ink: #efa9c4; --live: #7bca9f; }
+    body.cute.day { --ground: #f5ede8; --ground-soft: #eadfdc; --surface: rgba(255, 251, 248, .76); --surface-current: rgba(167, 79, 112, .1); --ink: #352d31; --muted: #796971; --faint: #a9959e; --line: rgba(53, 45, 49, .08); --grid: rgba(53, 45, 49, .05); --accent: #a74f70; --accent-ink: #8e3e5c; --live: #34765a; }
+    body.minimal { --ground: #0e100f; --ground-soft: #171b19; --surface: rgba(26, 31, 28, .8); --surface-current: rgba(93, 130, 113, .14); --ink: #f0f3f1; --muted: #9ca69f; --faint: #646e68; --line: rgba(240, 243, 241, .08); --grid: rgba(240, 243, 241, .05); --accent: #76998a; --accent-ink: #a8c2b6; --live: #72c99e; }
+    body.minimal.day { --ground: #f1f3f0; --ground-soft: #e6eae6; --surface: rgba(255, 255, 255, .74); --surface-current: rgba(82, 106, 96, .09); --ink: #171a18; --muted: #626b65; --faint: #939b96; --line: rgba(23, 26, 24, .08); --grid: rgba(23, 26, 24, .05); --accent: #526a60; --accent-ink: #42574e; --live: #267552; }
+  </style>
+</head>
+<body class="{{.Theme}} {{.Style}}">
+  <main class="canvas">
+    <svg class="topology" viewBox="0 0 1080 390" aria-hidden="true">
+      <defs>
+        <linearGradient id="threadGradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".08"/><stop offset=".54" stop-color="var(--accent)" stop-opacity=".8"/><stop offset="1" stop-color="var(--live)" stop-opacity=".28"/></linearGradient>
+        <filter id="nodeGlow" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <path class="grid-line" d="M560 0V390M740 0V390M920 0V390M0 130H1080M0 260H1080"/>
+      <ellipse class="orbit" cx="800" cy="210" rx="258" ry="158" transform="rotate(-8 800 210)"/>
+      <ellipse class="orbit-strong" cx="800" cy="210" rx="176" ry="104" transform="rotate(18 800 210)"/>
+      <circle class="orbit" cx="800" cy="210" r="66"/>
+      <path class="thread-soft" d="M526 263C631 80 730 85 800 210S947 383 1060 253"/>
+      <path class="thread-line" d="M510 272C621 69 730 72 800 210S950 398 1067 239"/>
+      <path class="thread-line" d="M593 356C672 326 727 286 800 210S916 85 1040 70" opacity=".5"/>
+      <path class="thread-line" d="M615 49C692 101 741 146 800 210S899 314 1022 354" opacity=".36"/>
+      <circle class="core" cx="800" cy="210" r="27"/>
+      <circle class="core-inner" cx="800" cy="210" r="4"/>
+    </svg>
+    <span class="field-label">THREAD FIELD / LOCAL</span>
+    <span class="coordinate a">APP SERVER / LOCAL<br>THREAD TOPOLOGY</span>
+    <aside class="telemetry" aria-label="全局状态">{{range .Facts}}<div class="metric"><span>{{.Label}}</span><strong>{{.Value}}</strong></div>{{end}}</aside>
+    <div class="map-nodes">{{range .Threads}}<span class="map-node {{.Tone}}">{{.Code}}</span>{{end}}</div>
+
+    <section class="rail">
+      <header class="rail-head">
+        <div class="identity">{{lucide "command"}}<span class="brand">CODEX</span><span class="remote">远程会话</span></div>
+        <span class="system"><i></i>{{.State}}</span>
+      </header>
+      <div class="section-label"><span>最近会话</span><span>回复 1–4 切换</span></div>
+      <div class="session-list">{{if .Threads}}{{range .Threads}}
+        <article class="session{{if .Current}} current{{end}}">
+          <span class="session-key">{{.Code}}</span>
+          <div class="session-main">
+            <div class="session-title"><strong>{{.Title}}</strong>{{if .Current}}<span class="current-label">当前</span>{{end}}</div>
+            <div class="session-meta">{{.Workspace}} · {{.Time}}{{if .Wechat}} · <span class="wechat">{{.Wechat}}</span>{{end}}</div>
+          </div>
+          <div class="session-state {{.Tone}}"><i></i><span>{{.Status}}</span></div>
+        </article>{{end}}{{else}}<div class="empty">暂无可接管的 Codex 会话</div>{{end}}</div>
+      <nav class="tools">{{range .Actions}}<div class="tool"><code>{{.Code}}</code>{{lucide .Icon}}<strong>{{.Label}}</strong></div>{{end}}</nav>
+    </section>
+    <section class="command-dock">
+      <header class="command-kicker"><strong>Codex 功能 · 直接发送斜杠命令</strong><div class="command-legend"><span class="legend-item"><i></i>仅显示 codex-link-clawbot 可操作能力</span></div></header>
+      <div class="command-grid">{{range .Commands}}<section class="command-group"><header class="command-head"><strong>{{.Title}}</strong><span>{{len .Commands}}</span></header><div class="command-list">{{range .Commands}}<div class="command-item {{.Tone}}"><span class="command-label">{{.Label}}</span><code class="command-slash">{{.Command}}</code></div>{{end}}</div></section>{{end}}</div>
+    </section>
+  </main>
+</body>
+</html>{{end}}

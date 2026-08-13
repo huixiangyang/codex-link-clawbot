@@ -19,10 +19,8 @@ func (h *Handler) executeControlAction(ctx context.Context, userID string, optio
 		return h.executeSessionControlAction(ctx, userID, option)
 	case DomainPreference:
 		return h.executePreferenceControlAction(userID, option)
-	case DomainLibrary:
-		return h.executeLibraryControlAction(userID, option)
-	case DomainAutomation:
-		return h.executeAutomationControlAction(ctx, userID, option)
+	case DomainDelivery:
+		return h.executeDeliveryControlAction(userID, option)
 	case DomainSecurity:
 		return h.executeSecurityControlAction(userID, option)
 	default:
@@ -36,28 +34,28 @@ func controlActionDomain(action controlAction) ActionDomain {
 		actionActivityDetail, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
 		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume, actionConfirmQueueClear,
-		actionQueueClear:
+		actionQueueClear, actionVoiceBriefing:
 		return DomainQueue
-	case actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
-		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
-		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit,
-		actionWorkflowEdit, actionConfirmWorkflowDelete, actionWorkflowDelete,
-		actionPromptWorkflowSave, actionWorkflowSave, actionSaveRecentWorkflow:
+	case actionProjectCenter, actionSelectProject:
 		return DomainProject
-	case actionSessionMenu, actionCurrentSession, actionPickSession, actionBrowseSessions,
+	case actionSessionMenu, actionCodexDevelopment, actionCodexCommands, actionCodexCommandPage,
+		actionCodexSlashCommand, actionCodexUsage, actionCodexPermissions, actionCodexGoalStatus,
+		actionCodexGlobalOverview, actionCodexGlobalThreadPage,
+		actionCodexUseGlobalThread, actionCodexAccount, actionCodexModelOverview, actionPromptGlobalSearch,
+		actionCurrentSession, actionPickSession, actionBrowseSessions,
 		actionPromptSessionSearch, actionSessionPage, actionSessionDetail, actionUseSession,
 		actionPromptNewSession, actionPromptRenameSession, actionConfirmArchive,
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem,
 		actionPickArchivedSession, actionRestoreSession, actionForkThread,
 		actionToggleThreadPin, actionCompactThread, actionPromptThreadGoal,
-		actionClearThreadGoal, actionReviewThread, actionCodexCapabilities, actionConfirmDeleteThread,
+		actionClearThreadGoal, actionPauseThreadGoal, actionResumeThreadGoal,
+		actionReviewThread, actionReviewContinue, actionReviewAccept, actionReviewRerun,
+		actionCodexCapabilities, actionConfirmDeleteThread,
 		actionDeleteThread, actionThreadModels, actionSelectThreadModel,
 		actionThreadEfforts, actionSelectThreadEffort:
 		return DomainSession
-	case actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery:
-		return DomainLibrary
-	case actionAutomations, actionAutomation, actionRunAutomation, actionVoiceBriefing:
-		return DomainAutomation
+	case actionDeliveryBox, actionDeliveryPage, actionDeliveryDetail, actionResendDelivery:
+		return DomainDelivery
 	case actionVisualStyles, actionSetVisualStyle, actionResponseModes, actionSetResponseMode:
 		return DomainPreference
 	case actionRemoteLock, actionConfirmRemoteLock:
@@ -69,15 +67,16 @@ func controlActionDomain(action controlAction) ActionDomain {
 
 func controlActionRequiresReceipt(action controlAction) bool {
 	switch action {
-	case actionUseSession, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
+	case actionUseSession, actionCodexUseGlobalThread, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
 		actionForkThread, actionToggleThreadPin, actionCompactThread, actionClearThreadGoal,
-		actionReviewThread, actionDeleteThread, actionSelectThreadModel, actionSelectThreadEffort,
+		actionPauseThreadGoal, actionResumeThreadGoal, actionCodexSlashCommand,
+		actionReviewThread, actionReviewContinue, actionReviewRerun,
+		actionDeleteThread, actionSelectThreadModel, actionSelectThreadEffort,
 		actionCancelTask, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
 		actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionQueuePause, actionQueueResume, actionQueueClear,
-		actionSelectProject, actionRunQuickTask, actionWorkflowCreate, actionWorkflowRename,
-		actionWorkflowEdit, actionWorkflowDelete, actionWorkflowSave, actionResendDelivery, actionRemoteLock,
-		actionVoiceBriefing, actionRunAutomation, actionSetVisualStyle, actionSetResponseMode:
+		actionSelectProject, actionResendDelivery, actionRemoteLock,
+		actionVoiceBriefing, actionSetVisualStyle, actionSetResponseMode:
 		return true
 	default:
 		return false
@@ -102,12 +101,14 @@ func (h *Handler) executeSystemControlAction(ctx context.Context, userID string,
 		text = "已退出菜单。直接发送文字、图片或文件即可交给 Codex。"
 	case actionMain:
 		text = h.openMainMenu(ctx, userID)
+	case actionFunctionDirectory:
+		text = h.openCommandDirectory(ctx, userID)
 	case actionRuntimeInfo:
 		text = h.openRuntimeInfo(userID)
 	case actionNoReplyDiagnostic:
 		text = h.buildNoReplyDiagnostic(userID)
-	case actionFeatureCenter:
-		text = h.openFeatureCenter(userID)
+	case actionResultsDeliveryCenter:
+		text = h.openResultsDeliveryCenter(userID)
 	case actionSettingsCenter:
 		text = h.openSettingsCenter(userID)
 	case actionConfigurationStatus:

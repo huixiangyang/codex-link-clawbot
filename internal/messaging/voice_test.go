@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 func TestVoiceBriefingCallsMiMoTTSContract(t *testing.T) {
@@ -169,10 +169,10 @@ printf 'RIFFxxxxWAVEdata' > "$output"
 }
 
 func TestPiperVoicePipelineLive(t *testing.T) {
-	command := os.Getenv("WECLAW_TEST_PIPER_COMMAND")
-	model := os.Getenv("WECLAW_TEST_PIPER_MODEL")
-	modelConfig := os.Getenv("WECLAW_TEST_PIPER_MODEL_CONFIG")
-	ffmpeg := os.Getenv("WECLAW_TEST_FFMPEG_COMMAND")
+	command := os.Getenv("CODEX_LINK_CLAWBOT_TEST_PIPER_COMMAND")
+	model := os.Getenv("CODEX_LINK_CLAWBOT_TEST_PIPER_MODEL")
+	modelConfig := os.Getenv("CODEX_LINK_CLAWBOT_TEST_PIPER_MODEL_CONFIG")
+	ffmpeg := os.Getenv("CODEX_LINK_CLAWBOT_TEST_FFMPEG_COMMAND")
 	if command == "" || model == "" || modelConfig == "" || ffmpeg == "" {
 		t.Skip("未配置本机 Piper 实测环境")
 	}
@@ -199,13 +199,13 @@ func TestPiperVoicePipelineLive(t *testing.T) {
 }
 
 func TestUploadWeChatAudioFileLive(t *testing.T) {
-	if os.Getenv("WECLAW_TEST_UPLOAD_AUDIO_FILE") != "1" {
+	if os.Getenv("CODEX_LINK_CLAWBOT_TEST_UPLOAD_AUDIO_FILE") != "1" {
 		t.Skip("未启用微信音频文件 CDN 实测")
 	}
-	command := os.Getenv("WECLAW_TEST_PIPER_COMMAND")
-	model := os.Getenv("WECLAW_TEST_PIPER_MODEL")
-	modelConfig := os.Getenv("WECLAW_TEST_PIPER_MODEL_CONFIG")
-	ffmpeg := os.Getenv("WECLAW_TEST_FFMPEG_COMMAND")
+	command := os.Getenv("CODEX_LINK_CLAWBOT_TEST_PIPER_COMMAND")
+	model := os.Getenv("CODEX_LINK_CLAWBOT_TEST_PIPER_MODEL")
+	modelConfig := os.Getenv("CODEX_LINK_CLAWBOT_TEST_PIPER_MODEL_CONFIG")
+	ffmpeg := os.Getenv("CODEX_LINK_CLAWBOT_TEST_FFMPEG_COMMAND")
 	if command == "" || model == "" || modelConfig == "" || ffmpeg == "" {
 		t.Fatal("本机 Piper 实测环境不完整")
 	}
@@ -261,7 +261,7 @@ func TestSendVoiceBriefingRejectsMissingContextToken(t *testing.T) {
 }
 
 func TestVoiceAudioUsesFileProtocol(t *testing.T) {
-	mediaType, itemType := classifyMedia("audio/mpeg", "weclaw-briefing.mp3")
+	mediaType, itemType := classifyMedia("audio/mpeg", "codex-link-clawbot-briefing.mp3")
 	if mediaType != ilink.CDNMediaTypeFile || itemType != ilink.ItemTypeFile {
 		t.Fatalf("audio protocol = media:%d item:%d", mediaType, itemType)
 	}
@@ -329,7 +329,7 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 		t.Fatalf("first message = %#v, want companion image", item)
 	}
 	fileItem := sent[1].Msg.ItemList[0]
-	if fileItem.Type != ilink.ItemTypeFile || fileItem.FileItem == nil || fileItem.FileItem.FileName != "weclaw-briefing.mp3" {
+	if fileItem.Type != ilink.ItemTypeFile || fileItem.FileItem == nil || fileItem.FileItem.FileName != "codex-link-clawbot-briefing.mp3" {
 		t.Fatalf("second message = %#v, want MP3 file", fileItem)
 	}
 	if renderer.renderCalls != 1 || renderer.documentRenderCalls != 0 || len(renderer.documents) != 0 {
@@ -339,10 +339,10 @@ printf 'ID3\004\000\000\000\000\000\000encoded'
 	if card.Title != "语音简报" || card.Footer != "配套 MP3 音频文件随后发送" || card.Variant != visual.VariantSystem {
 		t.Fatalf("companion card = %#v", card)
 	}
-	if len(card.Facts) != 2 || card.Facts[0] != (visual.Fact{Label: "WeClaw 项目入口", Value: "未配置"}) || card.Facts[1] != (visual.Fact{Label: "音频来源", Value: "local"}) {
+	if len(card.Facts) != 2 || card.Facts[0] != (visual.Fact{Label: "Codex 工作空间", Value: "未配置"}) || card.Facts[1] != (visual.Fact{Label: "音频来源", Value: "local"}) {
 		t.Fatalf("companion facts = %#v", card.Facts)
 	}
-	if len(card.Body) != 1 || !strings.Contains(card.Body[0], "WeClaw 工作简报") {
+	if len(card.Body) != 1 || !strings.Contains(card.Body[0], "codex-link-clawbot 工作简报") {
 		t.Fatalf("companion content = %#v", card.Body)
 	}
 }

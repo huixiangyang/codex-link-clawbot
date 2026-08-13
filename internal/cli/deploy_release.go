@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	githubRepo            = "huixiangyang/weclaw"
+	githubRepo            = "huixiangyang/codex-link-clawbot"
 	maxReleaseBinaryBytes = 100 << 20
 	maxChecksumBytes      = 1 << 20
 )
@@ -27,7 +27,7 @@ func downloadReleaseFile(url string, maxBytes int64, executable bool) (string, e
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d", response.StatusCode)
 	}
-	temporary, err := os.CreateTemp("", "weclaw-deploy-download-*")
+	temporary, err := os.CreateTemp("", "codex-link-clawbot-deploy-download-*")
 	if err != nil {
 		return "", err
 	}

@@ -17,7 +17,7 @@ func TestDefaultIntentRegistryResolvesUniqueActions(t *testing.T) {
 	}{
 		{text: "状态？", wantID: IntentTaskStatus},
 		{text: "请求队列", wantID: IntentTaskCenter},
-		{text: "切换项目：weclaw", wantID: IntentProjectSelect, argument: "：weclaw"},
+		{text: "切换项目：codex-link-clawbot", wantID: IntentProjectSelect, argument: "：codex-link-clawbot"},
 		{text: "切换线程 登录排障", wantID: IntentSessionSelect, argument: "登录排障"},
 		{text: "搜索线程", wantID: IntentSessionSearch},
 		{text: "恢复线程 登录", wantID: IntentSessionRestore, argument: "登录"},

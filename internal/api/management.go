@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
 )
 
 const ManagementSocketName = "control.sock"
@@ -26,7 +26,16 @@ type DeploymentNotice struct {
 	Service     string `json:"service"`
 }
 
-type DeploymentNotifier func(context.Context, DeploymentNotice) error
+const (
+	DeploymentNotificationSent     = "sent"
+	DeploymentNotificationDeferred = "deferred"
+)
+
+type DeploymentNotificationResult struct {
+	Status string `json:"status"`
+}
+
+type DeploymentNotifier func(context.Context, DeploymentNotice) (DeploymentNotificationResult, error)
 
 // ManagementServer 只通过本机 Unix socket 暴露生命周期控制面。
 type ManagementServer struct {
@@ -121,11 +130,17 @@ func (s *ManagementServer) handleDeploymentNotification(w http.ResponseWriter, r
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.notifier(request.Context(), notice); err != nil {
+	result, err := s.notifier(request.Context(), notice)
+	if err != nil {
 		http.Error(w, "deployment notification failed", http.StatusBadGateway)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if result.Status != DeploymentNotificationSent && result.Status != DeploymentNotificationDeferred {
+		http.Error(w, "deployment notification returned invalid status", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func validateDeploymentNotice(notice DeploymentNotice) error {

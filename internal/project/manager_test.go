@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
 )
 
 func TestManagerPersistsProjectSelection(t *testing.T) {

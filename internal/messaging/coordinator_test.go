@@ -5,15 +5,88 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/huixiangyang/weclaw/internal/config"
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/preference"
-	"github.com/huixiangyang/weclaw/internal/project"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/project"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
+
+type acknowledgementOrderAgent struct {
+	*handlerThreadClient
+	called chan struct{}
+	once   sync.Once
+}
+
+func (agent *acknowledgementOrderAgent) ChatThread(_ context.Context, _ string, _ codex.ChatRequest) (string, error) {
+	agent.once.Do(func() { close(agent.called) })
+	return "执行完成", nil
+}
+
+func TestCoordinatorWaitsForQueueAcknowledgementBeforeExecution(t *testing.T) {
+	acknowledgementStarted := make(chan struct{})
+	acknowledgementRelease := make(chan struct{})
+	var sendCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ilink/bot/sendmessage" {
+			http.NotFound(w, r)
+			return
+		}
+		if sendCount.Add(1) == 1 {
+			close(acknowledgementStarted)
+			<-acknowledgementRelease
+		}
+		_, _ = w.Write([]byte(`{"ret":0}`))
+	}))
+	defer server.Close()
+
+	client := ilink.NewClient(&ilink.Credentials{
+		BotToken: "token", ILinkBotID: "bot", ILinkUserID: "owner", BaseURL: server.URL,
+	})
+	agent := &acknowledgementOrderAgent{handlerThreadClient: newHandlerThreadClient(), called: make(chan struct{})}
+	handler := NewHandler(agent)
+	attachTestSessionManager(t, handler)
+	handler.SetProgressConfig(ProgressConfig{Enabled: false})
+	store, stop := attachTestTaskQueue(t, handler, client, "owner")
+	defer stop()
+
+	handleErr := make(chan error, 1)
+	go func() {
+		handleErr <- handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
+			MessageID: 92, FromUserID: "owner", ToUserID: "bot",
+			MessageType: ilink.MessageTypeUser, MessageState: ilink.MessageStateFinish, ContextToken: "context",
+			ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "检查发送顺序"}}},
+		})
+	}()
+
+	select {
+	case <-acknowledgementStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queue acknowledgement did not start")
+	}
+	select {
+	case <-agent.called:
+		t.Fatal("Codex started before the queue acknowledgement completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(acknowledgementRelease)
+	if err := <-handleErr; err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminalTask(t, store, "owner")
+	select {
+	case <-agent.called:
+	default:
+		t.Fatal("Codex did not start after the queue acknowledgement completed")
+	}
+}
 
 func TestQueuedTaskKeepsProjectSessionAndPreferenceSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
 )
 
 func (h *Handler) latestSuccessfulTask(userID string, requireReusable bool) (taskqueue.Task, bool) {
@@ -32,7 +32,7 @@ func (h *Handler) latestSuccessfulTask(userID string, requireReusable bool) (tas
 
 func (h *Handler) requestSuccessfulTaskRerun(userID, taskID string, newThread bool) ActionResult {
 	if h.tasks == nil {
-		return newActionResult(string(actionTaskRerun), DomainQueue, "WeClaw 请求队列当前不可用。")
+		return newActionResult(string(actionTaskRerun), DomainQueue, "codex-link-clawbot 请求队列当前不可用。")
 	}
 	task, exists := h.tasks.Find(userID, taskID)
 	if !exists || task.State != taskqueue.StateSucceeded || task.ThreadID == "" {
@@ -59,7 +59,7 @@ func (h *Handler) continueTaskSession(ctx context.Context, userID, taskID string
 		return "这条执行记录已经不能继续。发送“请求队列”刷新。"
 	}
 	if _, exists := h.projects.Get(task.ProjectID); !exists {
-		return "执行记录所属的 WeClaw 项目入口已经不可用，未切换到其他目录。"
+		return "执行记录所属的 Codex 工作空间已经不可用，未切换到其他目录。"
 	}
 	if page <= 0 {
 		page = 1
@@ -73,7 +73,7 @@ func (h *Handler) continueTaskSession(ctx context.Context, userID, taskID string
 		projectChanged := previousProject.ID != task.ProjectID
 		if projectChanged {
 			if _, err := h.projects.Select(userID, task.ProjectID); err != nil {
-				return "执行记录所属的 WeClaw 项目入口切换失败，当前入口未改变。"
+				return "执行记录所属的 Codex 工作空间切换失败，当前工作空间未改变。"
 			}
 		}
 		thread, err := h.sessions.Use(ctx, userID, threadAgent, task.ThreadID)
@@ -81,21 +81,21 @@ func (h *Handler) continueTaskSession(ctx context.Context, userID, taskID string
 			if projectChanged {
 				if _, rollbackErr := h.projects.Select(userID, previousProject.ID); rollbackErr != nil {
 					log.Printf("[task] failed to restore project after session error for %s", ilink.LogLabel(userID))
-					return "执行记录关联的 Codex 线程无法恢复，WeClaw 项目入口也未能自动还原。请发送“项目”检查当前状态。"
+					return "执行记录关联的 Codex 线程无法恢复，Codex 工作空间也未能自动还原。请发送“项目”检查当前状态。"
 				}
 			}
-			return "执行记录关联的 Codex 线程已经不可用，WeClaw 项目入口未改变。"
+			return "执行记录关联的 Codex 线程已经不可用，Codex 工作空间未改变。"
 		}
 		log.Printf("[task] continued task=%s project=%s for %s", shortTaskID(task.ID), task.ProjectID, ilink.LogLabel(userID))
 		options := []controlOption{
-			{Label: "查看当前线程", Action: actionCurrentSession},
+			{Label: "查看当前线程 · /status", Action: actionCurrentSession},
 			{Label: "返回执行记录", Action: actionActivityDetail, Value: task.ID, Page: page},
-			{Label: "WeClaw 请求队列", Action: actionActivityPage, Page: page},
+			{Label: "codex-link-clawbot 请求队列", Action: actionActivityPage, Page: page},
 		}
 		prompt := strings.Join([]string{
 			"已回到执行记录关联的 Codex 线程",
 			"",
-			"WeClaw 项目入口：" + task.ProjectID,
+			"Codex 工作空间：" + task.ProjectID,
 			"线程：" + threadTitle(thread),
 			"",
 			"下一条普通消息会继续这个线程。",

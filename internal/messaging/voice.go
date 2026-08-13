@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/ilink"
-	"github.com/huixiangyang/weclaw/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const (
@@ -178,9 +178,9 @@ func (b *boundedVoiceOutputBuffer) Write(data []byte) (int, error) {
 
 func (h *Handler) requestVoiceBriefing(userID string) ActionResult {
 	if h.voice == nil {
-		return newActionResult(string(actionVoiceBriefing), DomainAutomation, "语音简报未启用。需要配置语音提供商。")
+		return newActionResult(string(actionVoiceBriefing), DomainQueue, "语音简报未启用。需要配置语音提供商。")
 	}
-	return effectActionResult(string(actionVoiceBriefing), DomainAutomation, "正在生成语音简报。", EffectVoiceBriefing, "")
+	return effectActionResult(string(actionVoiceBriefing), DomainQueue, "正在生成语音简报。", EffectVoiceBriefing, "")
 }
 
 func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) (string, error) {
@@ -191,7 +191,7 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 	if h.projects != nil {
 		projectName = h.projects.Current(userID).Name
 	}
-	parts := []string{"WeClaw 工作简报。当前项目入口：" + projectName + "。"}
+	parts := []string{"codex-link-clawbot 工作简报。当前项目入口：" + projectName + "。"}
 	if h.tasks == nil || len(h.tasks.List(userID)) == 0 {
 		parts = append(parts, "目前还没有已完成请求。")
 	} else {
@@ -199,7 +199,7 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 		if len(tasks) > 3 {
 			tasks = tasks[:3]
 		}
-		parts = append(parts, fmt.Sprintf("最近有 %d 条 WeClaw 执行记录。", len(tasks)))
+		parts = append(parts, fmt.Sprintf("最近有 %d 条 codex-link-clawbot 执行记录。", len(tasks)))
 		for index, task := range tasks {
 			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, task.Summary, taskStateText(task.State)))
 		}
@@ -228,7 +228,7 @@ func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, u
 	}
 	if err := sendMediaBatch(ctx, client, userID, contextToken, []outboundMediaPayload{
 		cardPayload,
-		{FileName: "weclaw-briefing.mp3", Source: "weclaw-briefing.mp3", Data: mp3, ContentType: "audio/mpeg"},
+		{FileName: "codex-link-clawbot-briefing.mp3", Source: "codex-link-clawbot-briefing.mp3", Data: mp3, ContentType: "audio/mpeg"},
 	}); err != nil {
 		return "", err
 	}
@@ -247,7 +247,7 @@ func (h *Handler) renderVoiceCompanionCard(ctx context.Context, userID, projectN
 		Style:   h.currentVisualStyle(userID),
 		Title:   "语音简报",
 		Facts: []visual.Fact{
-			{Label: "WeClaw 项目入口", Value: projectName},
+			{Label: "Codex 工作空间", Value: projectName},
 			{Label: "音频来源", Value: providerID},
 		},
 		Body:   []string{script},

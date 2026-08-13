@@ -3,8 +3,6 @@ package messaging
 import (
 	"fmt"
 	"strings"
-
-	"github.com/huixiangyang/weclaw/internal/workflow"
 )
 
 type ActionDomain string
@@ -15,14 +13,13 @@ const (
 	DomainProject    ActionDomain = "project"
 	DomainSession    ActionDomain = "thread"
 	DomainPreference ActionDomain = "preference"
-	DomainLibrary    ActionDomain = "library"
-	DomainAutomation ActionDomain = "automation"
+	DomainDelivery   ActionDomain = "delivery"
 	DomainSecurity   ActionDomain = "security"
 )
 
 func (domain ActionDomain) valid() bool {
 	switch domain {
-	case DomainSystem, DomainQueue, DomainProject, DomainSession, DomainPreference, DomainLibrary, DomainAutomation, DomainSecurity:
+	case DomainSystem, DomainQueue, DomainProject, DomainSession, DomainPreference, DomainDelivery, DomainSecurity:
 		return true
 	default:
 		return false
@@ -51,12 +48,11 @@ type ActionEffect struct {
 // ActionResult 是控制器与微信投递层之间的唯一结果类型。
 // Value 只在进程内传递，不能直接进入卡片、日志或持久菜单。
 type ActionResult struct {
-	ActionID         string
-	Domain           ActionDomain
-	Text             string
-	Effect           ActionEffect
-	rollback         *controlReceiptRollback
-	workflowRollback *workflow.SubmissionRollback
+	ActionID string
+	Domain   ActionDomain
+	Text     string
+	Effect   ActionEffect
+	rollback *controlReceiptRollback
 }
 
 type controlReceiptRollback struct {
@@ -86,9 +82,6 @@ func (result ActionResult) validate() error {
 	}
 	if result.rollback != nil && result.Effect.Kind != EffectEnqueuePrompt && result.Effect.Kind != EffectRetryTask {
 		return fmt.Errorf("control receipt rollback is not allowed for this effect")
-	}
-	if result.workflowRollback != nil && result.Effect.Kind != EffectEnqueuePrompt {
-		return fmt.Errorf("workflow rollback is not allowed for this effect")
 	}
 	if result.Effect.ProjectID != "" && (result.Effect.Kind != EffectEnqueuePrompt || !validEffectProjectID(result.Effect.ProjectID)) {
 		return fmt.Errorf("action effect project is invalid")
@@ -148,11 +141,6 @@ func (result ActionResult) withReservedReceiptRollback(ownerID, sourceKey string
 	result.rollback = &controlReceiptRollback{
 		OwnerID: ownerID, SourceKey: sourceKey, ActionID: result.ActionID, Domain: result.Domain,
 	}
-	return result
-}
-
-func (result ActionResult) withWorkflowRollback(rollback *workflow.SubmissionRollback) ActionResult {
-	result.workflowRollback = rollback
 	return result
 }
 

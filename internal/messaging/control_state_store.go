@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/weclaw/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
 const (
-	controlStateVersion  = 5
+	controlStateVersion  = 13
 	controlStateMaxBytes = 256 << 10
 	controlStateMaxOwner = 64
 	controlStateMaxItems = 48
@@ -27,48 +27,44 @@ const (
 type controlView string
 
 const (
-	viewSystemMain          controlView = "system.main"
-	viewSystemRuntime       controlView = "system.runtime"
-	viewSystemFeatures      controlView = "system.features"
-	viewSystemSettings      controlView = "system.settings"
-	viewSystemDiagnostics   controlView = "system.diagnostics"
-	viewSystemGuide         controlView = "system.guide"
-	viewTaskStatus          controlView = "queue.status"
-	viewTaskCancelConfirm   controlView = "queue.cancel_confirm"
-	viewTaskCenter          controlView = "queue.center"
-	viewTaskDetail          controlView = "queue.detail"
-	viewTaskResult          controlView = "queue.result"
-	viewTaskClearConfirm    controlView = "queue.clear_confirm"
-	viewProjectCenter       controlView = "project.center"
-	viewProjectQuickTasks   controlView = "project.quick_tasks"
-	viewProjectQuickRun     controlView = "project.quick_run"
-	viewWorkflowDetail      controlView = "project.workflow_detail"
-	viewWorkflowCreate      controlView = "project.workflow_create"
-	viewWorkflowRename      controlView = "project.workflow_rename"
-	viewWorkflowEdit        controlView = "project.workflow_edit"
-	viewWorkflowDelete      controlView = "project.workflow_delete"
-	viewWorkflowSave        controlView = "project.workflow_save"
-	viewWorkflowResult      controlView = "project.workflow_result"
-	viewProjectResult       controlView = "project.result"
-	viewSessionCenter       controlView = "thread.center"
-	viewSessionCurrent      controlView = "thread.current"
-	viewSessionList         controlView = "thread.list"
-	viewSessionDetail       controlView = "thread.detail"
-	viewSessionSearchInput  controlView = "thread.search_input"
-	viewSessionNewInput     controlView = "thread.new_input"
-	viewSessionRenameInput  controlView = "thread.rename_input"
-	viewSessionArchive      controlView = "thread.archive_confirm"
-	viewSessionResult       controlView = "thread.result"
-	viewPreferenceResponse  controlView = "preference.response"
-	viewPreferenceVisual    controlView = "preference.visual"
-	viewLibraryCenter       controlView = "library.center"
-	viewLibraryPage         controlView = "library.page"
-	viewLibraryDetail       controlView = "library.detail"
-	viewLibraryResult       controlView = "library.result"
-	viewAutomationCenter    controlView = "automation.center"
-	viewAutomationDetail    controlView = "automation.detail"
-	viewAutomationResult    controlView = "automation.result"
-	viewSecurityLockConfirm controlView = "security.lock_confirm"
+	viewSystemMain           controlView = "system.main"
+	viewSystemRuntime        controlView = "system.runtime"
+	viewSystemResults        controlView = "system.results"
+	viewSystemSettings       controlView = "system.settings"
+	viewSystemDiagnostics    controlView = "system.diagnostics"
+	viewSystemGuide          controlView = "system.guide"
+	viewTaskStatus           controlView = "queue.status"
+	viewTaskCancelConfirm    controlView = "queue.cancel_confirm"
+	viewTaskCenter           controlView = "queue.center"
+	viewTaskDetail           controlView = "queue.detail"
+	viewTaskResult           controlView = "queue.result"
+	viewTaskClearConfirm     controlView = "queue.clear_confirm"
+	viewProjectCenter        controlView = "project.center"
+	viewProjectResult        controlView = "project.result"
+	viewSessionCenter        controlView = "thread.center"
+	viewSessionCommands      controlView = "thread.commands"
+	viewSessionCommandPage   controlView = "thread.command_page"
+	viewSessionCommandDetail controlView = "thread.command_detail"
+	viewCodexGlobalOverview  controlView = "codex.global_overview"
+	viewCodexGlobalThreads   controlView = "codex.global_threads"
+	viewCodexGlobalSearch    controlView = "codex.global_search"
+	viewCodexAccount         controlView = "codex.account"
+	viewCodexModelOverview   controlView = "codex.model_overview"
+	viewSessionCurrent       controlView = "thread.current"
+	viewSessionList          controlView = "thread.list"
+	viewSessionDetail        controlView = "thread.detail"
+	viewSessionSearchInput   controlView = "thread.search_input"
+	viewSessionNewInput      controlView = "thread.new_input"
+	viewSessionRenameInput   controlView = "thread.rename_input"
+	viewSessionArchive       controlView = "thread.archive_confirm"
+	viewSessionReview        controlView = "thread.review"
+	viewSessionResult        controlView = "thread.result"
+	viewPreferenceResponse   controlView = "preference.response"
+	viewPreferenceVisual     controlView = "preference.visual"
+	viewDeliveryPage         controlView = "delivery.page"
+	viewDeliveryDetail       controlView = "delivery.detail"
+	viewDeliveryResult       controlView = "delivery.result"
+	viewSecurityLockConfirm  controlView = "security.lock_confirm"
 )
 
 type controlNavigation string
@@ -135,7 +131,7 @@ func NewControlStateStore(path string) (*ControlStateStore, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve control state path: %w", err)
 		}
-		path = filepath.Join(home, ".weclaw", "control-state.json")
+		path = filepath.Join(home, ".codex-link-clawbot", "control-state.json")
 	}
 	store := &ControlStateStore{
 		path: filepath.Clean(path), now: time.Now,
@@ -305,7 +301,7 @@ func controlReceiptCanRetryEffect(actionID string) bool {
 		return true
 	}
 	switch controlAction(actionID) {
-	case actionRunQuickTask, actionTaskRetry, actionTaskRerun, actionTaskRerunNewSession:
+	case actionTaskRetry, actionTaskRerun, actionTaskRerunNewSession, actionReviewContinue:
 		return true
 	default:
 		return false
@@ -596,7 +592,7 @@ func validControlReceiptIdentity(value string, domain ActionDomain) bool {
 	case IntentResponseVoice, IntentResponseAdaptive, IntentResponseReading, IntentVisualStyle:
 		return domain == DomainPreference
 	case IntentVoiceBriefing:
-		return domain == DomainAutomation
+		return domain == DomainQueue
 	case IntentRemoteLock:
 		return domain == DomainSecurity
 	default:
@@ -614,12 +610,17 @@ func cloneControlReceipts(source map[string]persistedControlReceipt) map[string]
 
 func (action controlAction) valid() bool {
 	switch action {
-	case actionExit, actionMain, actionSessionMenu, actionCurrentSession, actionPickSession,
+	case actionExit, actionMain, actionFunctionDirectory, actionSessionMenu, actionCodexDevelopment, actionCodexCommands,
+		actionCodexCommandPage, actionCodexSlashCommand, actionCodexUsage, actionCodexPermissions, actionCodexGoalStatus,
+		actionCodexGlobalOverview, actionCodexGlobalThreadPage,
+		actionCodexUseGlobalThread, actionCodexAccount, actionCodexModelOverview, actionPromptGlobalSearch,
+		actionCurrentSession, actionPickSession,
 		actionBrowseSessions, actionPromptSessionSearch, actionSessionPage, actionSessionDetail,
 		actionUseSession, actionPromptNewSession, actionPromptRenameSession, actionConfirmArchive,
 		actionArchiveCurrent, actionConfirmArchiveItem, actionArchiveItem, actionPickArchivedSession,
 		actionRestoreSession, actionForkThread, actionToggleThreadPin, actionCompactThread,
-		actionPromptThreadGoal, actionClearThreadGoal, actionReviewThread, actionCodexCapabilities,
+		actionPromptThreadGoal, actionClearThreadGoal, actionPauseThreadGoal, actionResumeThreadGoal,
+		actionReviewThread, actionReviewContinue, actionReviewAccept, actionReviewRerun, actionCodexCapabilities,
 		actionConfirmDeleteThread, actionDeleteThread, actionThreadModels,
 		actionSelectThreadModel, actionThreadEfforts, actionSelectThreadEffort,
 		actionTaskStatus, actionConfirmCancelTask, actionCancelTask,
@@ -627,15 +628,11 @@ func (action controlAction) valid() bool {
 		actionTaskRetry, actionTaskContinueSession, actionTaskRerun, actionTaskRerunNewSession,
 		actionTaskFrozenText, actionRecentResult, actionQueuePause, actionQueueResume,
 		actionConfirmQueueClear, actionQueueClear, actionRuntimeInfo, actionNoReplyDiagnostic,
-		actionFeatureCenter, actionSettingsCenter, actionConfigurationStatus, actionDiagnosticsCenter,
-		actionProjectCenter, actionSelectProject, actionProjectQuickTasks, actionRunQuickTask,
-		actionWorkflowDetail, actionPromptWorkflowCreate, actionWorkflowCreate,
-		actionPromptWorkflowRename, actionWorkflowRename, actionPromptWorkflowEdit, actionWorkflowEdit,
-		actionConfirmWorkflowDelete, actionWorkflowDelete,
-		actionPromptWorkflowSave, actionWorkflowSave, actionSaveRecentWorkflow,
-		actionLibraryCenter, actionLibraryPage, actionLibraryDetail, actionResendDelivery,
-		actionRemoteLock, actionConfirmRemoteLock, actionVoiceBriefing, actionAutomations, actionAutomation,
-		actionRunAutomation, actionVisualStyles, actionSetVisualStyle, actionResponseModes,
+		actionResultsDeliveryCenter, actionSettingsCenter, actionConfigurationStatus, actionDiagnosticsCenter,
+		actionProjectCenter, actionSelectProject,
+		actionDeliveryBox, actionDeliveryPage, actionDeliveryDetail, actionResendDelivery,
+		actionRemoteLock, actionConfirmRemoteLock, actionVoiceBriefing,
+		actionVisualStyles, actionSetVisualStyle, actionResponseModes,
 		actionSetResponseMode, actionGuide:
 		return true
 	default:

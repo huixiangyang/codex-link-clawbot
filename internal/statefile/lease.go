@@ -28,7 +28,7 @@ func DefaultRoot() (string, error) {
 	if err != nil {
 		return "", wrapSystem("resolve root", "", err)
 	}
-	return filepath.Join(home, ".weclaw"), nil
+	return filepath.Join(home, ".codex-link-clawbot"), nil
 }
 
 func Acquire(root string, mode LeaseMode) (*Lease, error) {

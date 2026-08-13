@@ -5,8 +5,38 @@ import "context"
 func (h *Handler) executeSessionControlAction(ctx context.Context, userID string, option controlOption) ActionResult {
 	var text string
 	switch option.Action {
+	case actionCodexGlobalOverview:
+		text = h.openCodexGlobalOverview(ctx, userID)
+	case actionCodexGlobalThreadPage:
+		text = h.openCodexGlobalThreadPage(ctx, userID, option.Archived, option.AutoUse, option.Query, option.Page)
+	case actionCodexUseGlobalThread:
+		if h.hasActiveTask(userID) {
+			text = mutationBusyText()
+		} else {
+			text = h.useCodexGlobalThread(ctx, userID, option.Query, option.Value)
+		}
+	case actionCodexAccount:
+		text = h.openCodexAccount(ctx, userID)
+	case actionCodexModelOverview:
+		text = h.openCodexModelOverview(ctx, userID)
+	case actionPromptGlobalSearch:
+		text = h.promptCodexGlobalSearch(userID)
 	case actionSessionMenu:
 		text = h.openSessionMenu(ctx, userID)
+	case actionCodexDevelopment:
+		text = h.openCodexDevelopmentCenter(ctx, userID)
+	case actionCodexCommands:
+		text = h.openCodexCommandCenter(userID)
+	case actionCodexCommandPage:
+		text = h.openCodexCommandPage(userID, option.Query, option.Page)
+	case actionCodexSlashCommand:
+		return h.executeCodexSlashOption(ctx, userID, option)
+	case actionCodexUsage:
+		text = h.openCodexUsage(ctx, userID)
+	case actionCodexPermissions:
+		text = h.openCodexPermissions(userID)
+	case actionCodexGoalStatus:
+		text = h.openCurrentThreadGoal(ctx, userID)
 	case actionCurrentSession:
 		text = h.currentSessionDetail(ctx, userID)
 	case actionPickSession:
@@ -87,11 +117,25 @@ func (h *Handler) executeSessionControlAction(ctx context.Context, userID string
 		text = h.promptCurrentThreadGoal(userID)
 	case actionClearThreadGoal:
 		text = h.clearCurrentThreadGoal(ctx, userID)
+	case actionPauseThreadGoal:
+		text = h.updateCurrentThreadGoalStatus(ctx, userID, "paused")
+	case actionResumeThreadGoal:
+		text = h.updateCurrentThreadGoalStatus(ctx, userID, "active")
 	case actionReviewThread:
 		if h.hasActiveTask(userID) {
 			text = mutationBusyText()
 		} else {
 			text = h.reviewCurrentThread(ctx, userID)
+		}
+	case actionReviewContinue:
+		return h.continueReviewTarget(userID, option.Query, option.Value)
+	case actionReviewAccept:
+		text = h.acceptReviewTarget(userID, option.Query, option.Value)
+	case actionReviewRerun:
+		if h.hasActiveTask(userID) {
+			text = mutationBusyText()
+		} else {
+			text = h.reviewFrozenThread(ctx, userID, option.Query, option.Value)
 		}
 	case actionCodexCapabilities:
 		text = h.openCodexCapabilities(ctx, userID)
@@ -121,18 +165,18 @@ func (h *Handler) dispatchSessionIntent(ctx context.Context, userID string, reso
 	var text string
 	switch resolved.Definition.ID {
 	case IntentSessionCenter:
-		text = h.openSessionMenu(ctx, userID)
+		text = h.openCodexGlobalOverview(ctx, userID)
 	case IntentSessionSelect:
 		if argument == "" {
-			text = h.openSessionBrowser(ctx, userID, false, "")
+			text = h.openCodexGlobalThreadPage(ctx, userID, false, false, "", 1)
 		} else {
-			text = h.openSessionPicker(ctx, userID, false, argument)
+			text = h.openCodexGlobalThreadPage(ctx, userID, false, false, argument, 1)
 		}
 	case IntentSessionSearch:
 		if argument == "" {
-			text = h.promptSessionSearch(userID)
+			text = h.promptCodexGlobalSearch(userID)
 		} else {
-			text = h.openSessionBrowser(ctx, userID, false, argument)
+			text = h.openCodexGlobalThreadPage(ctx, userID, false, false, argument, 1)
 		}
 	case IntentSessionCurrent:
 		text = h.currentSessionDetail(ctx, userID)

@@ -79,13 +79,13 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           go build -trimpath \
-            -ldflags="-s -w -X github.com/huixiangyang/weclaw/internal/cli.Version=${GITHUB_REF_NAME}" \
-            -o weclaw_linux_${GOARCH} ./cmd/weclaw
+            -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${GITHUB_REF_NAME}" \
+            -o codex-link-clawbot_linux_${GOARCH} ./cmd/codex-link-clawbot
 
       - uses: actions/upload-artifact@v4
         with:
-          name: weclaw_linux_${{ matrix.goarch }}
-          path: weclaw_linux_${{ matrix.goarch }}
+          name: codex-link-clawbot_linux_${{ matrix.goarch }}
+          path: codex-link-clawbot_linux_${{ matrix.goarch }}
           if-no-files-found: error
 
   release:
@@ -113,7 +113,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum weclaw_* > checksums.txt
+        run: sha256sum codex-link-clawbot_* > checksums.txt
 
       - name: Create immutable release
         uses: softprops/action-gh-release@v2
@@ -123,5 +123,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/weclaw_*
+            dist/codex-link-clawbot_*
             dist/checksums.txt

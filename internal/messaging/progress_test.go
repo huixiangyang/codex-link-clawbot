@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huixiangyang/weclaw/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
 )
 
 func TestFormatProgressEventPlan(t *testing.T) {
@@ -24,11 +24,18 @@ func TestFormatProgressEventTruncatesByRune(t *testing.T) {
 		Kind: codex.ProgressCommentary,
 		Text: strings.Repeat("测", 500),
 	})
-	if len([]rune(got)) != len([]rune("进度："))+421 {
+	if len([]rune(got)) != len([]rune("进度："))+420 {
 		t.Fatalf("progress length = %d", len([]rune(got)))
 	}
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("progress should end with ellipsis: %q", got)
+	}
+}
+
+func TestTruncateRunesIncludesEllipsisWithinLimit(t *testing.T) {
+	got := truncateRunes(strings.Repeat("测", 200), 120)
+	if len([]rune(got)) != 120 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncated stage length=%d value=%q", len([]rune(got)), got)
 	}
 }
 
