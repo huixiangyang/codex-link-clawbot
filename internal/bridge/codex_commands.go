@@ -84,6 +84,16 @@ func codexCommandCount() int {
 	return len(codexCommandCatalog)
 }
 
+func codexCommandByLabel(label string) *codexCommandDefinition {
+	label = strings.TrimSpace(label)
+	for commandIndex := range codexCommandCatalog {
+		if codexCommandCatalog[commandIndex].Label == label {
+			return &codexCommandCatalog[commandIndex]
+		}
+	}
+	return nil
+}
+
 func (h *Handler) openCodexCommandCenter(userID string) string {
 	options := make([]controlOption, 0, len(codexCommandCategories()))
 	for _, category := range codexCommandCategories() {

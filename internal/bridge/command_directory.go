@@ -142,7 +142,7 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 			{Label: "微信队列", Value: queueState},
 		},
 		Target: target, Threads: threads, Actions: actions, Controls: workbenchNumberedControlGroups(directGroups),
-		Footer: "回复数字编号操作 · 普通内容进入当前目标 · 首页 5 分钟内有效",
+		Footer: "回复数字编号操作 · /command 仅作功能对照 · 首页 5 分钟内有效",
 	}
 	return controlPage{Text: text, visual: &actionVisual{Workbench: model}}
 }
@@ -384,6 +384,9 @@ func (h *Handler) buildCommandDirectory(ctx context.Context, userID string) cont
 		viewSection := visual.DirectorySection{Code: section.Code, Title: section.Title, Icon: icons[section.Code]}
 		for _, item := range section.Items {
 			label, meta := splitDirectoryLabel(item.Label)
+			if reference := codexCommandReferenceForAction(item.Action); reference != "" {
+				meta = reference + " · 仅作功能对照"
+			}
 			viewSection.Items = append(viewSection.Items, visual.DirectoryItem{Code: item.Code, Label: label, Meta: meta})
 		}
 		directorySections = append(directorySections, viewSection)
@@ -395,7 +398,7 @@ func (h *Handler) buildCommandDirectory(ctx context.Context, userID string) cont
 			{Label: "目标线程", Value: currentSession},
 			{Label: "codex-link-clawbot 执行", Value: taskState},
 		},
-		Sections: directorySections, Footer: "回复数字编号 · 0 返回全局工作台 · 目录 30 分钟内有效",
+		Sections: directorySections, Footer: "回复数字编号 · /command 仅作功能对照 · 0 返回全局工作台",
 	}
 	return controlPage{Text: text, visual: &actionVisual{Directory: model}}
 }

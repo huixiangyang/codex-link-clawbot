@@ -82,6 +82,7 @@ func (h *Handler) sendControlVisualReply(ctx context.Context, client *ilink.Clie
 	}
 	if !dedicated {
 		card := controlCardFromText(reply)
+		decorateCodexCommandCard(reply, &card)
 		card.Style = style
 		artifact, err = h.visual.Render(ctx, card)
 	}
@@ -120,12 +121,53 @@ func workbenchNumberedControlGroups(source []workbenchDirectGroup) []visual.Work
 		for _, option := range sourceGroup.Options {
 			label, _ := splitDirectoryLabel(option.Label)
 			group.Controls = append(group.Controls, visual.WorkbenchControl{
-				Code: option.Code, Label: label, Tone: sourceGroup.Tone,
+				Code: option.Code, Label: label, Reference: codexCommandReferenceForAction(option.Action), Tone: sourceGroup.Tone,
 			})
 		}
 		groups = append(groups, group)
 	}
 	return groups
+}
+
+// codexCommandReferenceForAction 只为图片补充 Codex 命令对照，不参与微信输入解析。
+func codexCommandReferenceForAction(action controlAction) string {
+	switch action {
+	case actionCodexGlobalThreadPage:
+		return "/resume"
+	case actionCodexAccount:
+		return "/usage"
+	case actionCurrentSession:
+		return "/status"
+	case actionCodexModelOverview:
+		return "/model · /permissions"
+	case actionCodexCapabilities:
+		return "/skills · /mcp"
+	case actionCodexCommands:
+		return "/clear … /mcp"
+	case actionPromptNewSession:
+		return "/new"
+	case actionReviewThread:
+		return "/review"
+	case actionResultsDeliveryCenter:
+		return "/copy"
+	default:
+		return ""
+	}
+}
+
+// decorateCodexCommandCard 让命令只出现在视觉卡片；文字降级仍保持纯数字提示。
+func decorateCodexCommandCard(reply string, card *visual.Card) {
+	if card == nil || !strings.HasPrefix(strings.TrimSpace(reply), "Codex 操作 · ") {
+		return
+	}
+	for index := range card.Options {
+		command := codexCommandByLabel(card.Options[index].Label)
+		if command == nil {
+			continue
+		}
+		card.Options[index].DisplayLabel = card.Options[index].Label
+		card.Options[index].Meta = "/" + command.Name + " · 仅作功能对照"
+	}
 }
 
 func workbenchWechatBadge(badge string) string {

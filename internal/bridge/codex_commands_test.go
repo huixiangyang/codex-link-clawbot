@@ -79,3 +79,16 @@ func TestCodexCatalogDoesNotExposeClientOnlyOperations(t *testing.T) {
 		t.Fatalf("客户端专属操作泄漏：%q", terminal)
 	}
 }
+
+func TestCodexCommandReferencesOnlyDecorateImages(t *testing.T) {
+	handler, _ := newSessionHandler(t)
+	page := handler.openCodexCommandPage("owner-1", "thread", 1)
+	if strings.Contains(page, "/clear") || strings.Contains(page, "/rename") {
+		t.Fatalf("文字菜单泄漏命令输入提示：%q", page)
+	}
+	card := controlCardFromText(page)
+	decorateCodexCommandCard(page, &card)
+	if len(card.Options) < 2 || card.Options[0].DisplayLabel != "清屏并新建线程" || card.Options[0].Meta != "/clear · 仅作功能对照" || card.Options[1].Meta != "/rename · 仅作功能对照" {
+		t.Fatalf("图片命令对照 = %#v", card.Options)
+	}
+}

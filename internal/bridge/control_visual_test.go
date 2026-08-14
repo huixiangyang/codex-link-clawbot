@@ -125,7 +125,7 @@ func TestCommandDirectoryBuildsStructuredFourSectionView(t *testing.T) {
 	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "activity" || first.Items[0].Code != "11" || first.Items[0].Label != "全局总览" {
 		t.Fatalf("first directory section = %#v", first)
 	}
-	if development := directory.Sections[1]; development.Icon != "folder-kanban" || development.Items[2].Label != "模型与权限" || development.Items[2].Meta != "" {
+	if development := directory.Sections[1]; development.Icon != "folder-kanban" || development.Items[2].Label != "模型与权限" || development.Items[2].Meta != "/model · /permissions · 仅作功能对照" {
 		t.Fatalf("development directory section = %#v", development)
 	}
 }
@@ -150,6 +150,12 @@ func TestGlobalWorkbenchBuildsStructuredTargetThreadsAndActions(t *testing.T) {
 	}
 	if workbench.Actions[0].Code != "5" || workbench.Actions[0].Meta != "" || workbench.Actions[4].Icon != "refresh-cw" || workbench.Controls[0].Controls[0].Code != "11" {
 		t.Fatalf("workbench actions = %#v", workbench.Actions)
+	}
+	if got := workbench.Controls[0].Controls[1].Reference; got != "/resume" {
+		t.Fatalf("workbench command reference = %q", got)
+	}
+	if got := workbench.Controls[1].Controls[2].Reference; got != "/clear … /mcp" {
+		t.Fatalf("workbench command catalog reference = %q", got)
 	}
 }
 

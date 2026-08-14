@@ -44,9 +44,10 @@ type WorkbenchAction struct {
 }
 
 type WorkbenchControl struct {
-	Code  string
-	Label string
-	Tone  string
+	Code      string
+	Label     string
+	Reference string
+	Tone      string
 }
 
 type WorkbenchControlGroup struct {
@@ -156,8 +157,9 @@ func prepareWorkbench(workbench Workbench, now time.Time) (Workbench, error) {
 			control := &group.Controls[controlIndex]
 			control.Code = strings.TrimSpace(control.Code)
 			control.Label = strings.TrimSpace(control.Label)
+			control.Reference = strings.TrimSpace(control.Reference)
 			control.Tone = strings.TrimSpace(control.Tone)
-			if !validDirectoryCode(control.Code) || control.Label == "" || seen[control.Code] || !validWorkbenchControlTone(control.Tone) {
+			if !validDirectoryCode(control.Code) || control.Label == "" || seen[control.Code] || !validWorkbenchControlTone(control.Tone) || !validWorkbenchReference(control.Reference) {
 				return Workbench{}, fmt.Errorf("invalid workbench control")
 			}
 			seen[control.Code] = true
@@ -169,6 +171,10 @@ func prepareWorkbench(workbench Workbench, now time.Time) (Workbench, error) {
 	}
 	workbench.Height = workbenchHeight(len(workbench.Threads))
 	return workbench, nil
+}
+
+func validWorkbenchReference(reference string) bool {
+	return reference == "" || strings.HasPrefix(reference, "/") && !strings.ContainsAny(reference, "\r\n\x00")
 }
 
 func validWorkbenchControlTone(tone string) bool {
