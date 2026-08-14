@@ -51,7 +51,7 @@ func (h *Handler) openCodexGlobalOverview(ctx context.Context, userID string) st
 	target := "未选择"
 	currentWorkspace := h.projects.Current(userID)
 	if current, currentErr := h.sessions.Current(ctx, userID, threadClient); currentErr == nil {
-		target = threadTitle(current.Info) + " · " + currentWorkspace.Name
+		target = strings.Join([]string{threadTitle(current.Info), "项目 " + currentWorkspace.Name, "目录 " + workbenchDirectoryField(current.Info.Cwd)}, " · ")
 	}
 	runtime := h.codex.Info()
 	lines := []string{
@@ -88,7 +88,9 @@ func (h *Handler) openCodexGlobalThreadPage(ctx context.Context, userID string, 
 	}
 	options := make([]controlOption, 0, len(page.Items)+2)
 	for _, item := range page.Items {
-		label := threadTitle(item.Info) + " · " + item.WorkspaceName + " · " + formatThreadStatus(item.Info.Status)
+		label := strings.Join([]string{
+			threadTitle(item.Info), "项目 " + item.WorkspaceName, "目录 " + workbenchDirectoryField(item.Info.Cwd), formatThreadStatus(item.Info.Status),
+		}, " · ")
 		if item.Current {
 			label += " · 当前目标"
 		}

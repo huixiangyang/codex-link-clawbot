@@ -248,7 +248,7 @@ func TestManagerPersistsSelectionAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := restarted.Current(context.Background(), "owner-1", client)
-	if err != nil || current.Info.ID != first.ID {
+	if err != nil || current.Info.ID != first.ID || current.Workspace.Name != "Workspace" || current.Workspace.Root != "/workspace" {
 		t.Fatalf("Current() after restart = %#v, %v", current, err)
 	}
 	if _, err := restarted.Use(context.Background(), "owner-2", client, ShortCode(first.ID)); !errors.Is(err, ErrNotOwned) {

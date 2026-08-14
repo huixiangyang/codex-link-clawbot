@@ -19,7 +19,8 @@ const (
 
 type WorkbenchTarget struct {
 	Title     string
-	Workspace string
+	Project   string
+	Directory string
 	Status    string
 	Time      string
 	Available bool
@@ -28,7 +29,8 @@ type WorkbenchTarget struct {
 type WorkbenchThread struct {
 	Code      string
 	Title     string
-	Workspace string
+	Project   string
+	Directory string
 	Status    string
 	Time      string
 	Current   bool
@@ -110,10 +112,11 @@ func prepareWorkbench(workbench Workbench, now time.Time) (Workbench, error) {
 		}
 	}
 	workbench.Target.Title = strings.TrimSpace(workbench.Target.Title)
-	workbench.Target.Workspace = strings.TrimSpace(workbench.Target.Workspace)
+	workbench.Target.Project = strings.TrimSpace(workbench.Target.Project)
+	workbench.Target.Directory = strings.TrimSpace(workbench.Target.Directory)
 	workbench.Target.Status = strings.TrimSpace(workbench.Target.Status)
 	workbench.Target.Time = strings.TrimSpace(workbench.Target.Time)
-	if workbench.Target.Title == "" {
+	if workbench.Target.Title == "" || workbench.Target.Project == "" || workbench.Target.Directory == "" {
 		return Workbench{}, fmt.Errorf("workbench target is required")
 	}
 
@@ -122,12 +125,13 @@ func prepareWorkbench(workbench Workbench, now time.Time) (Workbench, error) {
 		thread := &workbench.Threads[index]
 		thread.Code = strings.TrimSpace(thread.Code)
 		thread.Title = strings.TrimSpace(thread.Title)
-		thread.Workspace = strings.TrimSpace(thread.Workspace)
+		thread.Project = strings.TrimSpace(thread.Project)
+		thread.Directory = strings.TrimSpace(thread.Directory)
 		thread.Status = strings.TrimSpace(thread.Status)
 		thread.Time = strings.TrimSpace(thread.Time)
 		thread.Wechat = strings.TrimSpace(thread.Wechat)
 		thread.Tone = workbenchStatusTone(thread.Status)
-		if !validDirectoryCode(thread.Code) || thread.Title == "" || thread.Workspace == "" || thread.Status == "" || seen[thread.Code] {
+		if !validDirectoryCode(thread.Code) || thread.Title == "" || thread.Project == "" || thread.Directory == "" || thread.Status == "" || seen[thread.Code] {
 			return Workbench{}, fmt.Errorf("invalid workbench thread")
 		}
 		seen[thread.Code] = true

@@ -42,9 +42,9 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 	recentLines := make([]string, 0, workbenchRecentThreadLimit)
 	totalThreads := 0
 	runningThreads := 0
-	targetLine := "尚未选择 ｜ - ｜ 未连接 ｜ -"
+	targetLine := "尚未选择 ｜ 项目 - ｜ 目录 - ｜ 未连接 ｜ -"
 	globalState := "不可用"
-	target := visual.WorkbenchTarget{Title: "尚未选择", Workspace: "-", Status: "未连接", Time: "-"}
+	target := visual.WorkbenchTarget{Title: "尚未选择", Project: "-", Directory: "-", Status: "未连接", Time: "-"}
 	threads := make([]visual.WorkbenchThread, 0, workbenchRecentThreadLimit)
 
 	if threadClient, err := h.sessionContext(); err == nil && h.sessions != nil && h.projects != nil && workspaceCount > 0 {
@@ -58,16 +58,17 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 				code := fmt.Sprintf("%d", index+1)
 				badge := workbenchThreadBadge(item.Current, taskStates[item.Info.ID])
 				title := workbenchField(threadTitle(item.Info))
-				workspaceName := workbenchField(item.WorkspaceName)
+				projectName := workbenchField(item.WorkspaceName)
+				directory := workbenchDirectoryField(item.Info.Cwd)
 				status := formatThreadStatus(item.Info.Status)
 				activity := item.ActivityLabel(now)
 				label := strings.Join([]string{
-					title, workspaceName, status, activity,
+					title, "项目 " + projectName, "目录 " + directory, status, activity,
 					badge,
 				}, " ｜ ")
 				recentLines = append(recentLines, code+"  "+label)
 				threads = append(threads, visual.WorkbenchThread{
-					Code: code, Title: title, Workspace: workspaceName, Status: status, Time: activity,
+					Code: code, Title: title, Project: projectName, Directory: directory, Status: status, Time: activity,
 					Current: item.Current, Wechat: workbenchWechatBadge(badge),
 				})
 				options = append(options, controlOption{
@@ -80,11 +81,11 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 		if current, currentErr := h.sessions.Current(ctx, userID, threadClient); currentErr == nil {
 			workspace := h.projects.Current(userID)
 			target = visual.WorkbenchTarget{
-				Title: workbenchField(threadTitle(current.Info)), Workspace: workbenchField(workspace.Name),
+				Title: workbenchField(threadTitle(current.Info)), Project: workbenchField(workspace.Name), Directory: workbenchDirectoryField(current.Info.Cwd),
 				Status: formatThreadStatus(current.Info.Status), Time: (thread.GlobalThread{Info: current.Info}).ActivityLabel(now), Available: true,
 			}
 			targetLine = strings.Join([]string{
-				target.Title, target.Workspace, target.Status, target.Time,
+				target.Title, "项目 " + target.Project, "目录 " + target.Directory, target.Status, target.Time,
 			}, " ｜ ")
 		}
 	}
@@ -279,6 +280,20 @@ func workbenchThreadBadge(current bool, taskState string) string {
 
 func workbenchField(value string) string {
 	return strings.ReplaceAll(strings.TrimSpace(value), "｜", "/")
+}
+
+// workbenchDirectoryField 保留目录首尾语义，长路径不会挤占会话状态区域。
+func workbenchDirectoryField(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ", "\x00", "").Replace(value)
+	value = workbenchField(value)
+	if value == "" {
+		return "-"
+	}
+	runes := []rune(value)
+	if len(runes) <= 56 {
+		return value
+	}
+	return string(runes[:24]) + "…" + string(runes[len(runes)-29:])
 }
 
 // openCommandDirectory 生成稳定的二级功能目录；运行状态只改变标签，不改变编号。

@@ -738,7 +738,13 @@ func (h *Handler) openSessionPickerPage(ctx context.Context, userID string, arch
 	}
 	options := make([]controlOption, 0, controlSessionPageSize+2)
 	for _, item := range page.Items {
-		label := threadTitle(item.Info) + " · " + formatThreadStatus(item.Info.Status)
+		projectName := workbenchField(item.Workspace.Name)
+		if projectName == "" {
+			projectName = "未识别"
+		}
+		label := strings.Join([]string{
+			threadTitle(item.Info), "项目 " + projectName, "目录 " + workbenchDirectoryField(item.Info.Cwd), formatThreadStatus(item.Info.Status),
+		}, " · ")
 		if item.Current {
 			label += " · 当前"
 		}
@@ -1087,7 +1093,7 @@ func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID s
 		)
 	}
 	options = append(options, controlOption{Label: "Codex 线程", Action: actionSessionMenu})
-	prompt := "线程已恢复。\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
+	prompt := "线程已恢复。\n" + h.threadIdentity(userID, thread) + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
 		return controlStateFailureResult().Text
 	}
@@ -1100,7 +1106,7 @@ func (h *Handler) sessionSuccess(userID, headline string, thread codex.ThreadInf
 		{Label: "线程列表", Action: actionBrowseSessions},
 		{Label: "Codex 线程", Action: actionSessionMenu},
 	}
-	prompt := headline + "\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
+	prompt := headline + "\n" + h.threadIdentity(userID, thread) + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
 		return controlStateFailureResult().Text
 	}
@@ -1427,9 +1433,14 @@ func isSubsequence(query, candidate string) bool {
 }
 
 func formatSessionDetail(title string, managed thread.ManagedThread) string {
+	projectName := workbenchField(managed.Workspace.Name)
+	if projectName == "" {
+		projectName = "未识别"
+	}
 	lines := []string{
 		title,
 		"名称：" + threadTitle(managed.Info),
+		"项目：" + projectName,
 		"短编号：" + thread.ShortCode(managed.Info.ID),
 		"状态：" + formatThreadStatus(managed.Info.Status),
 	}
@@ -1456,7 +1467,7 @@ func formatSessionDetail(title string, managed thread.ManagedThread) string {
 		lines = append(lines, fmt.Sprintf("指令来源：%d 个", len(managed.Info.InstructionSources)))
 	}
 	if managed.Info.Cwd != "" {
-		lines = append(lines, "目录："+managed.Info.Cwd)
+		lines = append(lines, "文件目录："+managed.Info.Cwd)
 	}
 	if preview := sanitizeThreadPreview(managed.Info.Preview); preview != "未命名线程" && preview != threadTitle(managed.Info) {
 		lines = append(lines, "摘要："+normalizeSessionLine(preview, 96))
@@ -1471,7 +1482,23 @@ func formatSessionDetail(title string, managed thread.ManagedThread) string {
 }
 
 func formatThreadIdentity(info codex.ThreadInfo) string {
-	return fmt.Sprintf("名称：%s\n短编号：%s\n状态：%s", threadTitle(info), thread.ShortCode(info.ID), formatThreadStatus(info.Status))
+	lines := []string{
+		"名称：" + threadTitle(info),
+		"短编号：" + thread.ShortCode(info.ID),
+		"状态：" + formatThreadStatus(info.Status),
+	}
+	if strings.TrimSpace(info.Cwd) != "" {
+		lines = append(lines, "文件目录："+info.Cwd)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (h *Handler) threadIdentity(userID string, info codex.ThreadInfo) string {
+	identity := formatThreadIdentity(info)
+	if h.projects == nil {
+		return identity
+	}
+	return "项目：" + workbenchField(h.projects.Current(userID).Name) + "\n" + identity
 }
 
 func threadTitle(thread codex.ThreadInfo) string {

@@ -342,8 +342,8 @@ func TestWorkbenchKeepsRecentThreadsAndQuickActionsBounded(t *testing.T) {
 	if prepared.Height != workbenchHeight(len(prepared.Threads)) || prepared.Threads[0].Tone != "live" || prepared.Theme != ThemeDay {
 		t.Fatalf("prepared workbench = %#v", prepared)
 	}
-	workbench.Threads = append(workbench.Threads, WorkbenchThread{Code: "4", Title: "越界线程", Workspace: "Workspace", Status: "空闲"})
-	workbench.Threads = append(workbench.Threads, WorkbenchThread{Code: "10", Title: "第五个线程", Workspace: "Workspace", Status: "空闲"})
+	workbench.Threads = append(workbench.Threads, WorkbenchThread{Code: "4", Title: "越界线程", Project: "Workspace", Directory: "/workspace/overflow", Status: "空闲"})
+	workbench.Threads = append(workbench.Threads, WorkbenchThread{Code: "10", Title: "第五个线程", Project: "Workspace", Directory: "/workspace/fifth", Status: "空闲"})
 	if _, err := prepareWorkbench(workbench, time.Now()); err == nil {
 		t.Fatal("oversized workbench thread list was accepted")
 	}
@@ -477,11 +477,11 @@ func testWorkbench() Workbench {
 	return Workbench{
 		Title: "全局工作台", Subtitle: "从微信统筹 Codex 桌面端、CLI 与远程执行", State: "就绪",
 		Facts:  []Fact{{Label: "工作空间", Value: "2 个"}, {Label: "全部线程", Value: "12 个"}, {Label: "运行中", Value: "1 个"}, {Label: "微信队列", Value: "空闲"}},
-		Target: WorkbenchTarget{Title: "首页全局工作台重构", Workspace: "codex-link-clawbot", Status: "空闲", Time: "8 分钟前", Available: true},
+		Target: WorkbenchTarget{Title: "首页全局工作台重构", Project: "codex-link-clawbot", Directory: "/root/CODES/codex-link-clawbot", Status: "空闲", Time: "8 分钟前", Available: true},
 		Threads: []WorkbenchThread{
-			{Code: "1", Title: "登录排障", Workspace: "API", Status: "运行中", Time: "刚刚", Wechat: "微信执行中"},
-			{Code: "2", Title: "首页全局工作台重构", Workspace: "codex-link-clawbot", Status: "空闲", Time: "8 分钟前", Current: true},
-			{Code: "3", Title: "OSS 数据补偿", Workspace: "SYJ", Status: "未加载", Time: "1 小时前"},
+			{Code: "1", Title: "登录排障", Project: "API", Directory: "/srv/api", Status: "运行中", Time: "刚刚", Wechat: "微信执行中"},
+			{Code: "2", Title: "首页全局工作台重构", Project: "codex-link-clawbot", Directory: "/root/CODES/codex-link-clawbot", Status: "空闲", Time: "8 分钟前", Current: true},
+			{Code: "3", Title: "OSS 数据补偿", Project: "SYJ", Directory: "/srv/syj/oss-repair", Status: "未加载", Time: "1 小时前"},
 		},
 		Actions: []WorkbenchAction{
 			{Code: "5", Label: "全部线程", Icon: "messages-square"},

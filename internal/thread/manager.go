@@ -17,6 +17,7 @@ const (
 
 type ManagedThread struct {
 	Info        codex.ThreadInfo
+	Workspace   Workspace
 	Current     bool
 	Archived    bool
 	Unavailable bool
@@ -98,7 +99,8 @@ func (m *Manager) EnsureActive(ctx context.Context, ownerID string, client codex
 }
 
 func (m *Manager) Current(ctx context.Context, ownerID string, client codex.ThreadClient) (ManagedThread, error) {
-	threadID, ok := m.store.ActiveForProject(ownerID, m.currentProject(ownerID))
+	workspace := m.currentWorkspace(ownerID)
+	threadID, ok := m.store.ActiveForProject(ownerID, workspace.ID)
 	if !ok {
 		return ManagedThread{}, ErrNoActive
 	}
@@ -106,12 +108,13 @@ func (m *Manager) Current(ctx context.Context, ownerID string, client codex.Thre
 	if err != nil {
 		return ManagedThread{}, fmt.Errorf("read current session: %w", err)
 	}
-	return ManagedThread{Info: thread, Current: true}, nil
+	return ManagedThread{Info: thread, Workspace: workspace, Current: true}, nil
 }
 
 // Detail 读取本地焦点索引中的线程摘要；全局发现统一走 GlobalList。
 func (m *Manager) Detail(ctx context.Context, ownerID string, client codex.ThreadClient, reference string, archived bool) (ManagedThread, error) {
-	projectID := m.currentProject(ownerID)
+	workspace := m.currentWorkspace(ownerID)
+	projectID := workspace.ID
 	record, err := m.store.ResolveForProject(ownerID, projectID, reference, archived)
 	if err != nil {
 		return ManagedThread{}, err
@@ -122,7 +125,7 @@ func (m *Manager) Detail(ctx context.Context, ownerID string, client codex.Threa
 	}
 	activeID, _ := m.store.ActiveForProject(ownerID, projectID)
 	return ManagedThread{
-		Info: thread, Current: activeID == record.ID, Archived: archived,
+		Info: thread, Workspace: workspace, Current: activeID == record.ID, Archived: archived,
 	}, nil
 }
 
@@ -218,7 +221,8 @@ func (m *Manager) New(ctx context.Context, ownerID string, client codex.ThreadCl
 }
 
 func (m *Manager) Use(ctx context.Context, ownerID string, client codex.ThreadClient, reference string) (codex.ThreadInfo, error) {
-	projectID := m.currentProject(ownerID)
+	workspace := m.currentWorkspace(ownerID)
+	projectID := workspace.ID
 	record, err := m.store.ResolveForProject(ownerID, projectID, reference, false)
 	if err != nil {
 		return codex.ThreadInfo{}, err
@@ -227,7 +231,6 @@ func (m *Manager) Use(ctx context.Context, ownerID string, client codex.ThreadCl
 	if oldThreadID == record.ID {
 		return client.ReadThread(ctx, record.ID)
 	}
-	workspace := m.currentWorkspace(ownerID)
 	thread, err := client.ResumeThread(ctx, record.ID, workspace.Root)
 	if err != nil {
 		return codex.ThreadInfo{}, fmt.Errorf("resume session: %w", err)
@@ -521,7 +524,8 @@ func (m *Manager) List(ctx context.Context, ownerID string, client codex.ThreadC
 	if pageNumber <= 0 {
 		pageNumber = 1
 	}
-	projectID := m.currentProject(ownerID)
+	workspace := m.currentWorkspace(ownerID)
+	projectID := workspace.ID
 	records := m.store.RecordsForProject(ownerID, projectID, archived)
 	activeID, _ := m.store.ActiveForProject(ownerID, projectID)
 	owned := make(map[string]Record, len(records))
@@ -544,7 +548,7 @@ func (m *Manager) List(ctx context.Context, ownerID string, client codex.ThreadC
 				continue
 			}
 			items = append(items, ManagedThread{
-				Info: thread, Current: activeID == thread.ID, Archived: archived,
+				Info: thread, Workspace: workspace, Current: activeID == thread.ID, Archived: archived,
 			})
 			delete(owned, thread.ID)
 		}
@@ -561,7 +565,7 @@ func (m *Manager) List(ctx context.Context, ownerID string, client codex.ThreadC
 				ID: record.ID, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 				Status: codex.ThreadStatus{Type: "systemError"},
 			},
-			Current: activeID == record.ID, Archived: archived, Unavailable: true,
+			Workspace: workspace, Current: activeID == record.ID, Archived: archived, Unavailable: true,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {

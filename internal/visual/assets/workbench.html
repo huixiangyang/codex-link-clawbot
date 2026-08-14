@@ -121,14 +121,18 @@
     .section-label span:last-child { color: var(--faint); font-weight: 520; }
     .session-list { display: grid; gap: 2px; }
     .empty { height: 52px; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
-    .session { height: 52px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; padding: 0 11px 0 8px; border-radius: 10px; }
+    .session { height: 58px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; padding: 0 11px 0 8px; border-radius: 10px; }
     .session.current { background: var(--surface-current); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
     .session-key { width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font: 650 10px/1 "Noto Sans Mono CJK SC", monospace; }
     .session-main { min-width: 0; padding: 0 9px; }
     .session-title { min-width: 0; display: flex; align-items: center; gap: 6px; }
-    .session-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 670; line-height: 1.12; letter-spacing: -.01em; }
+    .session-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 680; line-height: 1.08; letter-spacing: -.01em; }
     .current-label { flex: 0 0 auto; color: var(--accent-ink); font-size: 9px; font-weight: 680; }
-    .session-meta { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; font-weight: 510; }
+    .session-context { min-width: 0; margin-top: 3px; display: flex; align-items: center; gap: 7px; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 10px; font-weight: 570; }
+    .session-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--accent-ink); font-weight: 630; }
+    .session-directory { min-width: 0; margin-top: 3px; display: flex; align-items: center; gap: 5px; color: var(--muted); }
+    .session-directory svg { flex: 0 0 auto; width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.8; }
+    .session-directory code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 540 9.5px/10px "Noto Sans Mono CJK SC", monospace; }
     .wechat { color: var(--accent-ink); }
     .session-state { min-width: 53px; display: flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--idle); font-size: 10px; font-weight: 590; white-space: nowrap; }
     .session-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
@@ -180,7 +184,7 @@
 
     body.editorial { --ground: #171310; --ground-soft: #211a16; --surface: rgba(39, 31, 26, .8); --surface-current: rgba(201, 103, 77, .13); --ink: #f3eae2; --muted: #aa9c91; --faint: #6f6259; --line: rgba(243, 234, 226, .09); --grid: rgba(243, 234, 226, .05); --accent: #d77861; --accent-ink: #efa18d; --live: #78c99f; font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; }
     body.editorial.day { --ground: #f0e9df; --ground-soft: #e7ded2; --surface: rgba(255, 251, 245, .75); --surface-current: rgba(157, 73, 58, .1); --ink: #2b231e; --muted: #75675d; --faint: #a39488; --line: rgba(43, 35, 30, .09); --grid: rgba(43, 35, 30, .055); --accent: #9d493a; --accent-ink: #843a2e; --live: #277656; }
-    body.editorial .rail-head, body.editorial .section-label, body.editorial .session-meta, body.editorial .session-state, body.editorial .tools, body.editorial .current-label { font-family: "Noto Sans CJK SC", sans-serif; }
+    body.editorial .rail-head, body.editorial .section-label, body.editorial .session-context, body.editorial .session-state, body.editorial .tools, body.editorial .current-label { font-family: "Noto Sans CJK SC", sans-serif; }
     body.noir { --ground: #080706; --ground-soft: #171411; --surface: rgba(29, 26, 21, .8); --surface-current: rgba(184, 145, 76, .13); --ink: #f3ede3; --muted: #a79d8f; --faint: #6c6459; --line: rgba(243, 237, 227, .09); --grid: rgba(243, 237, 227, .05); --accent: #ba9658; --accent-ink: #d5b574; --live: #74c99d; }
     body.noir.day { --ground: #efebe4; --ground-soft: #e5e0d7; --surface: rgba(255, 252, 246, .75); --surface-current: rgba(128, 102, 56, .1); --ink: #1b1814; --muted: #6e675d; --faint: #9b9387; --line: rgba(27, 24, 20, .09); --grid: rgba(27, 24, 20, .05); --accent: #806638; --accent-ink: #6e552c; --live: #247153; }
     body.cute { --ground: #161216; --ground-soft: #221a21; --surface: rgba(39, 30, 38, .8); --surface-current: rgba(200, 107, 143, .14); --ink: #f6eef2; --muted: #b4a2ab; --faint: #766770; --line: rgba(246, 238, 242, .09); --grid: rgba(246, 238, 242, .05); --accent: #d682a3; --accent-ink: #efa9c4; --live: #7bca9f; }
@@ -217,13 +221,14 @@
         <div class="identity">{{lucide "command"}}<span class="brand">CODEX</span><span class="remote">远程会话</span></div>
         <span class="system"><i></i>{{.State}}</span>
       </header>
-      <div class="section-label"><span>最近会话</span><span>回复 1–4 切换</span></div>
+      <div class="section-label"><span>最近会话 · 项目与目录</span><span>回复 1–4 切换</span></div>
       <div class="session-list">{{if .Threads}}{{range .Threads}}
         <article class="session{{if .Current}} current{{end}}">
           <span class="session-key">{{.Code}}</span>
           <div class="session-main">
             <div class="session-title"><strong>{{.Title}}</strong>{{if .Current}}<span class="current-label">当前</span>{{end}}</div>
-            <div class="session-meta">{{.Workspace}} · {{.Time}}{{if .Wechat}} · <span class="wechat">{{.Wechat}}</span>{{end}}</div>
+            <div class="session-context"><span class="session-project">项目 · {{.Project}}</span><span>{{.Time}}</span>{{if .Wechat}}<span class="wechat">{{.Wechat}}</span>{{end}}</div>
+            <div class="session-directory">{{lucide "folder-kanban"}}<code>目录 · {{.Directory}}</code></div>
           </div>
           <div class="session-state {{.Tone}}"><i></i><span>{{.Status}}</span></div>
         </article>{{end}}{{else}}<div class="empty">暂无可接管的 Codex 会话</div>{{end}}</div>

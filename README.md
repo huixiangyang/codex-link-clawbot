@@ -69,7 +69,7 @@ See [getting started](docs/guides/getting-started.md) and [deployment](docs/oper
 
 ## WeChat interaction
 
-Send `菜单` to open the 1080×780 Codex global workbench. Recent threads appear on the left; workspace, total-thread, running-thread, and request-queue telemetry fills the upper right; the lower area exposes 15 stable numbered actions. `1`–`4` adopt recent threads, `5` opens all threads, `6` starts a new thread, `7` opens execution and queue state, `8` opens workspaces, and `9` refreshes. Stable `11`–`43` actions are shown and executed directly from the same home state. “Current target” means where the next WeChat input goes and is deliberately separate from Codex running state.
+Send `菜单` to open the 1080×780 Codex global workbench. Recent threads appear on the left with their project name, actual thread working directory, status, and activity time; long paths retain both ends. Workspace, total-thread, running-thread, and request-queue telemetry fills the upper right; the lower area exposes 15 stable numbered actions. `1`–`4` adopt recent threads, `5` opens all threads, `6` starts a new thread, `7` opens execution and queue state, `8` opens workspaces, and `9` refreshes. Stable `11`–`43` actions are shown and executed directly from the same home state. “Current target” means where the next WeChat input goes and is deliberately separate from Codex running state.
 
 Send `线程关系图` to render the current target's native parent and direct children as a single 1080×1180 map. It never reads conversation bodies or caches a second thread tree. Numbered nodes are frozen for ten minutes, and every adoption re-reads the thread and revalidates its trusted workspace.
 

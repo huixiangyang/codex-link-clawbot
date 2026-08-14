@@ -148,6 +148,9 @@ func TestGlobalWorkbenchBuildsStructuredTargetThreadsAndActions(t *testing.T) {
 	if workbench.Target.Title != "首页重构" || !workbench.Target.Available || !workbench.Threads[0].Current {
 		t.Fatalf("workbench content = %#v", workbench)
 	}
+	if workbench.Threads[0].Project != "Workspace" || workbench.Threads[0].Directory == "" || workbench.Threads[0].Directory != workbench.Target.Directory {
+		t.Fatalf("workbench session context = %#v target=%#v", workbench.Threads[0], workbench.Target)
+	}
 	if workbench.Actions[0].Code != "5" || workbench.Actions[0].Meta != "" || workbench.Actions[4].Icon != "refresh-cw" || workbench.Controls[0].Controls[0].Code != "11" {
 		t.Fatalf("workbench actions = %#v", workbench.Actions)
 	}
@@ -156,6 +159,22 @@ func TestGlobalWorkbenchBuildsStructuredTargetThreadsAndActions(t *testing.T) {
 	}
 	if got := workbench.Controls[1].Controls[2].Reference; got != "/clear … /mcp" {
 		t.Fatalf("workbench command catalog reference = %q", got)
+	}
+}
+
+func TestWorkbenchDirectoryFieldPreservesPathEdges(t *testing.T) {
+	short := "/root/CODES/codex-link-clawbot"
+	if got := workbenchDirectoryField(short); got != short {
+		t.Fatalf("short directory = %q", got)
+	}
+	spaced := "/root/project with  two spaces"
+	if got := workbenchDirectoryField(spaced); got != spaced {
+		t.Fatalf("spaced directory = %q", got)
+	}
+	long := "/root/CODES/very-long-parent-directory/another-long-directory/codex-link-clawbot/internal/bridge"
+	got := workbenchDirectoryField(long)
+	if len([]rune(got)) != 54 || !strings.HasPrefix(got, "/root/CODES/") || !strings.HasSuffix(got, "-link-clawbot/internal/bridge") || !strings.Contains(got, "…") {
+		t.Fatalf("compacted directory = %q", got)
 	}
 }
 

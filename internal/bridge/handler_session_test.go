@@ -395,8 +395,8 @@ func TestGlobalWorkbenchShowsRecentStateAndSwitchesTargetDirectly(t *testing.T) 
 
 	main := controlReply(t, handler, "owner-1", "菜单")
 	for _, want := range []string{
-		"全部线程：2 个", "运行中：1 个", "当前目标：当前目标 ｜ Workspace ｜ 空闲",
-		"1  最近执行 ｜ Workspace ｜ 执行中", "2  当前目标 ｜ Workspace ｜ 空闲", "当前目标",
+		"全部线程：2 个", "运行中：1 个", "当前目标：当前目标 ｜ 项目 Workspace ｜ 目录 ",
+		"1  最近执行 ｜ 项目 Workspace ｜ 目录 ", "2  当前目标 ｜ 项目 Workspace ｜ 目录 ", "执行中", "空闲", "当前目标",
 	} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("workbench missing %q: %q", want, main)
@@ -440,7 +440,7 @@ func TestGlobalWorkbenchPinsOlderCurrentThreadIntoCompactList(t *testing.T) {
 	}
 
 	main := controlReply(t, handler, "owner-1", "菜单")
-	if !strings.Contains(main, "4  会话 1 ｜ Workspace ｜ 空闲") || !strings.Contains(main, "当前目标") || strings.Contains(main, "4  会话 3 ｜") {
+	if !strings.Contains(main, "4  会话 1 ｜ 项目 Workspace ｜ 目录 ") || !strings.Contains(main, "当前目标") || strings.Contains(main, "4  会话 3 ｜") {
 		t.Fatalf("older current thread was not pinned into compact list: %q", main)
 	}
 	state, status, err := handler.controlStates.Load("owner-1")

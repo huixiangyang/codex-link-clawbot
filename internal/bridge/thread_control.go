@@ -81,7 +81,7 @@ func (h *Handler) toggleCurrentThreadPin(ctx context.Context, userID string, pin
 	if pinned {
 		state = "已置顶"
 	}
-	return state + "当前线程。\n" + formatThreadIdentity(thread)
+	return state + "当前线程。\n" + h.threadIdentity(userID, thread)
 }
 
 func (h *Handler) compactCurrentThread(ctx context.Context, userID string) string {
