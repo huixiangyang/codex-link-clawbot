@@ -22,6 +22,12 @@ Codex App Server 没有“项目对象”，只有线程的 `cwd`。codex-link-c
 
 `thread/loaded/list` 只描述当前 codex-link-clawbot App Server 进程已经加载的线程。其他 Codex 客户端的“正在运行”状态以 `thread/list` 返回状态为准；codex-link-clawbot 不伪造跨进程暂停、中断或实时控制能力。
 
+## 线程关系图
+
+发送“线程关系图”“线程关系”或“分叉关系”会以当前目标为中心，即时读取 Codex `thread/read` 与全局 `thread/list`，输出一张 1080×1180 静态关系图。关系图只使用线程 ID、`forkedFromId`、显式标题、状态和受信任工作空间映射；不读取预览、对话正文、差异、文件内容，也不缓存另一棵线程树。没有显式标题时只显示短编号。
+
+画布最多展示一个父线程和按标题稳定排序的五个直接子线程，超出部分显示明确截断数量。父线程已删除、归档或位于白名单外时只显示“不可用”，不会从本地索引补造节点。父节点和子节点使用短期编号，回复编号时会再次执行 `thread/read` 与真实路径校验，然后才接管目标；关系状态有效期为十分钟。`8` 刷新本图，`9` 返回全局 `/resume`，`0` 返回当前线程。
+
 ## 全局工作台
 
 发送 `/` 时，codex-link-clawbot 直接读取全局 `thread/list`，按最近活动时间展示最多四项；标题、工作空间、状态和相对时间都来自本次快照，不写入菜单文件。当前目标固定在顶部，并在最近列表自然命中时追加标记。回复 `1`–`4` 会消费本版快照、重新读取线程并复核工作空间，然后才恢复并接管目标。
@@ -72,8 +78,8 @@ Codex App Server 没有“项目对象”，只有线程的 `cwd`。codex-link-c
 ## 验证
 
 ```bash
-go test ./internal/codex ./internal/session ./internal/messaging
-go test -race ./internal/codex ./internal/session ./internal/messaging
+go test ./internal/codex ./internal/thread ./internal/bridge
+go test -race ./internal/codex ./internal/thread ./internal/bridge
 ```
 
-真机至少验证：全局总览、跨客户端线程发现、运行中筛选、跨工作空间搜索与接管、越界路径拒绝、账号与额度、全局技能/MCP、目标线程状态、新建、审查、归档、恢复和永久删除确认。
+真机至少验证：全局总览、跨客户端线程发现、运行中筛选、跨工作空间搜索与接管、线程关系图、关系节点越界复核、账号与额度、全局技能/MCP、目标线程状态、新建、审查、归档、恢复和永久删除确认。

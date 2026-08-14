@@ -4,7 +4,7 @@
 
 codex-link-clawbot 不创建管理 TCP 监听，也不提供通用主动发送 API。健康、排空、恢复和部署提交固定通过当前用户私有的 `~/.codex-link-clawbot/control.sock`；外部系统不能借 codex-link-clawbot 向微信任意发送文字或媒体。
 
-历史上的共享 TCP `api_addr`、`CODEX_LINK_CLAWBOT_API_ADDR`、`start --api-addr`、`codex-link-clawbot.send_api`、`codex-link-clawbot send`、`codex-link-clawbot send-token` 和主动发送回执均已删除。配置 v5 不接受这些字段，运行时没有旧接口兼容、双写或降级分支。
+历史上的共享 TCP `api_addr`、`CODEX_LINK_CLAWBOT_API_ADDR`、`start --api-addr`、`codex-link-clawbot.send_api`、`codex-link-clawbot send`、`codex-link-clawbot send-token` 和主动发送回执均已删除。配置 v6 不接受这些字段，运行时没有旧接口兼容、双写或降级分支。
 
 ## Unix socket 约束
 
@@ -35,7 +35,7 @@ codex-link-clawbot 不创建管理 TCP 监听，也不提供通用主动发送 A
 ```bash
 codex-link-clawbot status
 go test ./...
-go test -race ./internal/api ./internal/config ./internal/cli ./internal/messaging
+go test -race ./internal/management ./internal/config ./internal/cli ./internal/bridge
 go vet ./...
 ```
 

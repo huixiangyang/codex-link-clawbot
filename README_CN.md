@@ -14,9 +14,9 @@ codex-link-clawbot 只支持 Codex 应用服务。它不是通用机器人框架
 
 | 归属 | 当前能力 |
 | --- | --- |
-| Codex | 跨桌面端、CLI、IDE 与 App Server 的全局线程目录、真实轮次、模型、审查、技能和外部工具 |
+| Codex | 跨桌面端、CLI、IDE 与 App Server 的全局线程目录、一层分叉关系、真实轮次、模型、审查、技能和外部工具 |
 | codex-link-clawbot | 微信文字、最多四张图片、受限文件和图片批注 |
-| codex-link-clawbot | 受信任工作空间、远程目标线程、持久请求队列、取消、重试和重启恢复 |
+| codex-link-clawbot | 受信任工作空间、远程目标线程、持久请求队列、真实轮次阶段进度、取消、重试和重启恢复 |
 | codex-link-clawbot | 成功请求续接、最近结果、带线程来源和摘要校验的私有交付箱、明确失效与再次发送 |
 | codex-link-clawbot | 自适应文字、五套视觉系统、移动审查包、图片/文件交付和图片 + MP3 语音 |
 | codex-link-clawbot | 部署与恢复待阅通知、远程锁定、无回复诊断、排空和事务部署 |
@@ -58,7 +58,7 @@ codex-link-clawbot login
 codex-link-clawbot start
 ```
 
-配置文件位于 `~/.codex-link-clawbot/config.json`，当前结构版本为 5，顶层明确分为 `codex` 与 `codex-link-clawbot`。至少配置一个 Codex 可以进入的工作空间绝对路径；执行 `codex-link-clawbot config` 可查看脱敏后的有效配置。完整字段、视觉、Piper 和 MiMo 配置见 [配置与设置](docs/guides/configuration.md)。
+配置文件位于 `~/.codex-link-clawbot/config.json`，当前结构版本为 6，短期控制状态版本为 14，顶层明确分为 `codex` 与 `codex-link-clawbot`。长任务进度只跟随 App Server 的结构化轮次与工作项通知，不再定时重复“仍在执行”。至少配置一个 Codex 可以进入的工作空间绝对路径；执行 `codex-link-clawbot config` 可查看脱敏后的有效配置。完整字段、视觉、Piper 和 MiMo 配置见 [配置与设置](docs/guides/configuration.md)。
 
 生产环境只由 systemd 用户服务托管。状态、排空、停止和重启使用当前用户私有的 Unix socket：
 
@@ -79,6 +79,7 @@ codex-link-clawbot stop
 机器级配置与微信偏好严格分开：回答方式、视觉风格、默认工作空间和目标线程可以在微信立即修改；命令、工作空间白名单、浏览器和 TTS 密钥只允许在本机配置。完整模型见 [功能与配置模型](docs/architecture/feature-and-configuration.md)。
 
 - `新建线程 叫登录排障`、`搜索线程 登录`、`切换线程 登录`
+- `线程关系图`：查看当前目标的父线程和直接子线程，并按图中编号接管
 - `分叉当前线程`、`置顶当前线程`、`压缩上下文`
 - `设置线程目标为 完成发布`、`线程模型`、`推理强度`
 - `项目`、`线程列表`、`请求队列`、`再次执行最近请求`

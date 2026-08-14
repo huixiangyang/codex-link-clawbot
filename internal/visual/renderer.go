@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"fmt"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"html/template"
 	"image"
 	_ "image/png"
@@ -64,7 +65,7 @@ type Option struct {
 type Card struct {
 	Variant       Variant
 	Theme         Theme
-	Style         Style
+	Style         presentation.Style
 	Title         string
 	Subtitle      string
 	Facts         []Fact
@@ -104,7 +105,7 @@ var assets embed.FS
 
 var (
 	backgroundOnce sync.Once
-	backgroundURLs map[Style]template.URL
+	backgroundURLs map[presentation.Style]template.URL
 )
 
 func NewRenderer(cfg Config) (*Renderer, error) {
@@ -152,11 +153,11 @@ func NewRenderer(cfg Config) (*Renderer, error) {
 
 // backgroundDataURL 只允许读取编译进二进制的风格纹理，并转为离线 data URL。
 // 返回值由固定风格枚举决定，不接受用户路径，避免模板获得任意文件读取能力。
-func backgroundDataURL(style Style) template.URL {
-	style = NormalizeStyle(style)
+func backgroundDataURL(style presentation.Style) template.URL {
+	style = presentation.NormalizeStyle(style)
 	backgroundOnce.Do(func() {
-		backgroundURLs = make(map[Style]template.URL, len(styleDefinitions))
-		for _, definition := range styleDefinitions {
+		backgroundURLs = make(map[presentation.Style]template.URL, len(presentation.Styles()))
+		for _, definition := range presentation.Styles() {
 			data, err := assets.ReadFile("assets/backgrounds/" + string(definition.ID) + ".webp")
 			if err != nil {
 				continue
@@ -310,8 +311,16 @@ func (r *Renderer) renderDocumentHTML(document Document) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
+func cardTemplateName(style presentation.Style) string {
+	return "card." + string(presentation.NormalizeStyle(style))
+}
+
+func documentTemplateName(style presentation.Style) string {
+	return "document." + string(presentation.NormalizeStyle(style))
+}
+
 func normalizeCard(card Card) Card {
-	card.Style = NormalizeStyle(card.Style)
+	card.Style = presentation.NormalizeStyle(card.Style)
 	if card.Variant == "" {
 		card.Variant = VariantNeutral
 	}
@@ -477,7 +486,7 @@ func runeLines(value string, width int) int {
 }
 
 func normalizeDocument(document Document) Document {
-	document.Style = NormalizeStyle(document.Style)
+	document.Style = presentation.NormalizeStyle(document.Style)
 	if document.Theme != ThemeDay && document.Theme != ThemeNight {
 		document.Theme = ThemeNight
 	}

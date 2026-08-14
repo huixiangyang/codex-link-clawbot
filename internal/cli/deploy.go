@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/api"
+	"github.com/huixiangyang/codex-link-clawbot/internal/management"
 	"github.com/spf13/cobra"
 )
 
@@ -113,7 +113,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 		return err
 	}
 	defer candidate.cleanup()
-	controlSocket := filepath.Join(options.StateRoot, api.ManagementSocketName)
+	controlSocket := filepath.Join(options.StateRoot, management.ManagementSocketName)
 
 	current, err := fetchHealth(ctx, controlSocket)
 	if err != nil {
@@ -215,7 +215,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	}
 
 	receipt.Status, receipt.Phase, receipt.FinishedAt = "succeeded", "ready", time.Now().Unix()
-	notificationStatus, notifyErr := requestDeploymentNotification(ctx, controlSocket, api.DeploymentNotice{
+	notificationStatus, notifyErr := requestDeploymentNotification(ctx, controlSocket, management.DeploymentNotice{
 		FromVersion: current.Version,
 		ToVersion:   candidate.Version,
 		Service:     options.Service,
@@ -239,7 +239,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 
 func completeDeploymentCommit(ctx context.Context, options deployOptions, expectedVersion string) error {
 	deadline := time.Now().Add(options.Timeout)
-	controlSocket := filepath.Join(options.StateRoot, api.ManagementSocketName)
+	controlSocket := filepath.Join(options.StateRoot, management.ManagementSocketName)
 	var lastErr error
 	for {
 		snapshot, err := requestAdmin(ctx, controlSocket, "resume")
@@ -424,7 +424,7 @@ func failAndRollback(options deployOptions, oldVersion string, snapshot deployme
 		startErr = runSystemctl(rollbackCtx, options.Service, "start")
 	}
 	if restoreErr == nil && reloadErr == nil && startErr == nil {
-		_, readyErr = waitForReady(rollbackCtx, filepath.Join(options.StateRoot, api.ManagementSocketName), oldVersion, options.Timeout)
+		_, readyErr = waitForReady(rollbackCtx, filepath.Join(options.StateRoot, management.ManagementSocketName), oldVersion, options.Timeout)
 	}
 	rollbackErr := errors.Join(stopErr, restoreErr, reloadErr, startErr, readyErr)
 	receipt.FinishedAt = time.Now().Unix()

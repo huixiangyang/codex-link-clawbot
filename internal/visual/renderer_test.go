@@ -3,6 +3,7 @@ package visual
 import (
 	"context"
 	"fmt"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"html/template"
 	"image"
 	"os"
@@ -171,7 +172,7 @@ func TestDocumentTemplateEscapesUntrustedText(t *testing.T) {
 func TestDocumentTemplateUsesContentFirstChrome(t *testing.T) {
 	tmpl := newVisualTestTemplate(t)
 	renderer := &Renderer{tmpl: tmpl}
-	for _, definition := range Styles() {
+	for _, definition := range presentation.Styles() {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			singleHTML, renderErr := renderer.renderDocumentHTML(normalizeDocument(Document{
 				Style: definition.ID, Blocks: []DocumentBlock{{Kind: "paragraph", Text: "正文直接开始"}},
@@ -208,7 +209,7 @@ func TestDocumentTemplateUsesContentFirstChrome(t *testing.T) {
 func TestEveryStyleProvidesEscapedCardAndDocumentTemplates(t *testing.T) {
 	tmpl := newVisualTestTemplate(t)
 	renderer := &Renderer{tmpl: tmpl}
-	for _, definition := range Styles() {
+	for _, definition := range presentation.Styles() {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			cardHTML, err := renderer.renderHTML(normalizeCard(Card{
 				Style: definition.ID, Theme: ThemeDay, Title: `<b>控制卡</b>`,
@@ -239,7 +240,7 @@ func TestEveryStyleProvidesEscapedCardAndDocumentTemplates(t *testing.T) {
 
 func TestEveryStyleProvidesEscapedReviewTemplate(t *testing.T) {
 	tmpl := newVisualTestTemplate(t)
-	for _, definition := range Styles() {
+	for _, definition := range presentation.Styles() {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			review, err := prepareReview(Review{
 				Style: definition.ID, Theme: ThemeDay, Verdict: ReviewVerdictAttention,
@@ -268,20 +269,20 @@ func TestEveryStyleProvidesEscapedReviewTemplate(t *testing.T) {
 }
 
 func TestEveryStyleProvidesEmbeddedBackground(t *testing.T) {
-	for _, definition := range Styles() {
+	for _, definition := range presentation.Styles() {
 		dataURL := string(backgroundDataURL(definition.ID))
 		if !strings.HasPrefix(dataURL, "data:image/webp;base64,") || len(dataURL) < 100 {
 			t.Fatalf("%s background was not embedded as WebP data", definition.ID)
 		}
 	}
-	if got := backgroundDataURL(Style("../../secret")); got != backgroundDataURL(DefaultStyle) {
+	if got := backgroundDataURL(presentation.Style("../../secret")); got != backgroundDataURL(presentation.DefaultStyle) {
 		t.Fatal("unknown style did not normalize to the fixed default background")
 	}
 }
 
 func TestEveryStyleProvidesEscapedDirectoryTemplate(t *testing.T) {
 	tmpl := newVisualTestTemplate(t)
-	for _, definition := range Styles() {
+	for _, definition := range presentation.Styles() {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			directory := testDirectory()
 			directory.Style = definition.ID
@@ -351,6 +352,83 @@ func TestWorkbenchKeepsRecentThreadsAndQuickActionsBounded(t *testing.T) {
 	invalidFact.Facts[0].Value = " "
 	if _, err := prepareWorkbench(invalidFact, time.Now()); err == nil {
 		t.Fatal("empty workbench telemetry fact was accepted")
+	}
+}
+
+func TestThreadMapBuildsOneLevelGeometryAndEscapesContent(t *testing.T) {
+	threadMap := ThreadMap{
+		Workspace: `<script>alert("workspace")</script>`,
+		Current:   ThreadMapNode{Title: "当前线程", Workspace: "Workspace", Status: "执行中"},
+		Parent:    &ThreadMapNode{Code: "1", Title: `<img src=x onerror=alert(1)>`, Workspace: "Workspace", Status: "空闲"},
+		Children: []ThreadMapNode{
+			{Code: "2", Title: "直接子线程", Workspace: "Workspace", Status: "未加载"},
+		},
+		Actions: []ThreadMapAction{
+			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
+			{Code: "9", Label: "全部线程 · /resume", Icon: "list-tree"},
+		},
+		Truncated: 2,
+	}
+	prepared, err := prepareThreadMap(threadMap, time.Date(2026, 8, 13, 10, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Theme != ThemeDay || prepared.Height != threadMapCanvasHeight || len(prepared.Edges) != 2 || prepared.Current.Tone != "live" || prepared.Children[0].Tone != "offline" {
+		t.Fatalf("prepared thread map = %#v", prepared)
+	}
+	var output strings.Builder
+	if err := newVisualTestTemplate(t).ExecuteTemplate(&output, "thread-map", prepared); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	if strings.Contains(html, `<script>alert`) || strings.Contains(html, `<img src=x`) ||
+		!strings.Contains(html, `&lt;script&gt;`) || !strings.Contains(html, `&lt;img`) {
+		t.Fatal("thread map template did not escape dynamic content")
+	}
+	if !strings.Contains(html, `class="day atelier"`) || !strings.Contains(html, "另有 2 个直接子线程未展示") || !strings.Contains(html, `<svg viewBox="0 0 24 24"`) {
+		t.Fatal("thread map visual identity is incomplete")
+	}
+}
+
+func TestRenderThreadMapPreview(t *testing.T) {
+	previewRoot := strings.TrimSpace(os.Getenv("CODEX_LINK_CLAWBOT_THREAD_MAP_PREVIEW_DIR"))
+	if previewRoot == "" {
+		t.Skip("thread map preview output is not requested")
+	}
+	renderer, err := NewRenderer(Config{
+		RootDir: previewRoot, MaxConcurrent: 1,
+		Now: func() time.Time { return time.Date(2026, 8, 13, 21, 0, 0, 0, time.Local) },
+	})
+	if err != nil {
+		t.Skipf("Chromium is not installed: %v", err)
+	}
+	threadMap := ThreadMap{
+		Style: presentation.StyleAtelier, Theme: ThemeNight, Workspace: "codex-link-clawbot",
+		Current: ThreadMapNode{Title: "全局工作台重构", Workspace: "codex-link-clawbot", Status: "执行中"},
+		Parent:  &ThreadMapNode{Code: "1", Title: "微信远程工作台", Workspace: "codex-link-clawbot", Status: "空闲"},
+		Children: []ThreadMapNode{
+			{Code: "2", Title: "移动端关系图", Workspace: "codex-link-clawbot", Status: "空闲"},
+			{Code: "3", Title: "安全边界回归", Workspace: "codex-link-clawbot", Status: "未加载"},
+			{Code: "4", Title: "视觉验收", Workspace: "codex-link-clawbot", Status: "执行中"},
+			{Code: "5", Title: "文档同步", Workspace: "codex-link-clawbot", Status: "空闲"},
+		},
+		Actions: []ThreadMapAction{
+			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
+			{Code: "9", Label: "全部线程 · /resume", Icon: "list-tree"},
+		},
+		Truncated: 2,
+	}
+	artifact, err := renderer.RenderThreadMap(context.Background(), threadMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer artifact.Cleanup()
+	data, err := os.ReadFile(artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(previewRoot, "thread-map-preview.png"), data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -532,7 +610,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	}
 
 	directory := testDirectory()
-	directory.Style = StyleAtelier
+	directory.Style = presentation.StyleAtelier
 	directoryArtifact, err := renderer.RenderDirectory(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
@@ -547,7 +625,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	}
 
 	workbench := testWorkbench()
-	workbench.Style = StyleAtelier
+	workbench.Style = presentation.StyleAtelier
 	workbenchArtifact, err := renderer.RenderWorkbench(context.Background(), workbench)
 	if err != nil {
 		t.Fatal(err)
@@ -558,7 +636,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 		t.Fatalf("workbench dimensions = %dx%d", workbenchArtifact.Width, workbenchArtifact.Height)
 	}
 	nightWorkbench := testWorkbench()
-	nightWorkbench.Style = StyleAtelier
+	nightWorkbench.Style = presentation.StyleAtelier
 	nightWorkbench.Theme = ThemeNight
 	nightWorkbenchArtifact, err := renderer.RenderWorkbench(context.Background(), nightWorkbench)
 	if err != nil {
@@ -568,7 +646,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	saveVisualPreview(t, previewRoot, "workbench-atelier-night.png", nightWorkbenchArtifact.Path)
 
 	reviewArtifact, err := renderer.RenderReview(context.Background(), Review{
-		Style: StyleAtelier, Verdict: ReviewVerdictAttention, Headline: "发现 2 项需要判断",
+		Style: presentation.StyleAtelier, Verdict: ReviewVerdictAttention, Headline: "发现 2 项需要判断",
 		Summary: "优先处理高等级问题；完整证据可以随时取回。", Workspace: "codex-link-clawbot",
 		Thread: "移动端审查包", Target: "未提交改动", Highest: "P1",
 		Facts: []Fact{
@@ -593,7 +671,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	}
 
 	commandArtifact, err := renderer.Render(context.Background(), Card{
-		Style:    StyleAtelier,
+		Style:    presentation.StyleAtelier,
 		Variant:  VariantSession,
 		Title:    "Codex 命令 · 会话管理",
 		Subtitle: "仅显示 codex-link-clawbot 可操作能力",
@@ -620,7 +698,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 		t.Fatalf("command artifact dimensions = %dx%d", commandArtifact.Width, commandArtifact.Height)
 	}
 
-	for _, style := range []Style{StyleEditorial, StyleNoir, StyleCute, StyleMinimal} {
+	for _, style := range []presentation.Style{presentation.StyleEditorial, presentation.StyleNoir, presentation.StyleCute, presentation.StyleMinimal} {
 		styledDay, err := renderer.Render(context.Background(), Card{Style: style, Title: "风格预览", Facts: []Fact{{Label: "风格", Value: style.Definition().Name}}})
 		if err != nil {
 			t.Fatal(err)

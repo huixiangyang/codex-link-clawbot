@@ -9,7 +9,7 @@ codex-link-clawbot 必须区分两层概念：
 - Codex 线程：持续的上下文和历史。
 - Codex 轮次：请求被协调器领取后，通过 `turn/start` 创建的一次执行。
 
-`internal/taskqueue` 是 codex-link-clawbot 请求在 Codex 执行前后的可靠队列实现。其中的 `task` 只是内部 Go 类型名；用户界面统一称为“请求”或“执行记录”，绝不称为 Codex 轮次。
+`internal/request` 是 codex-link-clawbot 请求在 Codex 执行前后的可靠队列实现。`internal/execution` 拥有真实轮次阶段状态机，`internal/bridge` 只把它连接到微信发送。内部 `Task` 类型不改变用户概念：界面统一称为“请求”或“执行记录”，绝不称为 Codex 轮次。
 
 ## 2. 核心不变量
 
@@ -18,6 +18,7 @@ codex-link-clawbot 必须区分两层概念：
 3. 全部项目共用一个串行 Codex 执行协调器，不并发修改不同工作目录。
 4. 重启后，未开始的请求继续排队；已中断的执行或发送不自动重试。
 5. 发送前先冻结完整结果和交付物，避免在不确定状态下重复执行 Codex。
+6. 运行阶段只接受当前 `turnId` 的结构化 App Server 事件；重复、跨轮次和终态后的迟到事件全部忽略。
 
 ## 3. codex-link-clawbot 请求状态机
 
@@ -80,15 +81,17 @@ running ── 用户取消 ── cancelled
 进程中只允许一个 codex-link-clawbot 请求处于执行或发送状态：
 
 1. 从全局先进先出队列中领取最早的可执行记录。
-2. 解析并固定受信任项目，在协调器持有执行权时切换工作目录。
+2. 解析并固定受信任工作空间，把根目录显式传给线程创建、恢复和轮次请求；不存在共享工作目录切换。
 3. 使用记录中固定的线程；为空时在该项目新建线程并回写。
-4. 为本请求创建私有交付目录，启动 Codex 轮次并只更新安全阶段信息。
+4. 为本请求创建私有交付目录，启动 Codex 轮次并只更新安全阶段信息。开始、推理、计划、执行、生成最终回答和终态来自 `turn/started`、`item/started`、`turn/plan/updated` 与 `turn/completed`，不从说明文字或输出推断。
 5. Codex 完成后先冻结发送计划，再按入队时的回答方式和视觉风格投递。
 6. 得到确定结果后进入终态，清理敏感负载，然后领取下一项请求。
 
 文件媒体只有在微信明确发送成功后才复制到严格 v3 交付箱。交付记录继承本请求冻结的工作空间和线程，并写入请求 ID、大小与 SHA-256；最近结果因此能和交付详情使用同一来源。再次发送不创建 Codex 轮次，只在摘要复核通过后发送私有副本；副本失效时明确拒绝，不回退为重新执行。
 
 用户在排队后切换项目入口、Codex 线程、视觉风格或回答方式，不改变已有请求。固定项目入口或线程在执行前已不存在时，该请求直接失败，不猜测其他项目或线程。
+
+阶段报告器以当前轮次 ID 为归属边界，并以阶段和计划快照生成签名。默认首条阶段消息等待 15 秒并合并期间变化，之后只发送不同签名；没有定时文字保活。完成、失败或中断事件会冻结报告器并取消待发送阶段，最终结果、失败说明或取消回执成为唯一终态。阶段微信发送失败只丢失中间提示，不能阻塞或取消 Codex 事件流。
 
 ## 7. 微信交互
 
@@ -105,7 +108,7 @@ running ── 用户取消 ── cancelled
 
 ```bash
 go test ./...
-go test -race ./internal/statefile ./internal/taskqueue ./internal/messaging ./internal/ilink ./internal/api ./internal/cli
+go test -race ./internal/statefile ./internal/request ./internal/bridge ./internal/ilink ./internal/management ./internal/cli
 go vet ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./cmd/codex-link-clawbot
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/codex-link-clawbot

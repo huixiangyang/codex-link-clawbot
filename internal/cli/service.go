@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/api"
+	"github.com/huixiangyang/codex-link-clawbot/internal/management"
 	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
@@ -40,18 +40,18 @@ func defaultManagementSocketPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, api.ManagementSocketName), nil
+	return filepath.Join(root, management.ManagementSocketName), nil
 }
 
 func newManagementHTTPClient(socketPath string) (*http.Client, error) {
-	if err := api.ValidateManagementSocket(socketPath); err != nil {
+	if err := management.ValidateManagementSocket(socketPath); err != nil {
 		return nil, err
 	}
 	transport := &http.Transport{
 		DisableKeepAlives: true,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			// 每次拨号前重新校验，避免路径在初检后被替换。
-			if err := api.ValidateManagementSocket(socketPath); err != nil {
+			if err := management.ValidateManagementSocket(socketPath); err != nil {
 				return nil, err
 			}
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", socketPath)
@@ -131,7 +131,7 @@ func requestAdmin(ctx context.Context, socketPath, action string) (runtimecontro
 	return snapshot, nil
 }
 
-func requestDeploymentNotification(ctx context.Context, socketPath string, notice api.DeploymentNotice) (string, error) {
+func requestDeploymentNotification(ctx context.Context, socketPath string, notice management.DeploymentNotice) (string, error) {
 	client, err := newManagementHTTPClient(socketPath)
 	if err != nil {
 		return "", err
@@ -154,7 +154,7 @@ func requestDeploymentNotification(ctx context.Context, socketPath string, notic
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
 		return "", fmt.Errorf("deployment notification returned HTTP %d", response.StatusCode)
 	}
-	var result api.DeploymentNotificationResult
+	var result management.DeploymentNotificationResult
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
@@ -163,7 +163,7 @@ func requestDeploymentNotification(ctx context.Context, socketPath string, notic
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("decode deployment notification: trailing data")
 	}
-	if result.Status != api.DeploymentNotificationSent && result.Status != api.DeploymentNotificationDeferred {
+	if result.Status != management.DeploymentNotificationSent && result.Status != management.DeploymentNotificationDeferred {
 		return "", fmt.Errorf("deployment notification returned invalid status %q", result.Status)
 	}
 	return result.Status, nil

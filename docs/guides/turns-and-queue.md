@@ -32,7 +32,9 @@ Codex 轮次正在执行时发送“追加指令 先修复失败测试”，code
 
 ## 进度与恢复
 
-Codex 的计划、说明和受控活动会转换为简短进度；命令、输出、差异、环境变量和私有路径不会进入微信。最终回答只发送一次。
+长任务进度只消费当前 `turnId` 的结构化通知：`turn/started` 表示轮次开始，`item/started` 的类型表示推理、执行工作项或生成最终回答，`turn/plan/updated` 提供计划完成数与当前步骤，`turn/completed` 提供完成、失败或中断终态。说明文字、命令内容、终端输出、差异、环境变量和私有路径都不能驱动微信进度。
+
+默认前 15 秒只保留最新阶段，超过门槛后只在阶段或计划签名真实改变时发送一次；重复的“仍在执行”不会按时间产生。终态会立即冻结阶段发送，最终回答、失败说明或取消回执只发送一次。阶段只写入当前 codex-link-clawbot 请求，不写回 Codex 线程；微信阶段发送失败也不会中断 Codex 轮次。
 
 重启后的处理规则：
 
@@ -50,8 +52,8 @@ Codex 的计划、说明和受控活动会转换为简短进度；命令、输�
 ## 验证
 
 ```bash
-go test ./internal/taskqueue ./internal/messaging
-go test -race ./internal/taskqueue ./internal/messaging
+go test ./internal/request ./internal/bridge
+go test -race ./internal/request ./internal/bridge
 ```
 
 真机至少连续发送文字、图片和文件，验证排队、追加指令、暂停、继续、取消、重试、重启恢复和冻结文字取回。

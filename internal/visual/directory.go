@@ -3,6 +3,7 @@ package visual
 import (
 	"context"
 	"fmt"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"html/template"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ type DirectorySection struct {
 // Directory 是微信大菜单的专用结构，不复用普通状态卡的扁平选项布局。
 type Directory struct {
 	Theme    Theme
-	Style    Style
+	Style    presentation.Style
 	Title    string
 	Subtitle string
 	Facts    []Fact
@@ -52,7 +53,7 @@ func (r *Renderer) RenderDirectory(ctx context.Context, directory Directory) (*A
 }
 
 func prepareDirectory(directory Directory, now time.Time) (Directory, error) {
-	directory.Style = NormalizeStyle(directory.Style)
+	directory.Style = presentation.NormalizeStyle(directory.Style)
 	if directory.Theme != ThemeDay && directory.Theme != ThemeNight {
 		if hour := now.Hour(); hour >= 7 && hour < 19 {
 			directory.Theme = ThemeDay
@@ -104,8 +105,8 @@ func validDirectoryCode(code string) bool {
 	return true
 }
 
-func directoryTemplateName(style Style) string {
-	return "directory." + string(NormalizeStyle(style))
+func directoryTemplateName(style presentation.Style) string {
+	return "directory." + string(presentation.NormalizeStyle(style))
 }
 
 // lucideIcon 只返回内置 Lucide 路径，模板不会接收用户提供的 SVG 或 HTML。
@@ -134,6 +135,9 @@ func lucideIcon(name string) template.HTML {
 		"list-filter":      `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M7 12h10M10 18h4"/></svg>`,
 		"layout-grid":      `<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>`,
 		"refresh-cw":       `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"/><path d="M3 21v-5h5M3 12A9 9 0 0 1 18.2 5.5L21 8"/><path d="M21 3v5h-5"/></svg>`,
+		"git-fork":         `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="3" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="21" r="2"/><path d="M6 5v11a3 3 0 0 0 3 3h7M18 8v2a4 4 0 0 1-4 4H6"/></svg>`,
+		"list-tree":        `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>`,
+		"rotate-ccw":       `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`,
 	}
 	icon, exists := icons[name]
 	if !exists {

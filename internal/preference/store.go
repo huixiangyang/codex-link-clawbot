@@ -7,57 +7,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
-	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const storeVersion = 1
 
-type ResponseMode string
-
-const (
-	ResponseAdaptive ResponseMode = "adaptive"
-	ResponseReading  ResponseMode = "reading"
-	ResponseVoice    ResponseMode = "voice"
-)
-
-type ResponseModeDefinition struct {
-	ID          ResponseMode
-	Name        string
-	Description string
-}
-
-var responseModeDefinitions = []ResponseModeDefinition{
-	{ID: ResponseAdaptive, Name: "自适应", Description: "短答文字，长答阅读卡"},
-	{ID: ResponseReading, Name: "阅读", Description: "所有回答优先阅读卡"},
-	{ID: ResponseVoice, Name: "语音", Description: "阅读卡与 MP3 配套交付"},
-}
-
-func ResponseModes() []ResponseModeDefinition {
-	return append([]ResponseModeDefinition(nil), responseModeDefinitions...)
-}
-
-func (mode ResponseMode) Valid() bool {
-	switch mode {
-	case ResponseAdaptive, ResponseReading, ResponseVoice:
-		return true
-	default:
-		return false
-	}
-}
-
-func (mode ResponseMode) Definition() ResponseModeDefinition {
-	for _, definition := range responseModeDefinitions {
-		if definition.ID == mode {
-			return definition
-		}
-	}
-	return responseModeDefinitions[0]
-}
-
 type OwnerPreferences struct {
-	Style        visual.Style `json:"style"`
-	ResponseMode ResponseMode `json:"response_mode"`
+	Style        presentation.Style        `json:"style"`
+	ResponseMode presentation.ResponseMode `json:"response_mode"`
 }
 
 type stateFile struct {
@@ -99,7 +57,7 @@ func NewStore(path string) (*Store, error) {
 }
 
 func DefaultOwnerPreferences() OwnerPreferences {
-	return OwnerPreferences{Style: visual.DefaultStyle, ResponseMode: ResponseAdaptive}
+	return OwnerPreferences{Style: presentation.DefaultStyle, ResponseMode: presentation.ResponseAdaptive}
 }
 
 func (store *Store) Get(ownerID string) OwnerPreferences {
@@ -112,14 +70,14 @@ func (store *Store) Get(ownerID string) OwnerPreferences {
 	return preferences
 }
 
-func (store *Store) SetStyle(ownerID string, style visual.Style) error {
+func (store *Store) SetStyle(ownerID string, style presentation.Style) error {
 	if !style.Valid() {
 		return fmt.Errorf("valid visual style is required")
 	}
 	return store.update(ownerID, func(preferences *OwnerPreferences) { preferences.Style = style })
 }
 
-func (store *Store) SetResponseMode(ownerID string, mode ResponseMode) error {
+func (store *Store) SetResponseMode(ownerID string, mode presentation.ResponseMode) error {
 	if !mode.Valid() {
 		return fmt.Errorf("valid response mode is required")
 	}

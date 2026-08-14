@@ -14,9 +14,9 @@ codex-link-clawbot is Codex-only. It is not a general bot framework and does not
 
 | Owner | Current scope |
 | --- | --- |
-| Codex | Global threads across Desktop, CLI, IDE, and App Server clients; actual turns, account, models, review, skills, and tools |
+| Codex | Global threads and one-level fork relations across Desktop, CLI, IDE, and App Server clients; actual turns, account, models, review, skills, and tools |
 | codex-link-clawbot | WeChat text, up to four images, restricted files, and image annotation requests |
-| codex-link-clawbot | Allowlisted workspaces, a remote target-thread focus, durable request queue, cancellation, retry, and restart recovery |
+| codex-link-clawbot | Allowlisted workspaces, a remote target-thread focus, durable request queue, real turn-phase progress, cancellation, retry, and restart recovery |
 | codex-link-clawbot | Successful-request continuation, recent results, source-bound and checksum-verified private deliveries, explicit expiry, and resend |
 | codex-link-clawbot | Adaptive text, five visual systems, mobile review packages, artifacts, and paired image + MP3 voice |
 | codex-link-clawbot | Deployment and recovery notices, remote lock, no-reply diagnosis, draining, and transactional deployment |
@@ -55,7 +55,7 @@ codex-link-clawbot login
 codex-link-clawbot start
 ```
 
-Configuration lives at `~/.codex-link-clawbot/config.json`, uses schema version 5, and separates `codex` from `codex-link-clawbot`. At minimum, define an absolute workspace path Codex may enter. Run `codex-link-clawbot config` for a redacted effective summary. See the Chinese [configuration and settings reference](docs/guides/configuration.md) for workspaces, visual rendering, Piper, and MiMo.
+Configuration lives at `~/.codex-link-clawbot/config.json`, uses schema version 6, and separates `codex` from `codex-link-clawbot`. Long-task progress follows structured App Server turn and item notifications; timed “still running” repeats are not generated. At minimum, define an absolute workspace path Codex may enter. Run `codex-link-clawbot config` for a redacted effective summary. See the Chinese [configuration and settings reference](docs/guides/configuration.md) for workspaces, visual rendering, Piper, and MiMo.
 
 Production runs as a systemd user service. Runtime control uses an owner-only Unix socket:
 
@@ -70,6 +70,8 @@ See [getting started](docs/guides/getting-started.md) and [deployment](docs/oper
 ## WeChat interaction
 
 Send `/` to open the 1080×780 Codex global workbench. Recent threads appear on the left; workspace, total-thread, running-thread, and request-queue telemetry fills the upper right; the lower area directly exposes all 17 WeChat-usable commands. `1`–`4` adopt recent threads, `5` opens `/resume`, `6` starts `/new`, `7` opens execution and queue state, `8` opens workspaces, and `9` refreshes. Stable `11`–`43` actions are also available directly from the home state, with no secondary function directory. “Current target” means where the next WeChat input goes and is deliberately separate from Codex running state.
+
+Send `线程关系图` to render the current target's native parent and direct children as a single 1080×1180 map. It never reads conversation bodies or caches a second thread tree. Numbered nodes are frozen for ten minutes, and every adoption re-reads the thread and revalidates its trusted workspace.
 
 codex-link-clawbot recognizes the complete current [official Codex CLI slash-command catalog](https://learn.chatgpt.com/docs/developer-commands.md?surface=cli): 49 canonical commands plus five aliases. The WeChat interface only displays the 17 commands with stable App Server or remote-adapter implementations. TUI-, Windows-, and experimental-only commands are excluded from the workbench, available-command catalog, and text fallback. Unknown slash-prefixed text is rejected and never forwarded as a Codex prompt.
 

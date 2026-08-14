@@ -107,6 +107,8 @@ func TestMigrateStateRejectsPreRenameConfigurations(t *testing.T) {
 		{name: "flat", config: `{"codex":{"command":"codex"},"projects":[{"id":"app","name":"App","root":"/srv/app"}]}`},
 		{name: "v2", config: `{"schema_version":2,"codex":{"command":"codex"},"codex-link-clawbot":{}}`},
 		{name: "v3", config: `{"schema_version":3,"codex":{"command":"codex"},"codex-link-clawbot":{}}`},
+		{name: "v5 timed progress", config: `{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"reply":{"progress":{"message_interval_seconds":45}}}}`},
+		{name: "v6 retired timed progress field", config: `{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"reply":{"progress":{"enabled":true,"typing_interval_seconds":8,"first_message_delay_seconds":15,"message_interval_seconds":45}}}}`},
 		{name: "old brand key", config: `{"schema_version":5,"codex":{"command":"codex"},"weclaw":{}}`},
 	}
 	for _, test := range tests {
@@ -122,9 +124,9 @@ func TestMigrateStateRejectsPreRenameConfigurations(t *testing.T) {
 	}
 }
 
-func TestMigrateStateAcceptsCurrentConfigurationV5(t *testing.T) {
+func TestMigrateStateAcceptsCurrentConfigurationV6(t *testing.T) {
 	root := t.TempDir()
-	current := `{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[],"reply":{},"security":{}}}`
+	current := `{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[],"reply":{},"security":{}}}`
 	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte(current), 0o640); err != nil {
 		t.Fatal(err)
@@ -206,10 +208,10 @@ func TestMigrateStateRemovesOnlyProjectWatchNotices(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesLegacyControlStateWithEmptyV13(t *testing.T) {
+func TestMigrateStateReplacesLegacyControlStateWithEmptyV14(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"session.new"}}}`
+	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"thread.new"}}}`
 	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +222,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV13(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 13,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 14,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
@@ -228,7 +230,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV13(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesV2ControlStateWithEmptyV13(t *testing.T) {
+func TestMigrateStateReplacesV2ControlStateWithEmptyV14(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":2,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
@@ -242,15 +244,15 @@ func TestMigrateStateReplacesV2ControlStateWithEmptyV13(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 13,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 14,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }
 
-func TestMigrateStateReplacesV12ControlStateWithEmptyV13(t *testing.T) {
+func TestMigrateStateReplacesV13ControlStateWithEmptyV14(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":12,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
+	legacy := `{"version":13,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +263,7 @@ func TestMigrateStateReplacesV12ControlStateWithEmptyV13(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 13,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 14,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }
@@ -290,7 +292,7 @@ func TestMigrateStateRejectsUnknownControlStateField(t *testing.T) {
 
 func TestMigrateStateDestroysRetiredWorkflowFile(t *testing.T) {
 	root := t.TempDir()
-	configData := `{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{},"security":{}}}`
+	configData := `{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{},"security":{}}}`
 	configPath := filepath.Join(root, "config.json")
 	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
 		t.Fatal(err)

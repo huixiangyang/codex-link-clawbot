@@ -3,6 +3,7 @@ package visual
 import (
 	"context"
 	"fmt"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"strings"
 	"time"
 )
@@ -56,7 +57,7 @@ type WorkbenchCommandGroup struct {
 // Workbench 是全局首页的专用视图，线程事实与控制动作保持结构隔离。
 type Workbench struct {
 	Theme    Theme
-	Style    Style
+	Style    presentation.Style
 	Title    string
 	Subtitle string
 	State    string
@@ -82,7 +83,7 @@ func (r *Renderer) RenderWorkbench(ctx context.Context, workbench Workbench) (*A
 }
 
 func prepareWorkbench(workbench Workbench, now time.Time) (Workbench, error) {
-	workbench.Style = NormalizeStyle(workbench.Style)
+	workbench.Style = presentation.NormalizeStyle(workbench.Style)
 	if workbench.Theme != ThemeDay && workbench.Theme != ThemeNight {
 		if hour := now.Hour(); hour >= 7 && hour < 19 {
 			workbench.Theme = ThemeDay

@@ -22,7 +22,7 @@ func TestConfigStatusRedactsSecrets(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &status); err != nil {
 		t.Fatalf("decode config status: %v", err)
 	}
-	if status.Status != "valid" || status.SchemaVersion != 5 || len(status.Clawbot.ProjectEntries) != 1 {
+	if status.Status != "valid" || status.SchemaVersion != 6 || len(status.Clawbot.ProjectEntries) != 1 {
 		t.Fatalf("unexpected status: %#v", status)
 	}
 	if !status.Clawbot.Reply.Visual || !status.Clawbot.Reply.Progress || status.Clawbot.Reply.Voice {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/request"
 )
 
 type testDrainer struct{ draining bool }
@@ -13,7 +13,7 @@ type testDrainer struct{ draining bool }
 func (drainer *testDrainer) SetDraining(draining bool) { drainer.draining = draining }
 
 func TestControllerDrainIncludesIngressAndCursorCommit(t *testing.T) {
-	store, err := taskqueue.NewStore(filepath.Join(t.TempDir(), "tasks"))
+	store, err := request.NewStore(filepath.Join(t.TempDir(), "tasks"))
 	if err != nil {
 		t.Fatal(err)
 	}

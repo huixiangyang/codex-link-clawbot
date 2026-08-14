@@ -53,11 +53,11 @@ jobs:
             target: FuzzDecodeConfig
           - package: ./internal/ilink
             target: FuzzDecodeGetUpdatesResponse
-          - package: ./internal/messaging
+          - package: ./internal/bridge
             target: FuzzValidateInboundFile
-          - package: ./internal/messaging
+          - package: ./internal/bridge
             target: FuzzValidatedImageExtension
-          - package: ./internal/codex
+          - package: ./internal/codex/appserver
             target: FuzzCodexEventDecoders
     steps:
       - uses: actions/checkout@v4

@@ -57,8 +57,8 @@
 测试分别在写入、文件同步、改名和目录同步边界注入失败，并证明旧文件仍可严格读取；同时覆盖符号链接祖先、容量、未知字段、截断 JSON、事务孤儿、并发运行时/迁移锁、凭据迁移、待阅通知去重与过期，以及清单篡改。
 
 ```bash
-go test ./internal/statefile ./internal/config ./internal/preference ./internal/project ./internal/session ./internal/ilink ./internal/taskqueue ./internal/messaging ./internal/cli
-go test -race ./internal/statefile ./internal/taskqueue ./internal/messaging ./internal/ilink ./internal/api ./internal/cli
+go test ./internal/statefile ./internal/config ./internal/preference ./internal/workspace ./internal/thread ./internal/ilink ./internal/request ./internal/bridge ./internal/cli
+go test -race ./internal/statefile ./internal/request ./internal/bridge ./internal/ilink ./internal/management ./internal/cli
 ```
 
 ## 7. 下一步边界

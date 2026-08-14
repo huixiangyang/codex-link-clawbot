@@ -2,6 +2,7 @@ package visual
 
 import (
 	"fmt"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -23,7 +24,7 @@ type DocumentBlock struct {
 
 type Document struct {
 	Theme      Theme
-	Style      Style
+	Style      presentation.Style
 	Title      string
 	Blocks     []DocumentBlock
 	PageNumber int

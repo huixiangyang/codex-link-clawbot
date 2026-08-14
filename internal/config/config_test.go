@@ -53,7 +53,7 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if len(entries) != 1 || entries[0].ID != "workspace" || !filepath.IsAbs(entries[0].Root) {
 		t.Fatalf("unexpected default project entries: %#v", entries)
 	}
-	if !reply.Progress.Enabled || reply.Progress.TypingIntervalSeconds != 8 || reply.Progress.FirstMessageDelaySeconds != 15 || reply.Progress.MessageIntervalSeconds != 45 {
+	if !reply.Progress.Enabled || reply.Progress.TypingIntervalSeconds != 8 || reply.Progress.FirstMessageDelaySeconds != 15 {
 		t.Fatalf("unexpected default progress config: %#v", reply.Progress)
 	}
 	if !reply.Visual.Enabled || !reply.Visual.LongReplies || reply.Visual.LongReplyMinRunes != 900 {
@@ -73,7 +73,7 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Clawbot.Reply.Voice.Providers = []VoiceProviderConfig{{
 		ID: "mimo", Type: "mimo", TimeoutSeconds: 90,
-		MiMo: &MiMoVoiceProviderConfig{BaseURL: "https://api.xiaomimimo.com/v1", Model: "mimo-v2.5-tts", Voice: "茉莉"},
+		MiMo: &MiMoVoiceProviderConfig{BaseURL: "https://management.xiaomimimo.com/v1", Model: "mimo-v2.5-tts", Voice: "茉莉"},
 	}}
 	loadEnv(cfg)
 	if cfg.Codex.Command != "/opt/codex" || cfg.Codex.Model != "gpt-test" {
@@ -114,12 +114,12 @@ func TestLoadKeepsVisualDefaultWhenSectionIsOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := []byte(`{
-  "schema_version": 5,
+  "schema_version": 6,
   "codex": {"command": "codex", "model": ""},
   "codex-link-clawbot": {
     "project_entries": [{"id": "project", "name": "Project", "root": "/srv/project"}],
     "reply": {
-      "progress": {"enabled": true, "typing_interval_seconds": 8, "first_message_delay_seconds": 15, "message_interval_seconds": 45}
+      "progress": {"enabled": true, "typing_interval_seconds": 8, "first_message_delay_seconds": 15}
     },
     "security": {}
   }
@@ -149,6 +149,13 @@ func TestLoadRejectsFlatConfigurationSchema(t *testing.T) {
 	}
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("Load() error = %v, want flat schema rejection", err)
+	}
+}
+
+func TestDecodeRejectsRetiredTimedProgressInterval(t *testing.T) {
+	_, err := decodeConfig([]byte(`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{"progress":{"enabled":true,"typing_interval_seconds":8,"first_message_delay_seconds":15,"message_interval_seconds":45}},"security":{}}}`))
+	if err == nil || !strings.Contains(err.Error(), "message_interval_seconds") {
+		t.Fatalf("decodeConfig() error = %v, want retired interval rejection", err)
 	}
 }
 
@@ -189,9 +196,9 @@ func TestLoadRejectsRemovedProjectQuickTasks(t *testing.T) {
 
 func TestDecodeRejectsRemovedProjectMonitoringFields(t *testing.T) {
 	for _, data := range []string{
-		`{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","service_name":"app.service"}],"reply":{},"security":{}}}`,
-		`{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","health_url":"http://127.0.0.1/health"}],"reply":{},"security":{}}}`,
-		`{"schema_version":5,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"project_watches":[],"reply":{},"security":{}}}`,
+		`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","service_name":"app.service"}],"reply":{},"security":{}}}`,
+		`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","health_url":"http://127.0.0.1/health"}],"reply":{},"security":{}}}`,
+		`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"project_watches":[],"reply":{},"security":{}}}`,
 	} {
 		if _, err := decodeConfig([]byte(data)); err == nil || !strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("decodeConfig() error = %v, want removed project monitoring field rejection", err)
@@ -251,7 +258,7 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 		t.Fatalf("insecure base URL error = %v", err)
 	}
 	mimo := cfg.Clawbot.Reply.Voice.Providers[0].MiMo
-	mimo.BaseURL = "https://api.xiaomimimo.com/v1"
+	mimo.BaseURL = "https://management.xiaomimimo.com/v1"
 	mimo.Model = "mimo-v2.5-tts-voiceclone"
 	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), ".model") {
 		t.Fatalf("unsupported model error = %v", err)
@@ -302,7 +309,7 @@ func TestLoadRejectsRemovedSingleProviderVoiceSchema(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"},"voice":{"enabled":true,"base_url":"https://api.xiaomimimo.com/v1","api_key":"test","model":"mimo-v2.5-tts","voice":"茉莉"}}`)
+	data := []byte(`{"projects":[{"id":"project","name":"Project","root":"/srv/project"}],"codex":{"command":"codex"},"voice":{"enabled":true,"base_url":"https://management.xiaomimimo.com/v1","api_key":"test","model":"mimo-v2.5-tts","voice":"茉莉"}}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}

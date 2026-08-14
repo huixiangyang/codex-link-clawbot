@@ -54,7 +54,7 @@ jobs:
         run: go test ./... -count=1 -race
 
       - name: Verify fuzz seed corpus
-        run: go test ./internal/config ./internal/ilink ./internal/messaging ./internal/codex -count=1
+        run: go test ./internal/config ./internal/ilink ./internal/bridge ./internal/codex/appserver -count=1
 
   build:
     needs: quality

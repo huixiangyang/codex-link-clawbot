@@ -56,7 +56,7 @@
 
 ```json
 {
-  "version": 13,
+  "version": 14,
   "owners": {
     "owner": {
       "revision": "random-id",
@@ -104,7 +104,7 @@
 
 - 当前运行状态与 Codex 是否就绪。
 - 微信监控是否健康、最后成功轮询距今多久、是否卡在待提交批次。
-- 当前 Codex 轮次阶段、codex-link-clawbot 请求队列是否暂停或远程锁定。
+- 当前 codex-link-clawbot 请求保存的真实 Codex 轮次阶段、请求队列是否暂停或远程锁定；阶段只能由当前 `turnId` 的结构化通知更新。
 - 本次运行最近一次持久化错误分类。
 - 最近投递是成功、明确失败还是可能部分可见。
 

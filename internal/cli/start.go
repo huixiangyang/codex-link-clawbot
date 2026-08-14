@@ -2,37 +2,21 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
-	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/api"
-	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
+	"github.com/huixiangyang/codex-link-clawbot/internal/app"
 	"github.com/huixiangyang/codex-link-clawbot/internal/config"
 	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
-	"github.com/huixiangyang/codex-link-clawbot/internal/messaging"
-	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
-	"github.com/huixiangyang/codex-link-clawbot/internal/project"
-	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
-	"github.com/huixiangyang/codex-link-clawbot/internal/session"
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
-	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
-	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
 
-var (
-	startDrainingFlag bool
-)
+var startDrainingFlag bool
 
 func init() {
 	startCmd.Flags().BoolVar(&startDrainingFlag, "draining", false, "start without claiming queued tasks")
@@ -46,330 +30,43 @@ var startCmd = &cobra.Command{
 	RunE:  runStart,
 }
 
-func runStart(cmd *cobra.Command, args []string) error {
+func runStart(_ *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	stateRoot, err := statefile.DefaultRoot()
 	if err != nil {
 		return fmt.Errorf("resolve state root: %w", err)
 	}
-	stateLease, err := statefile.Acquire(stateRoot, statefile.LeaseRuntime)
+	lease, err := statefile.Acquire(stateRoot, statefile.LeaseRuntime)
 	if err != nil {
 		return fmt.Errorf("acquire runtime state lease: %w", err)
 	}
 	defer func() {
-		if err := stateLease.Close(); err != nil {
-			log.Printf("release runtime state lease: %v", err)
+		if closeErr := lease.Close(); closeErr != nil {
+			log.Printf("release runtime state lease: %v", closeErr)
 		}
 	}()
 
-	// Load all accounts
 	accounts, err := ilink.LoadAllCredentials()
 	if err != nil {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}
-
-	// No accounts — trigger login
 	if len(accounts) == 0 {
 		log.Println("No WeChat accounts found, starting login...")
-		creds, err := doLogin(ctx)
-		if err != nil {
-			return fmt.Errorf("login failed: %w", err)
+		credentials, loginErr := doLogin(ctx)
+		if loginErr != nil {
+			return fmt.Errorf("login failed: %w", loginErr)
 		}
-		accounts = append(accounts, creds)
+		accounts = append(accounts, credentials)
 	}
-
-	// 配置只允许单一 Codex App Server，旧 agents/default_agent 字段会被严格拒绝。
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
-
-	entries := cfg.Clawbot.ProjectEntries
-	replyConfig := cfg.Clawbot.Reply
-	if len(entries) == 1 && entries[0].ID == "workspace" {
-		if err := os.MkdirAll(entries[0].Root, 0o700); err != nil {
-			return fmt.Errorf("create default project root: %w", err)
-		}
-	}
-	projectManager, err := project.NewManager(entries, "")
-	if err != nil {
-		return fmt.Errorf("initialize project manager: %w", err)
-	}
-	initialProject := projectManager.List()[0]
-	codex := codex.NewCodex(codex.CodexConfig{
-		Command: cfg.Codex.Command,
-		Cwd:     initialProject.Root,
-		Env:     cfg.Codex.Env,
-		Model:   cfg.Codex.Model,
-	})
-	log.Printf("Initializing Codex App Server (command=%s, project=%s, cwd=%s, model=%s)...", cfg.Codex.Command, initialProject.ID, initialProject.Root, cfg.Codex.Model)
-	if err := codex.Start(ctx); err != nil {
-		return fmt.Errorf("initialize codex: %w", err)
-	}
-	defer codex.Stop()
-	handler := messaging.NewHandler(codex)
-	controlStateStore, controlStateErr := messaging.NewControlStateStore("")
-	if controlStateErr != nil {
-		return fmt.Errorf("initialize persistent control state: %w", controlStateErr)
-	}
-	handler.SetControlStateStore(controlStateStore)
-	handler.SetProjectManager(projectManager)
-	preferenceStore, preferenceErr := preference.NewStore("")
-	if preferenceErr != nil {
-		return fmt.Errorf("initialize owner preferences: %w", preferenceErr)
-	}
-	handler.SetPreferenceStore(preferenceStore)
-	if replyConfig.Visual.Enabled {
-		visualRenderer, visualErr := visual.NewRenderer(visual.Config{BrowserCommand: replyConfig.Visual.BrowserCommand})
-		if visualErr != nil {
-			return fmt.Errorf("initialize visual control cards: %w", visualErr)
-		}
-		handler.SetVisualRenderer(visualRenderer)
-		handler.SetVisualReplyConfig(replyConfig.Visual.LongReplies, replyConfig.Visual.LongReplyMinRunes)
-		log.Printf("Visual control cards enabled (browser=%s)", visualRenderer.BrowserCommand())
-	}
-	sessionManager, err := session.NewManager("")
-	if err != nil {
-		return fmt.Errorf("initialize session manager: %w", err)
-	}
-	handler.SetSessionManager(sessionManager)
-	taskStore, err := taskqueue.NewStore("")
-	if err != nil {
-		return fmt.Errorf("initialize persistent task queue: %w", err)
-	}
-	pendingNotices, err := messaging.NewPendingNoticeStore("")
-	if err != nil {
-		return fmt.Errorf("initialize pending notice store: %w", err)
-	}
-	handler.SetPendingNoticeStore(pendingNotices)
-	coordinator, err := messaging.NewCoordinator(handler, taskStore)
-	if err != nil {
-		return fmt.Errorf("initialize task coordinator: %w", err)
-	}
-	handler.SetTaskQueue(taskStore, coordinator)
-	var deploymentMessageHold atomic.Bool
-	deploymentMessageHold.Store(startDrainingFlag)
-	runtimeDrainer := &startupRuntimeDrainer{coordinator: coordinator, messageHold: &deploymentMessageHold}
-	runtimeController := runtimecontrol.New(Version, taskStore, runtimeDrainer)
-	runtimeController.SetCodexReady(true)
-	if startDrainingFlag {
-		// 部署验收期间禁止新版本提前领取旧队列，确认健康后再由部署事务恢复。
-		runtimeController.Drain()
-	}
-	handler.SetRuntimeLifecycle(runtimeController)
-	defer runtimeController.SetStopping()
-	deliveryStore, err := messaging.NewDeliveryStore("")
-	if err != nil {
-		return fmt.Errorf("initialize delivery store: %w", err)
-	}
-	handler.SetDeliveryStore(deliveryStore)
-	remoteLock, err := messaging.NewRemoteLock("", cfg.Clawbot.Security.RemoteLockCode)
-	if err != nil {
-		return fmt.Errorf("initialize remote lock: %w", err)
-	}
-	handler.SetRemoteLock(remoteLock)
-	if replyConfig.Voice.Enabled {
-		providers := make([]messaging.VoiceProviderEntry, 0, len(replyConfig.Voice.Providers))
-		providerIDs := make([]string, 0, len(replyConfig.Voice.Providers))
-		for _, providerConfig := range replyConfig.Voice.Providers {
-			var provider messaging.VoiceProvider
-			switch providerConfig.Type {
-			case "piper":
-				provider = messaging.NewPiperVoiceProvider(providerConfig.ID, messaging.PiperVoiceProviderConfig{
-					Command:     providerConfig.Piper.Command,
-					Model:       providerConfig.Piper.Model,
-					ModelConfig: providerConfig.Piper.ModelConfig,
-					LengthScale: providerConfig.Piper.LengthScale,
-				})
-			case "mimo":
-				provider = messaging.NewMiMoVoiceProvider(providerConfig.ID, messaging.MiMoVoiceProviderConfig{
-					BaseURL:     providerConfig.MiMo.BaseURL,
-					APIKey:      providerConfig.MiMo.APIKey,
-					Model:       providerConfig.MiMo.Model,
-					Voice:       providerConfig.MiMo.Voice,
-					StylePrompt: providerConfig.MiMo.StylePrompt,
-				})
-			}
-			providers = append(providers, messaging.VoiceProviderEntry{
-				Provider: provider,
-				Timeout:  time.Duration(providerConfig.TimeoutSeconds) * time.Second,
-			})
-			providerIDs = append(providerIDs, providerConfig.ID)
-		}
-		handler.SetVoiceBriefing(messaging.NewVoiceBriefing(replyConfig.Voice.FFmpegCommand, providers))
-		log.Printf("Voice briefing enabled (providers=%s, delivery=mp3-file)", strings.Join(providerIDs, ","))
-	}
-
-	handler.SetProgressConfig(messaging.ProgressConfig{
-		Enabled:           replyConfig.Progress.Enabled,
-		TypingInterval:    time.Duration(replyConfig.Progress.TypingIntervalSeconds) * time.Second,
-		FirstMessageDelay: time.Duration(replyConfig.Progress.FirstMessageDelaySeconds) * time.Second,
-		MessageInterval:   time.Duration(replyConfig.Progress.MessageIntervalSeconds) * time.Second,
-	})
-
-	// 复用同一组已登录客户端启动仅限本机 Unix socket 的管理面。
-	var clients []*ilink.Client
-	for _, credentials := range accounts {
-		client := ilink.NewClient(credentials)
-		clients = append(clients, client)
-		coordinator.RegisterClient(client)
-		owner := strings.TrimSpace(credentials.ILinkUserID)
-		if owner == "" {
-			return fmt.Errorf("account owner is missing")
-		}
-	}
-	managementSocket := filepath.Join(stateRoot, api.ManagementSocketName)
-	managementServer := api.NewManagementServer(runtimeController, managementSocket, func(_ context.Context, notice api.DeploymentNotice) (api.DeploymentNotificationResult, error) {
-		message := fmt.Sprintf("codex-link-clawbot 已完成部署并恢复服务。\n版本：%s → %s\n服务：%s\n状态：已就绪", notice.FromVersion, notice.ToVersion, notice.Service)
-		var failures []error
-		for _, credentials := range accounts {
-			ownerID := strings.TrimSpace(credentials.ILinkUserID)
-			if ownerID == "" {
-				failures = append(failures, fmt.Errorf("account owner is missing"))
-				continue
-			}
-			if _, _, err := pendingNotices.Enqueue(ownerID, messaging.PendingNoticeInput{
-				Kind: messaging.PendingNoticeDeployment, DedupKey: "deployment:" + notice.ToVersion + ":" + notice.Service,
-				Title: "codex-link-clawbot 部署完成", Body: message, TTL: 7 * 24 * time.Hour,
-			}); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		if err := errors.Join(failures...); err != nil {
-			return api.DeploymentNotificationResult{}, err
-		}
-		return api.DeploymentNotificationResult{Status: api.DeploymentNotificationDeferred}, nil
-	})
-	managementErr := make(chan error, 1)
-	go func() {
-		managementErr <- managementServer.Run(ctx)
-	}()
-	select {
-	case <-managementServer.Ready():
-	case err := <-managementErr:
-		return fmt.Errorf("start local management server: %w", err)
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-
-	handler.SetBridgeInfo(Version)
-
-	// 全部持久状态均已严格打开；后续记录只代表本次运行期故障。
-	statefile.ClearLastFailure()
-	coordinatorErr := make(chan error, 1)
-	go func() {
-		coordinatorErr <- coordinator.Run(ctx)
-	}()
-
-	// Codex 就绪后才启动消息轮询。
-	log.Printf("Starting message bridge for %d account(s)...", len(accounts))
-	monitorProbes := make([]ilink.MonitorObserver, 0, len(accounts))
-	for range accounts {
-		monitorProbes = append(monitorProbes, runtimeController.NewMonitorProbe())
-	}
-	runtimeController.SetReady()
-
-	var wg sync.WaitGroup
-	for index, creds := range accounts {
-		wg.Add(1)
-		go func(c *ilink.Credentials, monitorProbe ilink.MonitorObserver) {
-			defer wg.Done()
-			runMonitorWithRestart(ctx, c, handler, monitorProbe, &deploymentMessageHold)
-		}(creds, monitorProbes[index])
-	}
-
-	monitorsDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(monitorsDone)
-	}()
-
-	select {
-	case <-monitorsDone:
-		log.Println("All monitors stopped")
-		return nil
-	case <-codex.Done():
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		if exitErr := codex.ExitError(); exitErr != nil {
-			return fmt.Errorf("codex app-server exited: %w", exitErr)
-		}
-		return fmt.Errorf("codex app-server exited unexpectedly")
-	case err := <-coordinatorErr:
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		return fmt.Errorf("task coordinator stopped: %w", err)
-	case err := <-managementErr:
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		return fmt.Errorf("local management server stopped: %w", err)
-	case <-ctx.Done():
-		<-monitorsDone
-		return nil
-	}
+	return app.Run(ctx, cfg, accounts, app.Options{Version: Version, StateRoot: stateRoot, Draining: startDrainingFlag})
 }
 
-// runMonitorWithRestart runs a monitor with automatic restart on failure.
-func runMonitorWithRestart(ctx context.Context, creds *ilink.Credentials, handler *messaging.Handler, observer ilink.MonitorObserver, messageHold *atomic.Bool) {
-	const maxRestartDelay = 30 * time.Second
-	restartDelay := 3 * time.Second
-
-	for {
-		log.Printf("[%s] Starting monitor...", ilink.LogLabel(creds.ILinkBotID))
-
-		client := ilink.NewClient(creds)
-		monitor, err := ilink.NewMonitor(client, handler.HandleMessage, observer)
-		if err != nil {
-			log.Printf("[%s] Failed to create monitor: %v", ilink.LogLabel(creds.ILinkBotID), err)
-		} else {
-			if messageHold != nil {
-				monitor.SetMessageHold(messageHold.Load)
-			}
-			err = monitor.Run(ctx)
-		}
-
-		// If context is cancelled, exit
-		if ctx.Err() != nil {
-			return
-		}
-
-		log.Printf("[%s] Monitor stopped: %v, restarting in %s", ilink.LogLabel(creds.ILinkBotID), err, restartDelay)
-		select {
-		case <-time.After(restartDelay):
-		case <-ctx.Done():
-			return
-		}
-
-		// Exponential backoff for restarts, capped
-		restartDelay *= 2
-		if restartDelay > maxRestartDelay {
-			restartDelay = maxRestartDelay
-		}
-	}
-}
-
-type startupRuntimeDrainer struct {
-	coordinator *messaging.Coordinator
-	messageHold *atomic.Bool
-}
-
-func (drainer *startupRuntimeDrainer) SetDraining(draining bool) {
-	if drainer.coordinator != nil {
-		drainer.coordinator.SetDraining(draining)
-	}
-	if !draining && drainer.messageHold != nil {
-		drainer.messageHold.Store(false)
-	}
-}
-
-// doLogin runs the interactive QR login flow and returns credentials.
+// doLogin 运行交互式二维码登录，只负责 CLI 输入输出。
 func doLogin(ctx context.Context) (*ilink.Credentials, error) {
 	fmt.Println("Fetching QR code...")
 	qr, err := ilink.FetchQRCode(ctx)
@@ -380,42 +77,36 @@ func doLogin(ctx context.Context) (*ilink.Credentials, error) {
 	fmt.Println("\nScan this QR code with WeChat:")
 	fmt.Println()
 	qrterminal.GenerateWithConfig(qr.QRCodeImgContent, qrterminal.Config{
-		Level:          qrterminal.L,
-		Writer:         os.Stdout,
-		HalfBlocks:     true,
-		BlackChar:      qrterminal.BLACK_BLACK,
-		WhiteBlackChar: qrterminal.WHITE_BLACK,
-		WhiteChar:      qrterminal.WHITE_WHITE,
-		BlackWhiteChar: qrterminal.BLACK_WHITE,
-		QuietZone:      1,
+		Level: qrterminal.L, Writer: os.Stdout, HalfBlocks: true,
+		BlackChar: qrterminal.BLACK_BLACK, WhiteBlackChar: qrterminal.WHITE_BLACK,
+		WhiteChar: qrterminal.WHITE_WHITE, BlackWhiteChar: qrterminal.BLACK_WHITE, QuietZone: 1,
 	})
 	fmt.Printf("\nQR URL: %s\n", qr.QRCodeImgContent)
 	fmt.Println("\nWaiting for scan...")
 
 	lastStatus := ""
-	creds, err := ilink.PollQRStatus(ctx, qr.QRCode, func(status string) {
-		if status != lastStatus {
-			lastStatus = status
-			switch status {
-			case "scaned":
-				fmt.Println("QR code scanned! Please confirm on your phone.")
-			case "confirmed":
-				fmt.Println("Login confirmed!")
-			case "expired":
-				fmt.Println("QR code expired.")
-			}
+	credentials, err := ilink.PollQRStatus(ctx, qr.QRCode, func(status string) {
+		if status == lastStatus {
+			return
+		}
+		lastStatus = status
+		switch status {
+		case "scaned":
+			fmt.Println("QR code scanned! Please confirm on your phone.")
+		case "confirmed":
+			fmt.Println("Login confirmed!")
+		case "expired":
+			fmt.Println("QR code expired.")
 		}
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	if err := ilink.SaveCredentials(creds); err != nil {
+	if err := ilink.SaveCredentials(credentials); err != nil {
 		return nil, fmt.Errorf("failed to save credentials: %w", err)
 	}
-
-	dir, _ := ilink.CredentialsPath()
-	fmt.Printf("\nLogin successful! Credentials saved to %s\n", dir)
-	fmt.Printf("Bot ID: %s\n\n", creds.ILinkBotID)
-	return creds, nil
+	directory, _ := ilink.CredentialsPath()
+	fmt.Printf("\nLogin successful! Credentials saved to %s\n", directory)
+	fmt.Printf("Bot ID: %s\n\n", credentials.ILinkBotID)
+	return credentials, nil
 }

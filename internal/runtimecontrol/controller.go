@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/taskqueue"
+	"github.com/huixiangyang/codex-link-clawbot/internal/request"
 )
 
 type State string
@@ -63,11 +63,11 @@ type Controller struct {
 	healthy           int
 	pendingBatches    map[*MonitorProbe]time.Time
 	lastWeChatSuccess time.Time
-	tasks             *taskqueue.Store
+	tasks             *request.Store
 	drainer           Drainer
 }
 
-func New(version string, tasks *taskqueue.Store, drainer Drainer) *Controller {
+func New(version string, tasks *request.Store, drainer Drainer) *Controller {
 	if version == "" {
 		version = "dev"
 	}
@@ -152,7 +152,7 @@ func (controller *Controller) Snapshot() Snapshot {
 	}
 	lastWeChatSuccess := controller.lastWeChatSuccess
 	controller.mu.Unlock()
-	queue := taskqueue.QueueStatus{}
+	queue := request.QueueStatus{}
 	if controller.tasks != nil {
 		queue = controller.tasks.QueueStatus()
 	}

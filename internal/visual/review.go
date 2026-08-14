@@ -3,6 +3,7 @@ package visual
 import (
 	"context"
 	"fmt"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"strings"
 	"time"
 )
@@ -25,7 +26,7 @@ type ReviewFinding struct {
 // Review 是移动端代码审查的专用结构，只保留手机上做判断所需的信息。
 type Review struct {
 	Theme     Theme
-	Style     Style
+	Style     presentation.Style
 	Verdict   ReviewVerdict
 	Headline  string
 	Summary   string
@@ -53,7 +54,7 @@ func (r *Renderer) RenderReview(ctx context.Context, review Review) (*Artifact, 
 }
 
 func prepareReview(review Review, now time.Time) (Review, error) {
-	review.Style = NormalizeStyle(review.Style)
+	review.Style = presentation.NormalizeStyle(review.Style)
 	if review.Theme != ThemeDay && review.Theme != ThemeNight {
 		review.Theme = ThemeForTime(now)
 	}
@@ -144,6 +145,6 @@ func validReviewPriority(priority string) bool {
 	}
 }
 
-func reviewTemplateName(style Style) string {
-	return "review." + string(NormalizeStyle(style))
+func reviewTemplateName(style presentation.Style) string {
+	return "review." + string(presentation.NormalizeStyle(style))
 }

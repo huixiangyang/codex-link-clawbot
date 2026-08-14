@@ -107,7 +107,7 @@ func migrateState(root string) error {
 	if err := removeRetiredPromptTemplates(filepath.Join(root, "workflows.json")); err != nil {
 		return fmt.Errorf("remove prompt templates: %w", err)
 	}
-	if err := validateConfigurationV5(filepath.Join(root, "config.json")); err != nil {
+	if err := validateConfigurationV6(filepath.Join(root, "config.json")); err != nil {
 		return fmt.Errorf("validate config: %w", err)
 	}
 	if err := migrateDeliveryLibrary(root); err != nil {
@@ -125,7 +125,7 @@ func migrateState(root string) error {
 	return syncDirectoryPath(root)
 }
 
-// migrateControlState 丢弃旧版短期菜单和回执；v13 在首页平铺微信端真实可用的 Codex 命令并取消二级入口。
+// migrateControlState 丢弃旧版短期菜单和回执；v14 为目标线程加入原生关系图并重排管理编号。
 func migrateControlState(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -153,21 +153,21 @@ func migrateControlState(path string) error {
 		return fmt.Errorf("control state schema is invalid")
 	}
 	switch state.Version {
-	case 13:
+	case 14:
 		return os.Chmod(path, 0o600)
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13:
 		return writePrivateJSONAtomic(path, struct {
 			Version  int                        `json:"version"`
 			Owners   map[string]json.RawMessage `json:"owners"`
 			Receipts map[string]json.RawMessage `json:"receipts"`
-		}{Version: 13, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
+		}{Version: 14, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
 	default:
 		return fmt.Errorf("unsupported control state version %d", state.Version)
 	}
 }
 
 // removeRetiredPromptTemplates 直接销毁当前命名空间中已下线的模板状态。
-// 历史配置不在这里改写，而是由严格 v5 校验直接拒绝。
+// 历史配置不在这里改写，而是由严格 v6 校验直接拒绝。
 func removeRetiredPromptTemplates(workflowPath string) error {
 	workflowInfo, workflowErr := os.Lstat(workflowPath)
 	if workflowErr == nil {
@@ -183,8 +183,8 @@ func removeRetiredPromptTemplates(workflowPath string) error {
 	return nil
 }
 
-// validateConfigurationV5 拒绝旧品牌与旧结构；项目更名后不再迁移历史配置。
-func validateConfigurationV5(path string) error {
+// validateConfigurationV6 拒绝定时重复进度字段；阶段五只保留真实阶段更新节奏。
+func validateConfigurationV6(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -217,7 +217,7 @@ func validateConfigurationV5(path string) error {
 		return fmt.Errorf("schema_version is required")
 	}
 	var version int
-	if err := json.Unmarshal(rawVersion, &version); err != nil || version != 5 {
+	if err := json.Unmarshal(rawVersion, &version); err != nil || version != 6 {
 		return fmt.Errorf("unsupported configuration schema version")
 	}
 	if _, exists := fields["codex"]; !exists {
@@ -225,6 +225,34 @@ func validateConfigurationV5(path string) error {
 	}
 	if _, exists := fields["codex-link-clawbot"]; !exists {
 		return fmt.Errorf("codex-link-clawbot is required")
+	}
+	var clawbot struct {
+		ProjectEntries json.RawMessage `json:"project_entries"`
+		Reply          json.RawMessage `json:"reply"`
+		Security       json.RawMessage `json:"security"`
+	}
+	if err := decodeStrictJSONBytes(fields["codex-link-clawbot"], &clawbot); err != nil {
+		return err
+	}
+	if len(clawbot.Reply) > 0 {
+		var reply struct {
+			Progress json.RawMessage `json:"progress"`
+			Visual   json.RawMessage `json:"visual"`
+			Voice    json.RawMessage `json:"voice"`
+		}
+		if err := decodeStrictJSONBytes(clawbot.Reply, &reply); err != nil {
+			return err
+		}
+		if len(reply.Progress) > 0 {
+			var progress struct {
+				Enabled                  bool `json:"enabled"`
+				TypingIntervalSeconds    int  `json:"typing_interval_seconds"`
+				FirstMessageDelaySeconds int  `json:"first_message_delay_seconds"`
+			}
+			if err := decodeStrictJSONBytes(reply.Progress, &progress); err != nil {
+				return err
+			}
+		}
 	}
 	return os.Chmod(path, 0o600)
 }

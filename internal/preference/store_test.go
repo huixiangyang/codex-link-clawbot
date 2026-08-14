@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 )
 
 func TestStorePersistsUnifiedOwnerPreferences(t *testing.T) {
@@ -17,17 +17,17 @@ func TestStorePersistsUnifiedOwnerPreferences(t *testing.T) {
 	if got := store.Get("owner-1"); got != DefaultOwnerPreferences() {
 		t.Fatalf("default preferences = %#v", got)
 	}
-	if err := store.SetStyle("owner-1", visual.StyleEditorial); err != nil {
+	if err := store.SetStyle("owner-1", presentation.StyleEditorial); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetResponseMode("owner-1", ResponseVoice); err != nil {
+	if err := store.SetResponseMode("owner-1", presentation.ResponseVoice); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, err := NewStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.Get("owner-1"); got.Style != visual.StyleEditorial || got.ResponseMode != ResponseVoice {
+	if got := reloaded.Get("owner-1"); got.Style != presentation.StyleEditorial || got.ResponseMode != presentation.ResponseVoice {
 		t.Fatalf("reloaded preferences = %#v", got)
 	}
 	info, err := os.Stat(path)
@@ -63,8 +63,8 @@ func TestStoreRejectsUnknownAndInvalidData(t *testing.T) {
 }
 
 func TestResponseModeCatalog(t *testing.T) {
-	modes := ResponseModes()
-	if len(modes) != 3 || modes[0].ID != ResponseAdaptive || modes[1].ID != ResponseReading || modes[2].ID != ResponseVoice {
+	modes := presentation.ResponseModes()
+	if len(modes) != 3 || modes[0].ID != presentation.ResponseAdaptive || modes[1].ID != presentation.ResponseReading || modes[2].ID != presentation.ResponseVoice {
 		t.Fatalf("response modes = %#v", modes)
 	}
 }

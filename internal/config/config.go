@@ -15,7 +15,7 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
 
 // Config 明确分隔 Codex 本身与 codex-link-clawbot 接入层配置。
 type Config struct {
@@ -303,7 +303,6 @@ type ProgressConfig struct {
 	Enabled                  bool `json:"enabled"`
 	TypingIntervalSeconds    int  `json:"typing_interval_seconds"`
 	FirstMessageDelaySeconds int  `json:"first_message_delay_seconds"`
-	MessageIntervalSeconds   int  `json:"message_interval_seconds"`
 }
 
 func defaultProgressConfig() ProgressConfig {
@@ -311,7 +310,6 @@ func defaultProgressConfig() ProgressConfig {
 		Enabled:                  true,
 		TypingIntervalSeconds:    8,
 		FirstMessageDelaySeconds: 15,
-		MessageIntervalSeconds:   45,
 	}
 }
 
@@ -324,9 +322,6 @@ func (c ProgressConfig) validate() error {
 	}
 	if c.FirstMessageDelaySeconds < 5 || c.FirstMessageDelaySeconds > 120 {
 		return fmt.Errorf("codex-link-clawbot.reply.progress.first_message_delay_seconds must be between 5 and 120")
-	}
-	if c.MessageIntervalSeconds < 15 || c.MessageIntervalSeconds > 300 {
-		return fmt.Errorf("codex-link-clawbot.reply.progress.message_interval_seconds must be between 15 and 300")
 	}
 	return nil
 }

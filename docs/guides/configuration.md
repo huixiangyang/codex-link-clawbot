@@ -17,13 +17,13 @@ codex-link-clawbot config
 
 ## 文件与解析规则
 
-主配置位于 `~/.codex-link-clawbot/config.json`，最大 4 MiB。当前唯一结构版本是 `schema_version: 5`，顶层只允许 `schema_version`、`codex` 和 `codex-link-clawbot`。未知字段、旧扁平字段、尾随内容、非法枚举和越界值都会让运行时启动失败。
+主配置位于 `~/.codex-link-clawbot/config.json`，最大 4 MiB。当前唯一结构版本是 `schema_version: 6`，顶层只允许 `schema_version`、`codex` 和 `codex-link-clawbot`。未知字段、旧扁平字段、尾随内容、非法枚举和越界值都会让运行时启动失败。
 
 下面是完整结构：
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "codex": {
     "command": "codex",
     "model": "",
@@ -41,8 +41,7 @@ codex-link-clawbot config
       "progress": {
         "enabled": true,
         "typing_interval_seconds": 8,
-        "first_message_delay_seconds": 15,
-        "message_interval_seconds": 45
+        "first_message_delay_seconds": 15
       },
       "visual": {
         "enabled": true,
@@ -79,7 +78,10 @@ codex-link-clawbot config
 
 `codex-link-clawbot.reply` 统一管理从等待提示到最终交付的体验：
 
-- `progress` 控制长任务的输入状态与文字进度节奏。
+- `progress.enabled` 控制是否向微信发送输入状态和文字阶段；请求记录仍保存真实阶段。
+- `progress.typing_interval_seconds` 只控制输入状态刷新，允许 3–30 秒，默认 8 秒。
+- `progress.first_message_delay_seconds` 是首条阶段消息门槛，允许 5–120 秒，默认 15 秒。门槛前多个真实阶段只保留最新一条，门槛后只在结构化阶段或计划签名改变时发送。
+- 固定间隔进度已删除；配置不再接受 `message_interval_seconds`，也不会生成“仍在执行”保活文字。
 - `visual.enabled` 启用固定模板到 PNG 的渲染；语音能力要求它为 `true`。
 - `visual.browser_command` 是可选浏览器绝对路径；为空时发现 Playwright Chromium 或系统 Chrome。
 - `visual.long_replies` 只控制自适应模式是否把长回复渲染为阅读图。
@@ -145,4 +147,4 @@ codex-link-clawbot 不提供通用主动发送 TCP API。健康、排空、恢�
 
 ## 破坏性升级
 
-`codex-link-clawbot deploy` 会在服务切换前使用候选二进制离线校验配置和状态。配置必须已经是严格 v5；无版本、v2、v3、v4、旧品牌键和旧扁平字段都直接拒绝，不会被自动转换。当前命名空间内的控制状态与交付库仍按各自 schema 执行破坏性迁移；失败时由事务快照整体恢复。完整边界见[破坏性更名与状态边界](../operations/migration.md)。
+`codex-link-clawbot deploy` 会在服务切换前使用候选二进制离线校验配置和状态。配置必须已经是严格 v6；无版本、v2–v5、旧品牌键、旧扁平字段和 `message_interval_seconds` 都直接拒绝，不会被自动转换。当前命名空间内的控制状态与交付库仍按各自 schema 执行破坏性迁移；失败时由事务快照整体恢复。完整边界见[破坏性更名与状态边界](../operations/migration.md)。

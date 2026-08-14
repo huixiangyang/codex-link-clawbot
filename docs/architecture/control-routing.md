@@ -19,6 +19,8 @@
 
 ## 2. Intent Registry
 
+注册表与领域枚举位于 `internal/control`，微信协议层不能私自扩展另一套意图表。消息运行时由 `internal/app` 一次性注入默认注册表，启动后不可替换。
+
 每项意图必须声明稳定 ID、领域、规范化短语、可选参数前缀、安全属性和审计事件。默认注册表覆盖系统、codex-link-clawbot 队列、工作空间、Codex 线程、偏好、交付和安全七个领域。请求队列标识使用 `queue.*`，Codex 线程使用 `thread.*`，真正的 Codex 轮次操作才使用 `turn.*`。旧 `task.*`、`session.*` 和误用为队列的 `turn.*` 不再写入。
 
 注册阶段执行确定性冲突检查：
@@ -69,7 +71,7 @@ Presenter 是控制动作唯一的微信副作用出口。它先校验结果，�
 
 ```bash
 go test ./...
-go test -race ./internal/statefile ./internal/taskqueue ./internal/messaging ./internal/ilink ./internal/api ./internal/cli
+go test -race ./internal/statefile ./internal/request ./internal/bridge ./internal/ilink ./internal/management ./internal/cli
 go vet ./...
 ```
 

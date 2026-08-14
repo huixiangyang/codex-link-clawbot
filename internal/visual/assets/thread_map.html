@@ -1,0 +1,164 @@
+{{define "thread-map"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; height: {{.Height}}px; overflow: hidden; }
+    body {
+      --ground: #08090c;
+      --surface: #12141a;
+      --surface-strong: #181a22;
+      --ink: #f5f3f7;
+      --muted: #9b99a4;
+      --faint: #63626d;
+      --line: rgba(255, 255, 255, .1);
+      --grid: rgba(255, 255, 255, .05);
+      --accent: #938cff;
+      --accent-ink: #c9c5ff;
+      --live: #69d4a3;
+      --idle: #9a9ba4;
+      --offline: #62646d;
+      color: var(--ink);
+      background: var(--ground);
+      font-family: "Noto Sans CJK SC", "Noto Sans SC", "Droid Sans Fallback", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body.day {
+      --ground: #f1f0ed;
+      --surface: #f9f8f5;
+      --surface-strong: #ffffff;
+      --ink: #17161b;
+      --muted: #6d6a73;
+      --faint: #a09da5;
+      --line: rgba(18, 17, 22, .1);
+      --grid: rgba(18, 17, 22, .055);
+      --accent: #625ad4;
+      --accent-ink: #4f47ba;
+      --live: #247d5a;
+      --idle: #707078;
+      --offline: #a3a3aa;
+    }
+    body.editorial { --ground: #171310; --surface: #241c17; --surface-strong: #2d231d; --ink: #f3eae2; --muted: #ad9e92; --faint: #71645a; --line: rgba(243, 234, 226, .1); --grid: rgba(243, 234, 226, .05); --accent: #d77861; --accent-ink: #f0a18d; --live: #78c99f; font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; }
+    body.editorial.day { --ground: #efe7dc; --surface: #f7f0e7; --surface-strong: #fffaf3; --ink: #2b231e; --muted: #75675d; --faint: #a39488; --line: rgba(43, 35, 30, .1); --grid: rgba(43, 35, 30, .055); --accent: #9d493a; --accent-ink: #843a2e; --live: #277656; }
+    body.noir { --ground: #080706; --surface: #15120f; --surface-strong: #1d1915; --ink: #f3ede3; --muted: #a79d8f; --faint: #6c6459; --line: rgba(243, 237, 227, .1); --grid: rgba(243, 237, 227, .05); --accent: #ba9658; --accent-ink: #d5b574; --live: #74c99d; }
+    body.noir.day { --ground: #efebe4; --surface: #f8f4ed; --surface-strong: #fffdf8; --ink: #1b1814; --muted: #6e675d; --faint: #9b9387; --line: rgba(27, 24, 20, .1); --grid: rgba(27, 24, 20, .05); --accent: #806638; --accent-ink: #6e552c; --live: #247153; }
+    body.cute { --ground: #161216; --surface: #21191f; --surface-strong: #2a2028; --ink: #f6eef2; --muted: #b4a2ab; --faint: #766770; --line: rgba(246, 238, 242, .1); --grid: rgba(246, 238, 242, .05); --accent: #d682a3; --accent-ink: #efa9c4; --live: #7bca9f; }
+    body.cute.day { --ground: #f5ede8; --surface: #fcf5f1; --surface-strong: #fffaf8; --ink: #352d31; --muted: #796971; --faint: #a9959e; --line: rgba(53, 45, 49, .09); --grid: rgba(53, 45, 49, .05); --accent: #a74f70; --accent-ink: #8e3e5c; --live: #34765a; }
+    body.minimal { --ground: #0e100f; --surface: #171b19; --surface-strong: #1d2320; --ink: #f0f3f1; --muted: #9ca69f; --faint: #646e68; --line: rgba(240, 243, 241, .09); --grid: rgba(240, 243, 241, .05); --accent: #76998a; --accent-ink: #a8c2b6; --live: #72c99e; }
+    body.minimal.day { --ground: #f1f3f0; --surface: #f8faf8; --surface-strong: #ffffff; --ink: #171a18; --muted: #626b65; --faint: #939b96; --line: rgba(23, 26, 24, .09); --grid: rgba(23, 26, 24, .05); --accent: #526a60; --accent-ink: #42574e; --live: #267552; }
+    svg { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .canvas {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      isolation: isolate;
+      background:
+        radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 31%),
+        radial-gradient(var(--grid) .85px, transparent .85px),
+        var(--ground);
+      background-size: auto, 28px 28px, auto;
+    }
+    .canvas::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, transparent 0 69%, color-mix(in srgb, var(--ground) 84%, transparent) 88%); }
+    .header { position: absolute; z-index: 5; left: 54px; right: 54px; top: 42px; height: 112px; border-bottom: 1px solid var(--line); }
+    .eyebrow { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .12em; }
+    .identity { display: flex; align-items: center; gap: 8px; }
+    .identity svg { width: 16px; height: 16px; stroke: var(--accent-ink); stroke-width: 1.8; }
+    .workspace { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font: 590 10px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .08em; }
+    h1 { margin: 20px 0 0; font-size: 42px; font-weight: 710; line-height: 1; letter-spacing: -.035em; }
+    .header-note { position: absolute; right: 0; bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 550; }
+    .graph { position: absolute; z-index: 1; inset: 0; width: 1080px; height: 1040px; }
+    .graph .edge { stroke: color-mix(in srgb, var(--accent) 58%, transparent); stroke-width: 2; }
+    .graph .edge.descendant { stroke: url(#relation-flow); }
+    .graph .ghost { stroke: color-mix(in srgb, var(--accent) 14%, transparent); stroke-width: 19; filter: blur(12px); }
+    .graph .axis { stroke: var(--grid); stroke-width: 1; stroke-dasharray: 2 10; }
+    .graph .marker { fill: var(--accent); stroke: none; }
+    .layer-label { position: absolute; z-index: 2; left: 54px; color: var(--faint); font: 620 10px/1 "Noto Sans Mono CJK SC", monospace; letter-spacing: .14em; }
+    .layer-label.parent { top: 224px; }
+    .layer-label.current { top: 408px; }
+    .layer-label.children { top: 672px; }
+    .node {
+      position: absolute;
+      z-index: 4;
+      overflow: hidden;
+      padding: 20px 22px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      box-shadow: 0 18px 54px rgba(0, 0, 0, .16), inset 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent);
+    }
+    .node.current {
+      padding: 30px 32px;
+      border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+      border-radius: 26px;
+      background: linear-gradient(140deg, color-mix(in srgb, var(--surface-strong) 98%, transparent), color-mix(in srgb, var(--accent) 14%, var(--surface)));
+      box-shadow: 0 24px 80px color-mix(in srgb, var(--accent) 13%, transparent), inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+    }
+    .node::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); opacity: .72; }
+    .node.live::after { background: var(--live); }
+    .node.offline::after { background: var(--offline); }
+    .node-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .role { color: var(--muted); font-size: 10px; font-weight: 670; letter-spacing: .08em; }
+    .code { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line)); border-radius: 50%; color: var(--accent-ink); background: color-mix(in srgb, var(--surface-strong) 92%, transparent); font: 680 11px/1 "Noto Sans Mono CJK SC", monospace; }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); box-shadow: 0 0 0 6px color-mix(in srgb, var(--idle) 10%, transparent); }
+    .live .pulse { background: var(--live); box-shadow: 0 0 0 6px color-mix(in srgb, var(--live) 11%, transparent); }
+    .offline .pulse { background: var(--offline); box-shadow: none; }
+    .title { margin-top: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; font-weight: 690; line-height: 1.14; letter-spacing: -.018em; }
+    .current .title { margin-top: 20px; font-size: 31px; font-weight: 720; }
+    .meta { margin-top: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; font-weight: 520; }
+    .current .meta { margin-top: 13px; font-size: 12px; }
+    .state { margin-top: 9px; display: flex; align-items: center; gap: 6px; color: var(--idle); font-size: 10px; font-weight: 600; }
+    .state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .live .state { color: var(--live); }
+    .offline .state { color: var(--offline); }
+    .empty-children { position: absolute; z-index: 3; left: 360px; top: 720px; width: 360px; padding: 28px; text-align: center; color: var(--muted); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 12px; }
+    .truncated { position: absolute; z-index: 5; right: 54px; top: 1016px; color: var(--muted); font: 570 10px/1 "Noto Sans Mono CJK SC", monospace; }
+    .actions { position: absolute; z-index: 6; left: 54px; right: 54px; bottom: 42px; height: 82px; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 42%, transparent); }
+    .action { display: grid; grid-template-columns: 42px 22px minmax(0, 1fr); align-items: center; gap: 12px; padding: 0 24px; color: var(--muted); }
+    .action + .action { border-left: 1px solid var(--line); }
+    .action code { color: var(--accent-ink); font: 650 13px/1 "Noto Sans Mono CJK SC", monospace; }
+    .action svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.7; }
+    .action strong { color: var(--ink); font-size: 14px; font-weight: 620; }
+  </style>
+</head>
+<body class="{{.Theme}} {{.Style}}">
+  <main class="canvas">
+    <header class="header">
+      <div class="eyebrow"><span class="identity">{{lucide "git-fork"}}CODEX / THREAD RELATIONS</span><span class="workspace">{{.Workspace}}</span></div>
+      <h1>线程关系图</h1>
+      <span class="header-note">{{.RelationTip}}</span>
+    </header>
+
+    <svg class="graph" viewBox="0 0 1080 1040" aria-hidden="true">
+      <defs><linearGradient id="relation-flow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".78"/><stop offset="1" stop-color="var(--live)" stop-opacity=".34"/></linearGradient></defs>
+      <path class="axis" d="M54 255H1026M54 460H1026M54 742H1026"/>
+      {{range .Edges}}<path class="ghost" d="{{.Path}}"/><path class="edge {{.Tone}}" d="{{.Path}}"/>{{end}}
+      <circle class="marker" cx="540" cy="564" r="4"/>
+    </svg>
+    <span class="layer-label parent">UPSTREAM / PARENT</span>
+    <span class="layer-label current">FOCUS / CURRENT</span>
+    <span class="layer-label children">DOWNSTREAM / DIRECT CHILDREN</span>
+
+    {{with .Parent}}<article class="node {{.Tone}}" style="left:{{.X}}px;top:{{.Y}}px;width:{{.Width}}px;height:{{.Height}}px">
+      <div class="node-head"><span class="role">{{.RoleLabel}}</span><span class="code">{{.Code}}</span></div>
+      <div class="title">{{.Title}}</div><div class="meta">{{.Workspace}}</div>
+      <div class="state"><i></i>{{.Status}}</div>
+    </article>{{end}}
+    {{$current := .Current}}<article class="node current {{$current.Tone}}" style="left:{{$current.X}}px;top:{{$current.Y}}px;width:{{$current.Width}}px;height:{{$current.Height}}px">
+      <div class="node-head"><span class="role">{{$current.RoleLabel}}</span><span class="pulse"></span></div>
+      <div class="title">{{$current.Title}}</div><div class="meta">{{$current.Workspace}}</div>
+      <div class="state"><i></i>{{$current.Status}}</div>
+    </article>
+    {{range .Children}}<article class="node {{.Tone}}" style="left:{{.X}}px;top:{{.Y}}px;width:{{.Width}}px;height:{{.Height}}px">
+      <div class="node-head"><span class="role">{{.RoleLabel}}</span><span class="code">{{.Code}}</span></div>
+      <div class="title">{{.Title}}</div><div class="meta">{{.Workspace}}</div>
+      <div class="state"><i></i>{{.Status}}</div>
+    </article>{{end}}
+    {{if not .Children}}<div class="empty-children">当前目标没有直接子线程</div>{{end}}
+    {{if gt .Truncated 0}}<span class="truncated">另有 {{.Truncated}} 个直接子线程未展示</span>{{end}}
+    <nav class="actions">{{range .Actions}}<div class="action"><code>{{.Code}}</code>{{lucide .Icon}}<strong>{{.Label}}</strong></div>{{end}}</nav>
+  </main>
+</body>
+</html>{{end}}

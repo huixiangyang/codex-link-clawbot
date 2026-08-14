@@ -20,7 +20,7 @@
 | [安装与启动](guides/getting-started.md) | 构建、登录、启动和本机服务 |
 | [配置参考](guides/configuration.md) | 工作空间、Codex、视觉、语音和安全 |
 | [Codex 与 codex-link-clawbot 能力边界](guides/capability-boundary.md) | 区分 Codex 原生能力与 codex-link-clawbot 微信增强 |
-| [Codex 轮次与 codex-link-clawbot 请求队列](guides/turns-and-queue.md) | 轮次、请求、追加指令、取消、恢复和诊断 |
+| [Codex 轮次与 codex-link-clawbot 请求队列](guides/turns-and-queue.md) | 真实轮次阶段、请求、追加指令、取消、恢复和诊断 |
 | [Codex 工作空间与全局线程](guides/projects-and-threads.md) | 全局发现、工作空间边界、目标线程、账号、模型与能力 |
 | [文件与交付箱](guides/media-and-deliveries.md) | 图片、附件、交付箱和再次发送 |
 | [视觉回复](guides/visual-replies.md) | 五套模板、阅读卡、图片批次和文字版 |

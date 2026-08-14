@@ -19,13 +19,13 @@
 
 ## 配置
 
-机器配置只接受严格 `schema_version: 5`。顶层只允许：
+机器配置只接受严格 `schema_version: 6`。顶层只允许：
 
 - `schema_version`
 - `codex`
 - `codex-link-clawbot`
 
-`codex-link-clawbot` 只允许 `project_entries`、`reply` 和 `security`。无版本、v2、v3、v4、旧品牌键、未知字段和尾随 JSON 全部拒绝；离线部署事务也不会把它们转换为 v5。
+`codex-link-clawbot` 只允许 `project_entries`、`reply` 和 `security`。无版本、v2–v5、旧品牌键、未知字段、尾随 JSON 和已删除的 `reply.progress.message_interval_seconds` 全部拒绝；离线部署事务也不会把它们转换为 v6。
 
 完整示例见[配置参考](../guides/configuration.md)。
 
@@ -34,7 +34,7 @@
 项目内部仍对当前命名空间中的业务状态执行严格离线校验：
 
 - 微信同步和账号凭据使用严格 v1；
-- 控制状态使用严格 v13，v1–v12 菜单与回执直接清空；
+- 控制状态使用严格 v14，v1–v13 菜单与回执直接清空；
 - 交付库使用严格 v3，旧交付记录无法补齐来源时销毁；
 - 项目监控、自动化、工作流模板和相关待阅通知已经删除；
 - 服务运行时持有 `~/.codex-link-clawbot/.state.lock`，迁移只能在服务停止后执行。
@@ -47,7 +47,7 @@
 
 1. 停止旧服务并保留独立备份；
 2. 安装 `codex-link-clawbot` 新二进制与新服务单元；
-3. 在 `~/.codex-link-clawbot/config.json` 按 v5 结构重新配置工作空间、视觉、语音和安全；
+3. 在 `~/.codex-link-clawbot/config.json` 按 v6 结构重新配置工作空间、视觉、语音和安全；
 4. 重新执行微信登录；
 5. 启动新服务并运行[完整验收](acceptance.md)。
 
@@ -61,4 +61,4 @@ Codex 线程仍由 Codex App Server 拥有，只要实际工作目录仍位于�
 codex-link-clawbot deploy <version>
 ```
 
-部署器会校验候选版本和摘要、排空当前服务、创建二进制与完整状态快照、在停服状态校验 v5 配置及当前状态 schema、安装候选、验证 Codex/微信/Unix socket 健康并恢复队列。任一步失败都恢复同一命名空间的完整快照；它不会回退或迁入旧品牌运行状态。
+部署器会校验候选版本和摘要、排空当前服务、创建二进制与完整状态快照、在停服状态校验 v6 配置及当前状态 schema、安装候选、验证 Codex/微信/Unix socket 健康并恢复队列。任一步失败都恢复同一命名空间的完整快照；它不会回退或迁入旧品牌运行状态。

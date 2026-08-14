@@ -24,6 +24,6 @@ check: docs-check format-check vet test build
 fuzz-smoke:
 	go test ./internal/config -run='^$$' -fuzz='^FuzzDecodeConfig$$' -fuzztime=5s
 	go test ./internal/ilink -run='^$$' -fuzz='^FuzzDecodeGetUpdatesResponse$$' -fuzztime=5s
-	go test ./internal/messaging -run='^$$' -fuzz='^FuzzValidateInboundFile$$' -fuzztime=5s
-	go test ./internal/messaging -run='^$$' -fuzz='^FuzzValidatedImageExtension$$' -fuzztime=5s
-	go test ./internal/codex -run='^$$' -fuzz='^FuzzCodexEventDecoders$$' -fuzztime=5s
+	go test ./internal/bridge -run='^$$' -fuzz='^FuzzValidateInboundFile$$' -fuzztime=5s
+	go test ./internal/bridge -run='^$$' -fuzz='^FuzzValidatedImageExtension$$' -fuzztime=5s
+	go test ./internal/codex/appserver -run='^$$' -fuzz='^FuzzCodexEventDecoders$$' -fuzztime=5s
