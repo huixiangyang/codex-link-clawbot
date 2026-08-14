@@ -96,7 +96,7 @@ func TestControlGuideDocumentsMenuAndCodexSlashCommands(t *testing.T) {
 	if text == "" {
 		t.Error("guide text is empty")
 	}
-	if !strings.Contains(text, "发送 / 打开操作菜单") {
+	if !strings.Contains(text, "发送“菜单”打开操作总览") {
 		t.Error("guide should mention the menu entry")
 	}
 	if !strings.Contains(text, "发送“取消”") {
@@ -105,8 +105,8 @@ func TestControlGuideDocumentsMenuAndCodexSlashCommands(t *testing.T) {
 	if !strings.Contains(text, "发送“视觉风格”") {
 		t.Error("guide should mention visual style selection")
 	}
-	if !strings.Contains(text, "/status") || !strings.Contains(text, "/goal") || !strings.Contains(text, "全部微信可用命令") {
-		t.Error("guide should expose the codex-link-clawbot slash command entry points")
+	if !strings.Contains(text, "状态") || !strings.Contains(text, "目标") || !strings.Contains(text, "数字编号") {
+		t.Error("guide should expose the codex-link-clawbot numeric control entry points")
 	}
 }
 

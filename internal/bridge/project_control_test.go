@@ -75,7 +75,7 @@ func TestRunningMenuUsesPersistentTaskCenter(t *testing.T) {
 	handler, cancel := testHandlerWithRunningTask(t, "owner-1")
 	defer cancel()
 	main := handler.openMainMenu(context.Background(), "owner-1")
-	for _, want := range []string{"Codex 全局工作台", "微信队列：1 执行", "6  新建线程 · /new", "7  执行与队列", "8  工作空间", "Codex 功能"} {
+	for _, want := range []string{"Codex 全局工作台", "微信队列：1 执行", "6  新建线程", "7  执行与队列", "8  工作空间", "编号直达"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("active menu missing %q: %q", want, main)
 		}

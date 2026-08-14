@@ -43,7 +43,7 @@ func controlActionDomain(action controlAction) control.Domain {
 	case actionProjectCenter, actionSelectProject:
 		return control.DomainProject
 	case actionSessionMenu, actionCodexDevelopment, actionCodexCommands, actionCodexCommandPage,
-		actionCodexSlashCommand, actionCodexUsage, actionCodexPermissions, actionCodexGoalStatus,
+		actionCodexCommand, actionCodexUsage, actionCodexPermissions, actionCodexGoalStatus,
 		actionCodexGlobalOverview, actionCodexGlobalThreadPage,
 		actionCodexUseGlobalThread, actionCodexAccount, actionCodexModelOverview, actionPromptGlobalSearch,
 		actionCurrentSession, actionThreadRelations, actionPickSession, actionBrowseSessions,
@@ -73,7 +73,7 @@ func controlActionRequiresReceipt(action controlAction) bool {
 	switch action {
 	case actionUseSession, actionCodexUseGlobalThread, actionArchiveCurrent, actionArchiveItem, actionRestoreSession,
 		actionForkThread, actionToggleThreadPin, actionCompactThread, actionClearThreadGoal,
-		actionPauseThreadGoal, actionResumeThreadGoal, actionCodexSlashCommand,
+		actionPauseThreadGoal, actionResumeThreadGoal, actionCodexCommand,
 		actionReviewThread, actionReviewContinue, actionReviewRerun,
 		actionDeleteThread, actionSelectThreadModel, actionSelectThreadEffort,
 		actionCancelTask, actionTaskMoveFront, actionTaskDelete, actionTaskRetry,
@@ -95,7 +95,7 @@ func invalidControlAction(action controlAction, domain control.Domain) ActionRes
 	if action == "" {
 		action = actionMain
 	}
-	return controlTextResult(action, domain, "这个操作已经失效。发送 / 重新打开菜单。")
+	return controlTextResult(action, domain, "这个操作已经失效。发送“菜单”重新打开操作总览。")
 }
 
 func (h *Handler) executeSystemControlAction(ctx context.Context, userID string, option controlOption) ActionResult {

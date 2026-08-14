@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	controlStateVersion  = 14
+	controlStateVersion  = 15
 	controlStateMaxBytes = 256 << 10
 	controlStateMaxOwner = 64
 	controlStateMaxItems = 48
@@ -613,7 +613,7 @@ func cloneControlReceipts(source map[string]persistedControlReceipt) map[string]
 func (action controlAction) valid() bool {
 	switch action {
 	case actionExit, actionMain, actionFunctionDirectory, actionSessionMenu, actionCodexDevelopment, actionCodexCommands,
-		actionCodexCommandPage, actionCodexSlashCommand, actionCodexUsage, actionCodexPermissions, actionCodexGoalStatus,
+		actionCodexCommandPage, actionCodexCommand, actionCodexUsage, actionCodexPermissions, actionCodexGoalStatus,
 		actionCodexGlobalOverview, actionCodexGlobalThreadPage,
 		actionCodexUseGlobalThread, actionCodexAccount, actionCodexModelOverview, actionPromptGlobalSearch,
 		actionCurrentSession, actionThreadRelations, actionPickSession,

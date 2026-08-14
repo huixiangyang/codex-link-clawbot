@@ -13,8 +13,8 @@ const (
 	workbenchCanvasHeight  = 780
 	workbenchMaxThreads    = 4
 	workbenchActionCount   = 5
-	workbenchCommandGroups = 3
-	workbenchCommandCount  = 17
+	workbenchControlGroups = 3
+	workbenchControlCount  = 15
 )
 
 type WorkbenchTarget struct {
@@ -43,15 +43,15 @@ type WorkbenchAction struct {
 	Icon  string
 }
 
-type WorkbenchCommand struct {
-	Label   string
-	Command string
-	Tone    string
+type WorkbenchControl struct {
+	Code  string
+	Label string
+	Tone  string
 }
 
-type WorkbenchCommandGroup struct {
+type WorkbenchControlGroup struct {
 	Title    string
-	Commands []WorkbenchCommand
+	Controls []WorkbenchControl
 }
 
 // Workbench 是全局首页的专用视图，线程事实与控制动作保持结构隔离。
@@ -65,7 +65,7 @@ type Workbench struct {
 	Target   WorkbenchTarget
 	Threads  []WorkbenchThread
 	Actions  []WorkbenchAction
-	Commands []WorkbenchCommandGroup
+	Controls []WorkbenchControlGroup
 	Footer   string
 	Height   int
 }
@@ -142,39 +142,38 @@ func prepareWorkbench(workbench Workbench, now time.Time) (Workbench, error) {
 		}
 		seen[action.Code] = true
 	}
-	if len(workbench.Commands) != workbenchCommandGroups {
-		return Workbench{}, fmt.Errorf("invalid workbench command groups")
+	if len(workbench.Controls) != workbenchControlGroups {
+		return Workbench{}, fmt.Errorf("invalid workbench control groups")
 	}
-	commandCount := 0
-	seenCommands := make(map[string]bool, workbenchCommandCount)
-	for groupIndex := range workbench.Commands {
-		group := &workbench.Commands[groupIndex]
+	controlCount := 0
+	for groupIndex := range workbench.Controls {
+		group := &workbench.Controls[groupIndex]
 		group.Title = strings.TrimSpace(group.Title)
-		if group.Title == "" || len(group.Commands) == 0 {
-			return Workbench{}, fmt.Errorf("invalid workbench command group")
+		if group.Title == "" || len(group.Controls) == 0 {
+			return Workbench{}, fmt.Errorf("invalid workbench control group")
 		}
-		for commandIndex := range group.Commands {
-			command := &group.Commands[commandIndex]
-			command.Label = strings.TrimSpace(command.Label)
-			command.Command = strings.TrimSpace(command.Command)
-			command.Tone = strings.TrimSpace(command.Tone)
-			if command.Label == "" || !strings.HasPrefix(command.Command, "/") || seenCommands[command.Command] || !validWorkbenchCommandTone(command.Tone) {
-				return Workbench{}, fmt.Errorf("invalid workbench command")
+		for controlIndex := range group.Controls {
+			control := &group.Controls[controlIndex]
+			control.Code = strings.TrimSpace(control.Code)
+			control.Label = strings.TrimSpace(control.Label)
+			control.Tone = strings.TrimSpace(control.Tone)
+			if !validDirectoryCode(control.Code) || control.Label == "" || seen[control.Code] || !validWorkbenchControlTone(control.Tone) {
+				return Workbench{}, fmt.Errorf("invalid workbench control")
 			}
-			seenCommands[command.Command] = true
-			commandCount++
+			seen[control.Code] = true
+			controlCount++
 		}
 	}
-	if commandCount != workbenchCommandCount {
-		return Workbench{}, fmt.Errorf("invalid workbench command count")
+	if controlCount != workbenchControlCount {
+		return Workbench{}, fmt.Errorf("invalid workbench control count")
 	}
 	workbench.Height = workbenchHeight(len(workbench.Threads))
 	return workbench, nil
 }
 
-func validWorkbenchCommandTone(tone string) bool {
+func validWorkbenchControlTone(tone string) bool {
 	switch tone {
-	case "native", "adapted":
+	case "codex", "bridge":
 		return true
 	default:
 		return false

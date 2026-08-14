@@ -82,7 +82,7 @@ func TestPresenterIsTheOnlyTextDeliveryBoundary(t *testing.T) {
 
 func TestAttachmentIntentRequiresExplicitPermission(t *testing.T) {
 	handler := newBareHandler(nil)
-	if result, handled := handler.handleControlInput(context.Background(), "owner-1", "/", true, nextTestControlSource()); handled || result != (ActionResult{}) {
+	if result, handled := handler.handleControlInput(context.Background(), "owner-1", "菜单", true, nextTestControlSource()); handled || result != (ActionResult{}) {
 		t.Fatalf("default attachment intent = %#v, handled=%v", result, handled)
 	}
 
@@ -96,7 +96,7 @@ func TestAttachmentIntentRequiresExplicitPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler.intents = registry
-	result, handled := handler.handleControlInput(context.Background(), "owner-1", "/", true, nextTestControlSource())
+	result, handled := handler.handleControlInput(context.Background(), "owner-1", "菜单", true, nextTestControlSource())
 	if !handled || result.ActionID != string(control.IntentMenu) {
 		t.Fatalf("allowed attachment intent = %#v, handled=%v", result, handled)
 	}

@@ -360,8 +360,8 @@ func TestMutatingIntentRejectsMissingStableSource(t *testing.T) {
 
 func TestControlMenuAndNumericNavigation(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	main := controlReply(t, handler, "owner-1", "/")
-	for _, want := range []string{"Codex 全局工作台", "从微信统筹 Codex 桌面端", "当前目标：尚未选择", "最近线程", "5  全部线程 · /resume", "6  新建线程 · /new", "7  执行与队列", "8  工作空间", "9  刷新工作台", "Codex 功能", "清屏并新建线程 · /clear", "查看 MCP 工具 · /mcp"} {
+	main := controlReply(t, handler, "owner-1", "菜单")
+	for _, want := range []string{"Codex 全局工作台", "从微信统筹 Codex 桌面端", "当前目标：尚未选择", "最近线程", "5  全部线程", "6  新建线程", "7  执行与队列", "8  工作空间", "9  刷新工作台", "编号直达", "11  全局总览", "25  Codex 操作", "43  呈现与安全"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("main menu missing %q: %q", want, main)
 		}
@@ -393,7 +393,7 @@ func TestGlobalWorkbenchShowsRecentStateAndSwitchesTargetDirectly(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	main := controlReply(t, handler, "owner-1", "/")
+	main := controlReply(t, handler, "owner-1", "菜单")
 	for _, want := range []string{
 		"全部线程：2 个", "运行中：1 个", "当前目标：当前目标 ｜ Workspace ｜ 空闲",
 		"1  最近执行 ｜ Workspace ｜ 执行中", "2  当前目标 ｜ Workspace ｜ 空闲", "当前目标",
@@ -418,7 +418,7 @@ func TestGlobalWorkbenchLimitsRecentThreadSlotsToFour(t *testing.T) {
 	for index := 1; index <= 6; index++ {
 		_ = controlReply(t, handler, "owner-1", fmt.Sprintf("新建线程 最近 %d", index))
 	}
-	main := controlReply(t, handler, "owner-1", "/")
+	main := controlReply(t, handler, "owner-1", "菜单")
 	if !strings.Contains(main, "全部线程：6 个") || !strings.Contains(main, "最近 6") || strings.Contains(main, "最近 2 ｜") {
 		t.Fatalf("bounded recent threads = %q", main)
 	}
@@ -439,7 +439,7 @@ func TestGlobalWorkbenchPinsOlderCurrentThreadIntoCompactList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	main := controlReply(t, handler, "owner-1", "/")
+	main := controlReply(t, handler, "owner-1", "菜单")
 	if !strings.Contains(main, "4  会话 1 ｜ Workspace ｜ 空闲") || !strings.Contains(main, "当前目标") || strings.Contains(main, "4  会话 3 ｜") {
 		t.Fatalf("older current thread was not pinned into compact list: %q", main)
 	}
@@ -462,7 +462,7 @@ func TestCodexGlobalOverviewAndAccountAreIndependentOfTargetThread(t *testing.T)
 		}
 	}
 	threads := handler.openCodexGlobalThreadPage(context.Background(), "owner-1", false, false, "", 1)
-	for _, want := range []string{"Codex 全部线程", "仅看运行中线程", "搜索线程 · /resume", "已归档线程"} {
+	for _, want := range []string{"Codex 全部线程", "仅看运行中线程", "搜索线程", "已归档线程"} {
 		if !strings.Contains(threads, want) {
 			t.Fatalf("global thread center missing %q: %q", want, threads)
 		}
@@ -477,7 +477,7 @@ func TestCodexGlobalOverviewAndAccountAreIndependentOfTargetThread(t *testing.T)
 
 func TestCodexWorkspaceCenterKeepsTrustedRootsTogether(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	_ = controlReply(t, handler, "owner-1", "/")
+	_ = controlReply(t, handler, "owner-1", "菜单")
 	development := controlReply(t, handler, "owner-1", "8")
 	for _, want := range []string{"Codex 工作空间", "受信任本机目录", "Workspace"} {
 		if !strings.Contains(development, want) {
@@ -682,11 +682,11 @@ func TestHandleMessageRoutesSingleSlashToMenuWithoutStartingCodexTurn(t *testing
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9001, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish, ContextToken: "context-1",
-		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "菜单"}}},
 	})
 
 	if runtime.chatThreadID != "" {
-		t.Fatalf("single slash unexpectedly started Codex thread %s", runtime.chatThreadID)
+		t.Fatalf("menu input unexpectedly started Codex thread %s", runtime.chatThreadID)
 	}
 	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "Codex 全局工作台") {
 		t.Fatalf("sent menu = %#v", sent.Msg.ItemList)
@@ -721,7 +721,7 @@ func TestSessionCompletionPrefersAnExactTitle(t *testing.T) {
 
 func TestControlChoiceDoesNotConsumeOrdinaryCodexText(t *testing.T) {
 	handler, _ := newSessionHandler(t)
-	_ = controlReply(t, handler, "owner-1", "/")
+	_ = controlReply(t, handler, "owner-1", "菜单")
 	if reply, handled := handler.handleControlInput(context.Background(), "owner-1", "请检查项目测试", false, nextTestControlSource()); handled || reply != (ActionResult{}) {
 		t.Fatalf("ordinary text should leave menu and reach Codex: reply=%#v handled=%v", reply, handled)
 	}
@@ -757,7 +757,7 @@ func TestFuzzySessionMatchingSupportsSubsequence(t *testing.T) {
 func TestUnknownSlashCommandsAreRejected(t *testing.T) {
 	handler, _ := newSessionHandler(t)
 	got := controlReply(t, handler, "owner-1", "/sessions")
-	if !strings.Contains(got, "没有这个可用的 Codex 斜杠命令") || !strings.Contains(got, "可直接执行的命令") {
+	if !strings.Contains(got, "不接受斜杠命令") || !strings.Contains(got, "数字编号") {
 		t.Fatalf("unknown command reply = %q", got)
 	}
 }
@@ -859,7 +859,7 @@ func TestAdvancedCodexThreadControlsUseChineseFlow(t *testing.T) {
 	}
 	review := controlReply(t, handler, "owner-1", "代码审查")
 	if !strings.Contains(review, "Codex 移动审查") || !strings.Contains(review, "本轮未发现明确问题") ||
-		!strings.Contains(review, "继续修复 · 当前线程") || !strings.Contains(review, "重新审查 · /review") {
+		!strings.Contains(review, "继续修复 · 当前线程") || !strings.Contains(review, "重新审查") {
 		t.Fatalf("review = %q", review)
 	}
 	confirm := controlReply(t, handler, "owner-1", "永久删除线程")

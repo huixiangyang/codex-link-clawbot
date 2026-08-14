@@ -113,18 +113,14 @@ func (h *Handler) sendControlVisualReply(ctx context.Context, client *ilink.Clie
 	return nil
 }
 
-func workbenchCodexCommandGroups() []visual.WorkbenchCommandGroup {
-	commandGroups := codexSlashWorkbenchGroups()
-	groups := make([]visual.WorkbenchCommandGroup, 0, len(commandGroups))
-	for _, commandGroup := range commandGroups {
-		group := visual.WorkbenchCommandGroup{Title: commandGroup.Title}
-		for _, command := range commandGroup.Commands {
-			tone := "native"
-			if command.Support == codexSlashAdapted {
-				tone = "adapted"
-			}
-			group.Commands = append(group.Commands, visual.WorkbenchCommand{
-				Label: command.Label, Command: "/" + command.Name, Tone: tone,
+func workbenchNumberedControlGroups(source []workbenchDirectGroup) []visual.WorkbenchControlGroup {
+	groups := make([]visual.WorkbenchControlGroup, 0, len(source))
+	for _, sourceGroup := range source {
+		group := visual.WorkbenchControlGroup{Title: sourceGroup.Title}
+		for _, option := range sourceGroup.Options {
+			label, _ := splitDirectoryLabel(option.Label)
+			group.Controls = append(group.Controls, visual.WorkbenchControl{
+				Code: option.Code, Label: label, Tone: sourceGroup.Tone,
 			})
 		}
 		groups = append(groups, group)
@@ -164,7 +160,7 @@ func controlCardFromText(reply string) visual.Card {
 	card := visual.Card{
 		Variant: variant,
 		Title:   "codex-link-clawbot",
-		Footer:  "发送 / 可随时打开操作菜单",
+		Footer:  "发送“菜单”可随时打开操作总览",
 	}
 	if len(lines) == 0 {
 		return card
@@ -190,9 +186,9 @@ func controlCardFromText(reply string) visual.Card {
 		first == "Codex 已归档线程", first == "Codex 全局搜索", first == "Codex 账号与额度", first == "Codex 模型与权限",
 		first == "当前线程", first == "线程详情", first == "归档线程详情", first == "搜索线程",
 		first == "新建线程", first == "重命名线程", first == "线程模型", first == "推理强度", first == "设置线程目标",
-		first == "Codex 可用命令", first == "Codex 执行权限 · /permissions", first == "Codex 用量 · /usage", first == "Codex 线程目标 · /goal":
+		first == "Codex 操作", first == "Codex 执行权限", first == "Codex 用量", first == "Codex 线程目标":
 		card.Title = first
-	case strings.HasPrefix(first, "Codex 命令 · "):
+	case strings.HasPrefix(first, "Codex 操作 · "):
 		card.Title = first
 	case strings.HasPrefix(first, "选择线程") || strings.HasPrefix(first, "恢复线程"):
 		card.Title = first
@@ -278,9 +274,9 @@ func controlCardVariant(text string) visual.Variant {
 		return visual.VariantProgress
 	case strings.HasPrefix(text, "Codex 全局") || strings.HasPrefix(text, "Codex 全部线程") || strings.HasPrefix(text, "Codex 运行中线程") ||
 		strings.HasPrefix(text, "Codex 已归档线程") || strings.HasPrefix(text, "Codex 账号与额度") || strings.HasPrefix(text, "Codex 模型与权限") ||
-		strings.HasPrefix(text, "Codex 线程") || strings.HasPrefix(text, "Codex 开发") || strings.HasPrefix(text, "Codex 可用命令") ||
-		strings.HasPrefix(text, "Codex 命令 · ") || strings.HasPrefix(text, "Codex 执行权限 · /permissions") ||
-		strings.HasPrefix(text, "Codex 用量 · /usage") || strings.HasPrefix(text, "当前线程\n") ||
+		strings.HasPrefix(text, "Codex 线程") || strings.HasPrefix(text, "Codex 开发") || strings.HasPrefix(text, "Codex 操作") ||
+		strings.HasPrefix(text, "Codex 操作 · ") || strings.HasPrefix(text, "Codex 执行权限") ||
+		strings.HasPrefix(text, "Codex 用量") || strings.HasPrefix(text, "当前线程\n") ||
 		strings.HasPrefix(text, "线程列表") || strings.HasPrefix(text, "线程详情") ||
 		strings.HasPrefix(text, "归档线程详情") || strings.HasPrefix(text, "选择线程") ||
 		strings.HasPrefix(text, "恢复线程") || strings.HasPrefix(text, "搜索线程") ||

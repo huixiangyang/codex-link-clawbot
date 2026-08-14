@@ -74,7 +74,7 @@ func (h *Handler) reserveControlReceipt(userID, sourceKey, actionID string, doma
 }
 
 func duplicateControlResult(actionID string, domain control.Domain) ActionResult {
-	return newActionResult(actionID, domain, "这条操作已经处理，不会重复执行。发送 / 查看当前状态。")
+	return newActionResult(actionID, domain, "这条操作已经处理，不会重复执行。发送“菜单”查看当前状态。")
 }
 
 func intentTextResult(resolved control.Resolved, text string) ActionResult {
@@ -82,7 +82,7 @@ func intentTextResult(resolved control.Resolved, text string) ActionResult {
 }
 
 func invalidIntentResult(resolved control.Resolved) ActionResult {
-	return intentTextResult(resolved, "这个操作已经失效。发送 / 重新打开菜单。")
+	return intentTextResult(resolved, "这个操作已经失效。发送“菜单”重新打开操作总览。")
 }
 
 func (h *Handler) intentMutationBlocked(userID string, resolved control.Resolved, argument string) bool {

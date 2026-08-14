@@ -33,8 +33,8 @@ func (h *Handler) executeSessionControlAction(ctx context.Context, userID string
 		text = h.openCodexCommandCenter(userID)
 	case actionCodexCommandPage:
 		text = h.openCodexCommandPage(userID, option.Query, option.Page)
-	case actionCodexSlashCommand:
-		return h.executeCodexSlashOption(ctx, userID, option)
+	case actionCodexCommand:
+		return h.executeCodexCommandOption(ctx, userID, option)
 	case actionCodexUsage:
 		text = h.openCodexUsage(ctx, userID)
 	case actionCodexPermissions:

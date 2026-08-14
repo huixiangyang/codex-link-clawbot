@@ -121,7 +121,7 @@ func TestTaskContinuationSwitchesBackToFrozenProjectAndUpdatesStableDirectory(t 
 		t.Fatalf("continued task session = %q current=%q", reply, handler.projects.Current("owner-1").ID)
 	}
 	main := handler.buildCommandDirectory(context.Background(), "owner-1").Text
-	for _, want := range []string{"12  全局线程 · /resume", "32  审查改动 · /review", "42  系统健康与诊断", "43  呈现与安全", "[3]  Codex · 执行", "[4]  codex-link-clawbot · 远程"} {
+	for _, want := range []string{"12  全局线程", "32  审查改动", "42  系统健康与诊断", "43  呈现与安全", "[3]  Codex · 执行", "[4]  codex-link-clawbot · 远程"} {
 		if !strings.Contains(main, want) {
 			t.Fatalf("stable directory missing %q: %q", want, main)
 		}
@@ -134,7 +134,7 @@ func TestTaskContinuationSwitchesBackToFrozenProjectAndUpdatesStableDirectory(t 
 	if !hasDiagnosticsCode || diagnosticsOption.Action != actionDiagnosticsCenter {
 		t.Fatalf("stable directory options = %#v status=%v err=%v", state, status, err)
 	}
-	projectCenter := controlReply(t, handler, "owner-1", "/")
+	projectCenter := controlReply(t, handler, "owner-1", "菜单")
 	_ = projectCenter
 	_ = controlReply(t, handler, "owner-1", "8")
 	projectCenter = controlReply(t, handler, "owner-1", "21")

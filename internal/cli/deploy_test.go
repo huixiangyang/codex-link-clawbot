@@ -208,7 +208,7 @@ func TestMigrateStateRemovesOnlyProjectWatchNotices(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesLegacyControlStateWithEmptyV14(t *testing.T) {
+func TestMigrateStateReplacesLegacyControlStateWithEmptyV15(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"thread.new"}}}`
@@ -222,7 +222,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV14(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 14,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 15,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
@@ -230,7 +230,7 @@ func TestMigrateStateReplacesLegacyControlStateWithEmptyV14(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesV2ControlStateWithEmptyV14(t *testing.T) {
+func TestMigrateStateReplacesV2ControlStateWithEmptyV15(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	legacy := `{"version":2,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
@@ -244,15 +244,15 @@ func TestMigrateStateReplacesV2ControlStateWithEmptyV14(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 14,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 15,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }
 
-func TestMigrateStateReplacesV13ControlStateWithEmptyV14(t *testing.T) {
+func TestMigrateStateReplacesV14ControlStateWithEmptyV15(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":13,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
+	legacy := `{"version":14,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestMigrateStateReplacesV13ControlStateWithEmptyV14(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\n  \"version\": 14,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
+	if string(data) != "{\n  \"version\": 15,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
 		t.Fatalf("migrated control state = %s", data)
 	}
 }

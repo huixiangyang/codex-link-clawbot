@@ -171,10 +171,10 @@
     .command-item { position: relative; height: 42px; min-width: 0; padding: 7px 10px 4px 13px; border-bottom: 1px solid color-mix(in srgb, var(--line) 52%, transparent); }
     .command-item:last-child { border-bottom: 0; }
     .command-item::before { content: ""; position: absolute; left: 1px; top: 12px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-    .command-item.native::before { background: var(--live); }
-    .command-item.adapted::before { background: var(--accent); }
+    .command-item.codex::before { background: var(--live); }
+    .command-item.bridge::before { background: var(--accent); }
     .command-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 630; line-height: 13px; }
-    .command-slash { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-ink); font: 590 10px/11px "Noto Sans Mono CJK SC", monospace; }
+    .command-code { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-ink); font: 670 10px/11px "Noto Sans Mono CJK SC", monospace; letter-spacing: .08em; }
 
     body.editorial { --ground: #171310; --ground-soft: #211a16; --surface: rgba(39, 31, 26, .8); --surface-current: rgba(201, 103, 77, .13); --ink: #f3eae2; --muted: #aa9c91; --faint: #6f6259; --line: rgba(243, 234, 226, .09); --grid: rgba(243, 234, 226, .05); --accent: #d77861; --accent-ink: #efa18d; --live: #78c99f; font-family: "Noto Serif CJK SC", "Noto Serif SC", serif; }
     body.editorial.day { --ground: #f0e9df; --ground-soft: #e7ded2; --surface: rgba(255, 251, 245, .75); --surface-current: rgba(157, 73, 58, .1); --ink: #2b231e; --muted: #75675d; --faint: #a39488; --line: rgba(43, 35, 30, .09); --grid: rgba(43, 35, 30, .055); --accent: #9d493a; --accent-ink: #843a2e; --live: #277656; }
@@ -228,8 +228,8 @@
       <nav class="tools">{{range .Actions}}<div class="tool"><code>{{.Code}}</code>{{lucide .Icon}}<strong>{{.Label}}</strong></div>{{end}}</nav>
     </section>
     <section class="command-dock">
-      <header class="command-kicker"><strong>Codex 功能 · 直接发送斜杠命令</strong><div class="command-legend"><span class="legend-item"><i></i>仅显示 codex-link-clawbot 可操作能力</span></div></header>
-      <div class="command-grid">{{range .Commands}}<section class="command-group"><header class="command-head"><strong>{{.Title}}</strong><span>{{len .Commands}}</span></header><div class="command-list">{{range .Commands}}<div class="command-item {{.Tone}}"><span class="command-label">{{.Label}}</span><code class="command-slash">{{.Command}}</code></div>{{end}}</div></section>{{end}}</div>
+      <header class="command-kicker"><strong>稳定编号 · 回复数字直达</strong><div class="command-legend"><span class="legend-item"><i></i>编号与当前菜单状态绑定</span></div></header>
+      <div class="command-grid">{{range .Controls}}<section class="command-group"><header class="command-head"><strong>{{.Title}}</strong><span>{{len .Controls}}</span></header><div class="command-list">{{range .Controls}}<div class="command-item {{.Tone}}"><span class="command-label">{{.Label}}</span><code class="command-code">编号 {{.Code}}</code></div>{{end}}</div></section>{{end}}</div>
     </section>
   </main>
 </body>

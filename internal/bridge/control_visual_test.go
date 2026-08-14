@@ -125,7 +125,7 @@ func TestCommandDirectoryBuildsStructuredFourSectionView(t *testing.T) {
 	if first := directory.Sections[0]; first.Code != "1" || first.Icon != "activity" || first.Items[0].Code != "11" || first.Items[0].Label != "全局总览" {
 		t.Fatalf("first directory section = %#v", first)
 	}
-	if development := directory.Sections[1]; development.Icon != "folder-kanban" || development.Items[2].Label != "模型与权限" || development.Items[2].Meta != "/model /permissions" {
+	if development := directory.Sections[1]; development.Icon != "folder-kanban" || development.Items[2].Label != "模型与权限" || development.Items[2].Meta != "" {
 		t.Fatalf("development directory section = %#v", development)
 	}
 }
@@ -138,17 +138,17 @@ func TestGlobalWorkbenchBuildsStructuredTargetThreadsAndActions(t *testing.T) {
 		t.Fatalf("workbench page has no structured view: %#v", page)
 	}
 	workbench := *page.visual.Workbench
-	commandCount := 0
-	for _, group := range workbench.Commands {
-		commandCount += len(group.Commands)
+	controlCount := 0
+	for _, group := range workbench.Controls {
+		controlCount += len(group.Controls)
 	}
-	if workbench.State != "就绪" || len(workbench.Facts) != 4 || len(workbench.Threads) != 1 || len(workbench.Actions) != 5 || len(workbench.Commands) != 3 || commandCount != 17 {
+	if workbench.State != "就绪" || len(workbench.Facts) != 4 || len(workbench.Threads) != 1 || len(workbench.Actions) != 5 || len(workbench.Controls) != 3 || controlCount != 15 {
 		t.Fatalf("workbench = %#v", workbench)
 	}
 	if workbench.Target.Title != "首页重构" || !workbench.Target.Available || !workbench.Threads[0].Current {
 		t.Fatalf("workbench content = %#v", workbench)
 	}
-	if workbench.Actions[0].Code != "5" || workbench.Actions[0].Meta != "/resume" || workbench.Actions[4].Icon != "refresh-cw" {
+	if workbench.Actions[0].Code != "5" || workbench.Actions[0].Meta != "" || workbench.Actions[4].Icon != "refresh-cw" || workbench.Controls[0].Controls[0].Code != "11" {
 		t.Fatalf("workbench actions = %#v", workbench.Actions)
 	}
 }
@@ -174,7 +174,7 @@ func TestThreadRelationsBuildStructuredNativeGraph(t *testing.T) {
 	}
 }
 
-func TestRenderWorkbenchPreviewWithRegisteredCodexCommands(t *testing.T) {
+func TestRenderWorkbenchPreviewWithNumberedControls(t *testing.T) {
 	previewRoot := strings.TrimSpace(os.Getenv("CODEX_LINK_CLAWBOT_DIRECTORY_PREVIEW_DIR"))
 	if previewRoot == "" {
 		t.Skip("preview output is not requested")
@@ -205,7 +205,7 @@ func TestRenderWorkbenchPreviewWithRegisteredCodexCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(previewRoot, "workbench-registered-commands-night.png"), data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(previewRoot, "workbench-numbered-controls-night.png"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -224,16 +224,16 @@ func TestControlCardFromRuntimeCenter(t *testing.T) {
 	}
 }
 
-func TestControlCardFromCodexSlashCatalogKeepsChineseAndUsableCommand(t *testing.T) {
-	reply := "Codex 命令 · 模型与能力\n\n页码：1 / 1\n\n" +
-		"1  选择模型与推理 · /model\n" +
-		"2  浏览技能 · /skills\n\n" +
+func TestControlCardFromCodexCatalogKeepsNumericOperations(t *testing.T) {
+	reply := "Codex 操作 · 模型与能力\n\n页码：1 / 1\n\n" +
+		"1  选择模型与推理\n" +
+		"2  浏览技能\n\n" +
 		"回复数字执行，0 返回可用命令。"
 	card := controlCardFromText(reply)
-	if card.Variant != visual.VariantSession || card.Title != "Codex 命令 · 模型与能力" {
+	if card.Variant != visual.VariantSession || card.Title != "Codex 操作 · 模型与能力" {
 		t.Fatalf("command card identity = %#v", card)
 	}
-	if len(card.Options) != 2 || card.Options[0].Label != "选择模型与推理 · /model" || card.Options[1].Label != "浏览技能 · /skills" {
+	if len(card.Options) != 2 || card.Options[0].Label != "选择模型与推理" || card.Options[1].Label != "浏览技能" {
 		t.Fatalf("command card options = %#v", card.Options)
 	}
 }
@@ -321,7 +321,7 @@ func TestHandleMessageSendsSingleVisualWorkbench(t *testing.T) {
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9201, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish, ContextToken: "context-visual",
-		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
+		ItemList: []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "菜单"}}},
 	})
 
 	if runtime.chatThreadID != "" {
@@ -362,7 +362,7 @@ func TestVisualRenderFailureFallsBackToFullText(t *testing.T) {
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9202, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish,
-		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
+		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "菜单"}}},
 	})
 	if len(sent.Msg.ItemList) != 1 || sent.Msg.ItemList[0].TextItem == nil || !strings.Contains(sent.Msg.ItemList[0].TextItem.Text, "5  全部线程") {
 		t.Fatalf("fallback message = %#v", sent.Msg.ItemList)
@@ -397,7 +397,7 @@ func TestVisualUploadFailureFallsBackToFullTextAndCleansArtifact(t *testing.T) {
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9203, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish,
-		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "/"}}},
+		ItemList:     []ilink.MessageItem{{Type: ilink.ItemTypeText, TextItem: &ilink.TextItem{Text: "菜单"}}},
 	})
 	if !renderer.cleanedUp {
 		t.Fatal("visual artifact was not cleaned after upload failure")
@@ -466,7 +466,7 @@ func TestLongCodexReplyUsesReadingCardAndKeepsCopyableText(t *testing.T) {
 	if item := sent[0].Msg.ItemList[0]; item.Type != ilink.ItemTypeImage || item.ImageItem == nil {
 		t.Fatalf("reading page message = %#v", item)
 	}
-	_ = controlReply(t, handler, "owner-1", "/")
+	_ = controlReply(t, handler, "owner-1", "菜单")
 
 	handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 9301, FromUserID: "owner-1", MessageType: ilink.MessageTypeUser,
@@ -506,7 +506,7 @@ func TestExpiredCopyableTextRequestNeverStartsCodexTurn(t *testing.T) {
 	handler.visualReplies.Store("owner-1", &cachedVisualReply{
 		Text: "已经过期的原文", ExpiresAt: time.Now().Add(-time.Second),
 	})
-	_ = controlReply(t, handler, "owner-1", "/")
+	_ = controlReply(t, handler, "owner-1", "菜单")
 	client := ilink.NewClient(&ilink.Credentials{
 		BotToken: "token", ILinkBotID: "bot-1", ILinkUserID: "owner-1", BaseURL: server.URL,
 	})

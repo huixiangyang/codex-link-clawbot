@@ -45,9 +45,9 @@ const (
 	actionFunctionDirectory     controlAction = "function_directory"
 	actionSessionMenu           controlAction = "thread_menu"
 	actionCodexDevelopment      controlAction = "codex_development"
-	actionCodexCommands         controlAction = "codex_slash_commands"
-	actionCodexCommandPage      controlAction = "codex_slash_command_page"
-	actionCodexSlashCommand     controlAction = "codex_slash_command"
+	actionCodexCommands         controlAction = "codex_commands"
+	actionCodexCommandPage      controlAction = "codex_command_page"
+	actionCodexCommand          controlAction = "codex_command"
 	actionCodexUsage            controlAction = "codex_usage"
 	actionCodexPermissions      controlAction = "codex_permissions"
 	actionCodexGoalStatus       controlAction = "codex_goal_status"
@@ -167,9 +167,6 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 			return duplicateControlResult(receipt.ActionID, receipt.Domain), true
 		}
 	}
-	if strings.HasPrefix(text, "/") && text != "/" {
-		return h.handleCodexSlashCommand(ctx, userID, text, sourceKey, hasAttachments)
-	}
 	if hasAttachments {
 		if !h.deleteControlState(userID) {
 			return controlStateFailureResult(), true
@@ -190,7 +187,7 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		return controlStateFailureResult(), true
 	}
 	if status == controlStateExpired && isControlContinuation(text) {
-		return newActionResult("system.control_expired", control.DomainSystem, "这个操作已经过期。发送 / 重新打开菜单。"), true
+		return newActionResult("system.control_expired", control.DomainSystem, "这个操作已经过期。发送“菜单”重新打开操作总览。"), true
 	}
 	if status == controlStateActive {
 		if result, handled := h.handlePendingControl(ctx, userID, text, state, sourceKey); handled {
@@ -198,12 +195,12 @@ func (h *Handler) handleControlInput(ctx context.Context, userID, text string, h
 		}
 	}
 
-	// 未知斜杠命令不会转发到 Codex，避免把客户端控制语法伪装成普通提示词。
+	// 微信控制面只接受菜单编号；斜杠语法既不执行，也不下沉为 Codex 提示词。
 	if strings.HasPrefix(text, "/") {
 		return newActionResult(
-			"system.invalid_slash",
+			"system.invalid_command_input",
 			control.DomainSystem,
-			"没有这个可用的 Codex 斜杠命令。发送 / 查看 codex-link-clawbot 可直接执行的命令。",
+			"微信端不接受斜杠命令。发送“菜单”打开操作总览，再回复图片中的数字编号。",
 		), true
 	}
 
@@ -248,7 +245,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 	}
 
 	if isOneOf(text, "返回", "回到菜单") {
-		if ok, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !ok {
+		if ok, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送“菜单”重新打开操作总览。"); !ok {
 			return failure, true
 		}
 		return h.executeControlAction(ctx, userID, state.Back), true
@@ -258,7 +255,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 	case controlChoice:
 		if _, err := strconv.Atoi(text); err != nil {
 			if option, ok := controlNavigationOption(text, state.Options); ok {
-				if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !consumed {
+				if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), false, "操作状态已经变化。发送“菜单”重新打开操作总览。"); !consumed {
 					return failure, true
 				}
 				return h.executeControlAction(ctx, userID, option), true
@@ -270,7 +267,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 			return ActionResult{}, false
 		}
 		if text == "0" {
-			if consumed, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送 / 重新打开菜单。"); !consumed {
+			if consumed, failure := consume(string(state.Back.Action), controlActionDomain(state.Back.Action), false, "操作状态已经变化。发送“菜单”重新打开操作总览。"); !consumed {
 				return failure, true
 			}
 			return h.executeControlAction(ctx, userID, state.Back), true
@@ -279,7 +276,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		if !exists {
 			return systemResult("这个编号不在当前菜单中。请回复图片中的编号，或回复 0 返回。"), true
 		}
-		if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), controlActionRequiresReceipt(option.Action), "这个选项已经处理。发送 / 重新打开菜单。"); !consumed {
+		if consumed, failure := consume(string(option.Action), controlActionDomain(option.Action), controlActionRequiresReceipt(option.Action), "这个选项已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 			return failure, true
 		}
 		result := h.executeControlAction(ctx, userID, option)
@@ -288,7 +285,7 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		}
 		return result, true
 	case controlNewSessionName:
-		if consumed, failure := consume(string(control.IntentSessionNew), control.DomainSession, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+		if consumed, failure := consume(string(control.IntentSessionNew), control.DomainSession, true, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 			return failure, true
 		}
 		if h.hasActiveTask(userID) {
@@ -300,12 +297,12 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		return sessionResult(string(control.IntentSessionNew), h.createSession(ctx, userID, text)), true
 	case controlRenameSession:
 		if text == "0" {
-			if consumed, failure := consume(string(control.IntentSessionCenter), control.DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			if consumed, failure := consume(string(control.IntentSessionCenter), control.DomainSession, false, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 				return failure, true
 			}
 			return sessionResult(string(control.IntentSessionCenter), h.openSessionMenu(ctx, userID)), true
 		}
-		if consumed, failure := consume(string(control.IntentSessionRename), control.DomainSession, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+		if consumed, failure := consume(string(control.IntentSessionRename), control.DomainSession, true, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 			return failure, true
 		}
 		if h.hasActiveTask(userID) {
@@ -314,34 +311,34 @@ func (h *Handler) handlePendingControl(ctx context.Context, userID, text string,
 		return sessionResult(string(control.IntentSessionRename), h.renameSession(ctx, userID, text)), true
 	case controlSessionSearch:
 		if text == "0" {
-			if consumed, failure := consume(string(control.IntentSessionCenter), control.DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			if consumed, failure := consume(string(control.IntentSessionCenter), control.DomainSession, false, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 				return failure, true
 			}
 			return sessionResult(string(control.IntentSessionCenter), h.openSessionMenu(ctx, userID)), true
 		}
-		if consumed, failure := consume(string(control.IntentSessionSearch), control.DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+		if consumed, failure := consume(string(control.IntentSessionSearch), control.DomainSession, false, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 			return failure, true
 		}
 		return sessionResult(string(control.IntentSessionSearch), h.openSessionBrowser(ctx, userID, false, text)), true
 	case controlGlobalThreadSearch:
 		if text == "0" {
-			if consumed, failure := consume(string(actionCodexGlobalOverview), control.DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			if consumed, failure := consume(string(actionCodexGlobalOverview), control.DomainSession, false, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 				return failure, true
 			}
 			return sessionResult(string(actionCodexGlobalOverview), h.openCodexGlobalOverview(ctx, userID)), true
 		}
-		if consumed, failure := consume(string(actionPromptGlobalSearch), control.DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+		if consumed, failure := consume(string(actionPromptGlobalSearch), control.DomainSession, false, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 			return failure, true
 		}
 		return sessionResult(string(actionCodexGlobalThreadPage), h.openCodexGlobalThreadPage(ctx, userID, false, false, text, 1)), true
 	case controlThreadGoal:
 		if text == "0" {
-			if consumed, failure := consume(string(actionSessionMenu), control.DomainSession, false, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+			if consumed, failure := consume(string(actionSessionMenu), control.DomainSession, false, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 				return failure, true
 			}
 			return sessionResult(string(actionSessionMenu), h.openSessionMenu(ctx, userID)), true
 		}
-		if consumed, failure := consume(string(actionPromptThreadGoal), control.DomainSession, true, "这个操作已经处理。发送 / 重新打开菜单。"); !consumed {
+		if consumed, failure := consume(string(actionPromptThreadGoal), control.DomainSession, true, "这个操作已经处理。发送“菜单”重新打开操作总览。"); !consumed {
 			return failure, true
 		}
 		return sessionResult(string(actionPromptThreadGoal), h.setCurrentThreadGoal(ctx, userID, text)), true
@@ -652,8 +649,8 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 	if err != nil {
 		if errors.Is(err, thread.ErrNoActive) {
 			options := []controlOption{
-				{Label: "新建线程 · /new", Action: actionPromptNewSession},
-				{Label: "从全局目录选择 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
+				{Label: "新建线程", Action: actionPromptNewSession},
+				{Label: "从全局目录选择", Action: actionCodexGlobalThreadPage, Page: 1},
 			}
 			prompt := "当前没有目标线程。发送普通内容会在当前工作空间新建，也可以从 Codex 全局目录接管。\n\n" + renderControlOptions(options)
 			if !h.storeChoice(userID, viewSessionCurrent, options, actionSessionMenu) {
@@ -665,17 +662,17 @@ func (h *Handler) currentSessionDetail(ctx context.Context, userID string) strin
 	}
 	options := []controlOption{
 		{Label: "线程关系图", Action: actionThreadRelations},
-		{Label: "重命名线程 · /rename", Action: actionPromptRenameSession},
-		{Label: "分叉线程 · /fork", Action: actionForkThread},
+		{Label: "重命名线程", Action: actionPromptRenameSession},
+		{Label: "分叉线程", Action: actionForkThread},
 		{Label: pinThreadLabel(current.Info.IsPinned), Action: actionToggleThreadPin, Value: fmt.Sprintf("%t", !current.Info.IsPinned)},
-		{Label: "压缩上下文 · /compact", Action: actionCompactThread},
-		{Label: "设置线程目标 · /goal", Action: actionPromptThreadGoal},
-		{Label: "清除线程目标 · /goal clear", Action: actionClearThreadGoal},
-		{Label: "模型与推理强度 · /model", Action: actionThreadModels},
-		{Label: "审查未提交改动 · /review", Action: actionReviewThread},
-		{Label: "切换其他线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
-		{Label: "归档线程 · /archive", Action: actionConfirmArchive},
-		{Label: "永久删除线程 · /delete", Action: actionConfirmDeleteThread},
+		{Label: "压缩上下文", Action: actionCompactThread},
+		{Label: "设置线程目标", Action: actionPromptThreadGoal},
+		{Label: "清除线程目标", Action: actionClearThreadGoal},
+		{Label: "模型与推理强度", Action: actionThreadModels},
+		{Label: "审查未提交改动", Action: actionReviewThread},
+		{Label: "切换其他线程", Action: actionCodexGlobalThreadPage, Page: 1},
+		{Label: "归档线程", Action: actionConfirmArchive},
+		{Label: "永久删除线程", Action: actionConfirmDeleteThread},
 	}
 	prompt := formatSessionDetail("当前线程", current) + h.currentThreadSettingsSummary(userID) + h.currentGoalSummary(ctx, userID) + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSessionCurrent, options, actionSessionMenu) {
@@ -823,22 +820,22 @@ func (h *Handler) sessionDetail(ctx context.Context, userID string, source contr
 	}
 	options := make([]controlOption, 0, 3)
 	if source.Archived {
-		options = append(options, controlOption{Label: "恢复这个线程 · /resume", Action: actionRestoreSession, Value: detail.Info.ID})
+		options = append(options, controlOption{Label: "恢复这个线程", Action: actionRestoreSession, Value: detail.Info.ID})
 	} else if detail.Current {
 		options = append(options,
-			controlOption{Label: "重命名线程 · /rename", Action: actionPromptRenameSession},
+			controlOption{Label: "重命名线程", Action: actionPromptRenameSession},
 			controlOption{Label: pinThreadLabel(detail.Info.IsPinned), Action: actionToggleThreadPin, Value: fmt.Sprintf("%t", !detail.Info.IsPinned)},
-			controlOption{Label: "分叉线程 · /fork", Action: actionForkThread},
+			controlOption{Label: "分叉线程", Action: actionForkThread},
 			controlOption{
-				Label: "归档这个线程 · /archive", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
+				Label: "归档这个线程", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
 				Page: source.Page, Query: source.Query,
 			},
 		)
 	} else {
 		options = append(options,
-			controlOption{Label: "切换到这个线程 · /resume", Action: actionUseSession, Value: detail.Info.ID},
+			controlOption{Label: "切换到这个线程", Action: actionUseSession, Value: detail.Info.ID},
 			controlOption{
-				Label: "归档这个线程 · /archive", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
+				Label: "归档这个线程", Action: actionConfirmArchiveItem, Value: detail.Info.ID,
 				Page: source.Page, Query: source.Query,
 			},
 		)
@@ -901,8 +898,8 @@ func (h *Handler) archiveSessionUnlocked(ctx context.Context, userID, threadID s
 		currentName = "暂不可读"
 	}
 	options := []controlOption{
-		{Label: "线程列表 · /resume", Action: actionBrowseSessions},
-		{Label: "恢复已归档线程 · /resume", Action: actionPickArchivedSession},
+		{Label: "线程列表", Action: actionBrowseSessions},
+		{Label: "恢复已归档线程", Action: actionPickArchivedSession},
 	}
 	prompt := "线程已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
 	if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
@@ -1041,8 +1038,8 @@ func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID stri
 	}
 	if nextActive == "" {
 		options := []controlOption{
-			{Label: "新建线程 · /new", Action: actionPromptNewSession},
-			{Label: "恢复已归档线程 · /resume", Action: actionPickArchivedSession},
+			{Label: "新建线程", Action: actionPromptNewSession},
+			{Label: "恢复已归档线程", Action: actionPickArchivedSession},
 		}
 		prompt := "线程已归档。\n当前：未创建\n\n下一条普通消息会自动创建新线程。\n\n" + renderControlOptions(options)
 		if !h.storeChoice(userID, viewSessionResult, options, actionSessionMenu) {
@@ -1055,8 +1052,8 @@ func (h *Handler) archiveCurrentSessionUnlocked(ctx context.Context, userID stri
 		currentName = threadTitle(current.Info)
 	}
 	options := []controlOption{
-		{Label: "查看当前线程 · /status", Action: actionCurrentSession},
-		{Label: "恢复已归档线程 · /resume", Action: actionPickArchivedSession},
+		{Label: "查看当前线程", Action: actionCurrentSession},
+		{Label: "恢复已归档线程", Action: actionPickArchivedSession},
 		{Label: "Codex 线程", Action: actionSessionMenu},
 	}
 	prompt := "线程已归档。\n当前：" + currentName + "\n\n" + renderControlOptions(options)
@@ -1082,11 +1079,11 @@ func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID s
 	options := make([]controlOption, 0, 3)
 	stats := h.sessions.Stats(userID)
 	if stats.CurrentID == thread.ID {
-		options = append(options, controlOption{Label: "查看当前线程 · /status", Action: actionCurrentSession})
+		options = append(options, controlOption{Label: "查看当前线程", Action: actionCurrentSession})
 	} else {
 		options = append(options,
-			controlOption{Label: "切换到已恢复线程 · /resume", Action: actionUseSession, Value: thread.ID},
-			controlOption{Label: "查看当前线程 · /status", Action: actionCurrentSession},
+			controlOption{Label: "切换到已恢复线程", Action: actionUseSession, Value: thread.ID},
+			controlOption{Label: "查看当前线程", Action: actionCurrentSession},
 		)
 	}
 	options = append(options, controlOption{Label: "Codex 线程", Action: actionSessionMenu})
@@ -1099,8 +1096,8 @@ func (h *Handler) restoreSessionUnlocked(ctx context.Context, userID, threadID s
 
 func (h *Handler) sessionSuccess(userID, headline string, thread codex.ThreadInfo) string {
 	options := []controlOption{
-		{Label: "查看当前线程 · /status", Action: actionCurrentSession},
-		{Label: "线程列表 · /resume", Action: actionBrowseSessions},
+		{Label: "查看当前线程", Action: actionCurrentSession},
+		{Label: "线程列表", Action: actionBrowseSessions},
 		{Label: "Codex 线程", Action: actionSessionMenu},
 	}
 	prompt := headline + "\n" + formatThreadIdentity(thread) + "\n\n" + renderControlOptions(options)
@@ -1191,7 +1188,7 @@ func logControlStateError(userID string, err error) {
 }
 
 func controlStateFailureResult() ActionResult {
-	return newActionResult("system.control_unavailable", control.DomainSystem, "操作状态暂不可用。请稍后重新发送 /。")
+	return newActionResult("system.control_unavailable", control.DomainSystem, "操作状态暂不可用。请稍后重新发送“菜单”。")
 }
 
 func isControlContinuation(text string) bool {
@@ -1260,8 +1257,8 @@ func controlGuide() string {
 		"直接发送文字、图片或文件，内容会交给 Codex。",
 		"发送“回答方式”可选择自适应、阅读或语音；语音会配套发送阅读卡和 MP3。",
 		"阅读卡回复支持发送“文字版”获取可复制原文。",
-		"发送 / 打开操作菜单，回复数字或“下一页”“上一页”完成选择。菜单中的 Codex 操作会同时显示中文与 /command。",
-		"可直接发送 /new、/status、/model、/goal、/review、/skills、/mcp 或 /compact；发送 / 可查看全部微信可用命令。",
+		"发送“菜单”打开操作总览，回复图片中的数字编号或“下一页”“上一页”完成选择。",
+		"微信控制不接收斜杠命令；新建、状态、模型、目标、审查、技能和工具都通过数字编号进入。",
 		"偏好与安全只修改个人回复偏好；目录、命令和密钥必须在本机配置。",
 		"发送“视觉风格”可在五套完整模板间切换，选择会自动保存。",
 		"也可以直接说“切换项目”“新建线程”“搜索线程”“切换线程 登录”或“运行中心”。",

@@ -19,7 +19,7 @@ func TestNumberedMenuContinuesAfterHandlerRestart(t *testing.T) {
 	first := newBareHandler(newHandlerThreadClient())
 	first.controlStates = firstStore
 	attachTestSessionManager(t, first)
-	menu, handled := first.handleControlInput(context.Background(), "owner-1", "/", false, nextTestControlSource())
+	menu, handled := first.handleControlInput(context.Background(), "owner-1", "菜单", false, nextTestControlSource())
 	if !handled || !strings.Contains(menu.Text, "Codex 全局工作台") || !strings.Contains(menu.Text, "5  全部线程") {
 		t.Fatalf("main menu = %#v, handled=%v", menu, handled)
 	}

@@ -89,7 +89,7 @@ func (h *Handler) continueTaskSession(ctx context.Context, userID, taskID string
 		}
 		log.Printf("[task] continued task=%s project=%s for %s", shortTaskID(task.ID), task.ProjectID, ilink.LogLabel(userID))
 		options := []controlOption{
-			{Label: "查看当前线程 · /status", Action: actionCurrentSession},
+			{Label: "查看当前线程", Action: actionCurrentSession},
 			{Label: "返回执行记录", Action: actionActivityDetail, Value: task.ID, Page: page},
 			{Label: "codex-link-clawbot 请求队列", Action: actionActivityPage, Page: page},
 		}

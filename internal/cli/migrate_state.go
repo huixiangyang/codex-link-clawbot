@@ -125,7 +125,7 @@ func migrateState(root string) error {
 	return syncDirectoryPath(root)
 }
 
-// migrateControlState 丢弃旧版短期菜单和回执；v14 为目标线程加入原生关系图并重排管理编号。
+// migrateControlState 丢弃旧版短期菜单和回执；v15 只接受纯数字微信控制面。
 func migrateControlState(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -153,14 +153,14 @@ func migrateControlState(path string) error {
 		return fmt.Errorf("control state schema is invalid")
 	}
 	switch state.Version {
-	case 14:
+	case 15:
 		return os.Chmod(path, 0o600)
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14:
 		return writePrivateJSONAtomic(path, struct {
 			Version  int                        `json:"version"`
 			Owners   map[string]json.RawMessage `json:"owners"`
 			Receipts map[string]json.RawMessage `json:"receipts"`
-		}{Version: 14, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
+		}{Version: 15, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
 	default:
 		return fmt.Errorf("unsupported control state version %d", state.Version)
 	}

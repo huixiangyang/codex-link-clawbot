@@ -71,7 +71,7 @@ func (h *Handler) runMobileReview(ctx context.Context, userID, projectID, thread
 	projectID = strings.TrimSpace(projectID)
 	threadID = strings.TrimSpace(threadID)
 	if h.projects == nil || h.sessions == nil || !h.sessions.OwnsProjectThread(userID, projectID, threadID) {
-		return textControlPage("代码审查失败：目标工作空间或线程已经失效。请发送 /status 重新选择目标线程。")
+		return textControlPage("代码审查失败：目标工作空间或线程已经失效。请发送“菜单”并通过编号重新选择目标线程。")
 	}
 	project, exists := h.projects.Get(projectID)
 	if !exists {
@@ -115,7 +115,7 @@ func (h *Handler) runMobileReview(ctx context.Context, userID, projectID, thread
 	options := []controlOption{
 		{Label: "继续修复 · 当前线程", Action: actionReviewContinue, Value: threadID, Query: projectID},
 		{Label: "接受结论 · 结束审查", Action: actionReviewAccept, Value: threadID, Query: projectID},
-		{Label: "重新审查 · /review", Action: actionReviewRerun, Value: threadID, Query: projectID},
+		{Label: "重新审查", Action: actionReviewRerun, Value: threadID, Query: projectID},
 	}
 	if !h.storeChoice(userID, viewSessionReview, options, actionCodexDevelopment) {
 		return textControlPage(controlStateFailureResult().Text)
@@ -147,7 +147,7 @@ func mobileReviewVisual(packet mobileReviewPackage, options []controlOption) vis
 
 func (h *Handler) continueReviewTarget(userID, projectID, threadID string) ActionResult {
 	if !h.validFrozenReviewTarget(userID, projectID, threadID) {
-		return controlTextResult(actionReviewContinue, control.DomainSession, "审查目标已经失效。发送 /status 重新选择目标线程。")
+		return controlTextResult(actionReviewContinue, control.DomainSession, "审查目标已经失效。发送“菜单”并通过编号重新选择目标线程。")
 	}
 	return effectActionResult(
 		string(actionReviewContinue), control.DomainSession, "", EffectEnqueuePrompt, reviewContinuePrompt,
@@ -156,7 +156,7 @@ func (h *Handler) continueReviewTarget(userID, projectID, threadID string) Actio
 
 func (h *Handler) acceptReviewTarget(userID, projectID, threadID string) string {
 	if !h.validFrozenReviewTarget(userID, projectID, threadID) {
-		return "审查目标已经失效。发送 /status 重新选择目标线程。"
+		return "审查目标已经失效。发送“菜单”并通过编号重新选择目标线程。"
 	}
 	project, _ := h.projects.Get(projectID)
 	return strings.Join([]string{

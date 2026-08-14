@@ -72,7 +72,7 @@ func (h *Handler) dispatchTaskIntent(ctx context.Context, userID string, resolve
 			case status == controlStateActive:
 				text = controlStateFailureResult().Text
 			default:
-				text = "codex-link-clawbot 当前没有正在执行的请求。发送 / 可以打开操作总览。"
+				text = "codex-link-clawbot 当前没有正在执行的请求。发送“菜单”可以打开操作总览。"
 			}
 		}
 	case control.IntentTaskStatus:

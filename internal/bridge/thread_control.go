@@ -33,13 +33,13 @@ func (h *Handler) openCodexDevelopmentCenter(ctx context.Context, userID string)
 		}
 	}
 	options := []controlOption{
-		{Label: "模型与推理 · /model", Action: actionThreadModels},
-		{Label: "线程目标 · /goal", Action: actionCodexGoalStatus},
-		{Label: "审查未提交改动 · /review", Action: actionReviewThread},
-		{Label: "技能与工具 · /skills /mcp", Action: actionCodexCapabilities},
-		{Label: "压缩上下文 · /compact", Action: actionCompactThread},
-		{Label: "当前线程 · /status", Action: actionCurrentSession},
-		{Label: "微信可用命令", Action: actionCodexCommands},
+		{Label: "模型与推理", Action: actionThreadModels},
+		{Label: "线程目标", Action: actionCodexGoalStatus},
+		{Label: "审查未提交改动", Action: actionReviewThread},
+		{Label: "技能与工具", Action: actionCodexCapabilities},
+		{Label: "压缩上下文", Action: actionCompactThread},
+		{Label: "当前线程", Action: actionCurrentSession},
+		{Label: "Codex 操作", Action: actionCodexCommands},
 		{Label: "线程中心", Action: actionSessionMenu},
 	}
 	prompt := strings.Join([]string{
@@ -144,8 +144,8 @@ func (h *Handler) openCurrentThreadGoal(ctx context.Context, userID string) stri
 	if err != nil {
 		return formatSessionError(err)
 	}
-	options := []controlOption{{Label: "设置或编辑目标 · /goal edit", Action: actionPromptThreadGoal}}
-	lines := []string{"Codex 线程目标 · /goal", ""}
+	options := []controlOption{{Label: "设置或编辑目标", Action: actionPromptThreadGoal}}
+	lines := []string{"Codex 线程目标", ""}
 	if !exists {
 		lines = append(lines, "状态：未设置")
 	} else {
@@ -155,11 +155,11 @@ func (h *Handler) openCurrentThreadGoal(ctx context.Context, userID string) stri
 			fmt.Sprintf("已用：%d 个令牌", goal.TokensUsed),
 		)
 		if goal.Status == "paused" {
-			options = append(options, controlOption{Label: "继续目标 · /goal resume", Action: actionResumeThreadGoal})
+			options = append(options, controlOption{Label: "继续目标", Action: actionResumeThreadGoal})
 		} else {
-			options = append(options, controlOption{Label: "暂停目标 · /goal pause", Action: actionPauseThreadGoal})
+			options = append(options, controlOption{Label: "暂停目标", Action: actionPauseThreadGoal})
 		}
-		options = append(options, controlOption{Label: "清除目标 · /goal clear", Action: actionClearThreadGoal})
+		options = append(options, controlOption{Label: "清除目标", Action: actionClearThreadGoal})
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	if !h.storeChoice(userID, viewSessionCurrent, options, actionCodexDevelopment) {
@@ -243,7 +243,7 @@ func (h *Handler) openCodexCapabilities(ctx context.Context, userID string) stri
 		lines = append(lines, "技能列表："+strings.Join(displayedSkills, " · "))
 	}
 	options := []controlOption{
-		{Label: "模型与权限 · /model", Action: actionCodexModelOverview},
+		{Label: "模型与权限", Action: actionCodexModelOverview},
 		{Label: "工作空间", Action: actionProjectCenter},
 		{Label: "返回全局总览", Action: actionCodexGlobalOverview},
 	}

@@ -171,7 +171,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 		return nil
 	}
 
-	// 控制层只公开“/”和自然语言；数字菜单状态必须先于普通 Codex 消息解析。
+	// 控制层只公开中文入口与数字菜单；数字状态必须先于普通 Codex 消息解析。
 	if result, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0, controlSourceKey); handled {
 		if err := h.presentActionResult(ctx, client, msg, result, clientID); err != nil {
 			log.Printf("[handler] failed to present action result to %s: %v", userLabel, err)

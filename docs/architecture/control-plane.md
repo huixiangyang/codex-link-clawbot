@@ -56,7 +56,7 @@
 
 ```json
 {
-  "version": 14,
+  "version": 15,
   "owners": {
     "owner": {
       "revision": "random-id",

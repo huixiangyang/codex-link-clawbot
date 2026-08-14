@@ -2,7 +2,6 @@ package visual
 
 import (
 	"context"
-	"fmt"
 	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"html/template"
 	"image"
@@ -365,7 +364,7 @@ func TestThreadMapBuildsOneLevelGeometryAndEscapesContent(t *testing.T) {
 		},
 		Actions: []ThreadMapAction{
 			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
-			{Code: "9", Label: "全部线程 · /resume", Icon: "list-tree"},
+			{Code: "9", Label: "全部线程", Icon: "list-tree"},
 		},
 		Truncated: 2,
 	}
@@ -414,7 +413,7 @@ func TestRenderThreadMapPreview(t *testing.T) {
 		},
 		Actions: []ThreadMapAction{
 			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
-			{Code: "9", Label: "全部线程 · /resume", Icon: "list-tree"},
+			{Code: "9", Label: "全部线程", Icon: "list-tree"},
 		},
 		Truncated: 2,
 	}
@@ -453,16 +452,16 @@ func testDirectory() Directory {
 		},
 		Sections: []DirectorySection{
 			{Code: "1", Title: "Codex · 全局", Icon: "activity", Items: []DirectoryItem{
-				{Code: "11", Label: "全局总览"}, {Code: "12", Label: "全局线程", Meta: "/resume"},
-				{Code: "13", Label: "账号与额度", Meta: "/usage"},
+				{Code: "11", Label: "全局总览"}, {Code: "12", Label: "全局线程"},
+				{Code: "13", Label: "账号与额度"},
 			}},
 			{Code: "2", Title: "Codex · 工作空间", Icon: "folder-kanban", Items: []DirectoryItem{
-				{Code: "21", Label: "工作空间"}, {Code: "22", Label: "目标线程", Meta: "/status"},
-				{Code: "23", Label: "模型与权限", Meta: "/model /permissions"},
-				{Code: "24", Label: "技能与工具", Meta: "/skills /mcp"}, {Code: "25", Label: "微信可用命令"},
+				{Code: "21", Label: "工作空间"}, {Code: "22", Label: "目标线程"},
+				{Code: "23", Label: "模型与权限"},
+				{Code: "24", Label: "技能与工具"}, {Code: "25", Label: "Codex 操作"},
 			}},
 			{Code: "3", Title: "Codex · 执行", Icon: "list-todo", Items: []DirectoryItem{
-				{Code: "31", Label: "新建工作", Meta: "/new"}, {Code: "32", Label: "审查改动", Meta: "/review"},
+				{Code: "31", Label: "新建工作"}, {Code: "32", Label: "审查改动"},
 				{Code: "33", Label: "请求队列"}, {Code: "34", Label: "取消执行"},
 			}},
 			{Code: "4", Title: "codex-link-clawbot · 远程", Icon: "settings-2", Items: []DirectoryItem{
@@ -470,7 +469,7 @@ func testDirectory() Directory {
 				{Code: "43", Label: "呈现与安全"},
 			}},
 		},
-		Footer: "回复编号或直接发送 /command · 0 返回全局工作台 · 目录 30 分钟内有效",
+		Footer: "回复数字编号 · 0 返回全局工作台 · 目录 30 分钟内有效",
 	}
 }
 
@@ -485,37 +484,41 @@ func testWorkbench() Workbench {
 			{Code: "3", Title: "OSS 数据补偿", Workspace: "SYJ", Status: "未加载", Time: "1 小时前"},
 		},
 		Actions: []WorkbenchAction{
-			{Code: "5", Label: "全部线程", Meta: "/resume", Icon: "messages-square"},
-			{Code: "6", Label: "新建线程", Meta: "/new", Icon: "plus"},
+			{Code: "5", Label: "全部线程", Icon: "messages-square"},
+			{Code: "6", Label: "新建线程", Icon: "plus"},
 			{Code: "7", Label: "执行与队列", Icon: "list-filter"},
 			{Code: "8", Label: "工作空间", Icon: "folder-kanban"},
 			{Code: "9", Label: "刷新工作台", Icon: "refresh-cw"},
 		},
-		Commands: testWorkbenchCommands(),
-		Footer:   "回复编号操作 · 普通内容进入当前目标 · 0 退出 · 首页 5 分钟内有效",
+		Controls: testWorkbenchControls(),
+		Footer:   "回复数字编号操作 · 普通内容进入当前目标 · 0 退出 · 首页 5 分钟内有效",
 	}
 }
 
-func testWorkbenchCommands() []WorkbenchCommandGroup {
-	titles := []string{"会话管理", "切换与状态", "模型与能力"}
-	counts := []int{6, 6, 5}
-	groups := make([]WorkbenchCommandGroup, 0, len(titles))
-	commandNumber := 0
-	for groupIndex, title := range titles {
-		group := WorkbenchCommandGroup{Title: title}
-		for itemIndex := 0; itemIndex < counts[groupIndex]; itemIndex++ {
-			commandNumber++
-			tone := "native"
-			if itemIndex%3 == 2 {
-				tone = "adapted"
-			}
-			group.Commands = append(group.Commands, WorkbenchCommand{
-				Label: fmt.Sprintf("功能 %02d", commandNumber), Command: fmt.Sprintf("/command-%02d", commandNumber), Tone: tone,
-			})
-		}
-		groups = append(groups, group)
+func testWorkbenchControls() []WorkbenchControlGroup {
+	return []WorkbenchControlGroup{
+		{Title: "全局与目标", Controls: []WorkbenchControl{
+			{Code: "11", Label: "全局总览", Tone: "codex"},
+			{Code: "12", Label: "全局线程", Tone: "codex"},
+			{Code: "13", Label: "账号与额度", Tone: "codex"},
+			{Code: "21", Label: "工作空间", Tone: "codex"},
+			{Code: "22", Label: "目标线程", Tone: "codex"},
+		}},
+		{Title: "能力与执行", Controls: []WorkbenchControl{
+			{Code: "23", Label: "模型与权限", Tone: "codex"},
+			{Code: "24", Label: "技能与工具", Tone: "codex"},
+			{Code: "25", Label: "Codex 操作", Tone: "codex"},
+			{Code: "31", Label: "新建工作", Tone: "codex"},
+			{Code: "32", Label: "审查改动", Tone: "codex"},
+		}},
+		{Title: "队列与系统", Controls: []WorkbenchControl{
+			{Code: "33", Label: "请求队列", Tone: "bridge"},
+			{Code: "34", Label: "取消执行", Tone: "bridge"},
+			{Code: "41", Label: "最近结果与交付箱", Tone: "bridge"},
+			{Code: "42", Label: "系统健康与诊断", Tone: "bridge"},
+			{Code: "43", Label: "呈现与安全", Tone: "bridge"},
+		}},
 	}
-	return groups
 }
 
 func TestResolveBrowserValidatesExplicitCommand(t *testing.T) {
@@ -658,7 +661,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 			{Priority: "P1", Title: "避免目标线程在菜单期间漂移", Location: "messaging/review_control.go:73", Detail: "继续修复必须冻结工作空间与线程。"},
 			{Priority: "P2", Title: "保留完整审查原文", Location: "messaging/reply_visual.go:126", Detail: "摘要不能替代可复制的审查证据。"},
 		},
-		Options: []Option{{Number: "1", Label: "继续修复 · 当前线程"}, {Number: "2", Label: "接受结论 · 结束审查"}, {Number: "3", Label: "重新审查 · /review"}},
+		Options: []Option{{Number: "1", Label: "继续修复 · 当前线程"}, {Number: "2", Label: "接受结论 · 结束审查"}, {Number: "3", Label: "重新审查"}},
 		Footer:  "回复数字继续；回复“文字版”获取完整审查原文；0 返回 Codex 开发",
 	})
 	if err != nil {
@@ -680,12 +683,12 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 			{Label: "页码", Value: "1 / 1"},
 		},
 		Options: []Option{
-			{Number: "1", Label: "清屏并新建线程 · /clear"},
-			{Number: "2", Label: "重命名当前线程 · /rename"},
-			{Number: "3", Label: "归档当前线程 · /archive"},
-			{Number: "4", Label: "永久删除当前线程 · /delete"},
-			{Number: "5", Label: "压缩上下文 · /compact"},
-			{Number: "6", Label: "取回最近回答 · /copy"},
+			{Number: "1", Label: "清屏并新建线程"},
+			{Number: "2", Label: "重命名当前线程"},
+			{Number: "3", Label: "归档当前线程"},
+			{Number: "4", Label: "永久删除当前线程"},
+			{Number: "5", Label: "压缩上下文"},
+			{Number: "6", Label: "取回最近回答"},
 		},
 		Footer: "回复数字执行 · 0 返回可用命令",
 	})

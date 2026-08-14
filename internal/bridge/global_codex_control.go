@@ -66,9 +66,9 @@ func (h *Handler) openCodexGlobalOverview(ctx context.Context, userID string) st
 	}
 	options := []controlOption{
 		{Label: "运行中线程", Action: actionCodexGlobalThreadPage, Page: 1, AutoUse: true},
-		{Label: "全部线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
-		{Label: "账号与额度 · /usage", Action: actionCodexAccount},
-		{Label: "目标线程 · /status", Action: actionCurrentSession},
+		{Label: "全部线程", Action: actionCodexGlobalThreadPage, Page: 1},
+		{Label: "账号与额度", Action: actionCodexAccount},
+		{Label: "目标线程", Action: actionCurrentSession},
 	}
 	lines = append(lines, "", renderControlOptions(options))
 	if !h.storeChoice(userID, viewCodexGlobalOverview, options, actionMain) {
@@ -115,9 +115,9 @@ func (h *Handler) openCodexGlobalThreadPage(ctx context.Context, userID string, 
 		options = append(options, controlOption{Label: "仅看运行中线程", Action: actionCodexGlobalThreadPage, Page: 1, AutoUse: true})
 	}
 	if archived || runningOnly || strings.TrimSpace(query) != "" {
-		options = append(options, controlOption{Label: "返回全部线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1})
+		options = append(options, controlOption{Label: "返回全部线程", Action: actionCodexGlobalThreadPage, Page: 1})
 	}
-	options = append(options, controlOption{Label: "搜索线程 · /resume", Action: actionPromptGlobalSearch})
+	options = append(options, controlOption{Label: "搜索线程", Action: actionPromptGlobalSearch})
 	if !archived {
 		options = append(options, controlOption{Label: "已归档线程", Action: actionCodexGlobalThreadPage, Page: 1, Archived: true})
 	}
@@ -219,7 +219,7 @@ func (h *Handler) buildCurrentThreadRelations(ctx context.Context, userID string
 		ParentUnavailable: relations.ParentUnavailable, Truncated: relations.Truncated,
 		Actions: []visual.ThreadMapAction{
 			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
-			{Code: "9", Label: "全部线程 · /resume", Icon: "list-tree"},
+			{Code: "9", Label: "全部线程", Icon: "list-tree"},
 		},
 		Footer: "回复关系节点编号即可接管 · 0 返回当前线程 · 关系状态 10 分钟内有效",
 	}
@@ -276,7 +276,7 @@ func (h *Handler) buildCurrentThreadRelations(ctx context.Context, userID string
 
 	actions := []controlOption{
 		{Code: "8", Label: "刷新关系图", Action: actionThreadRelations},
-		{Code: "9", Label: "全部线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
+		{Code: "9", Label: "全部线程", Action: actionCodexGlobalThreadPage, Page: 1},
 	}
 	options = append(options, actions...)
 	lines = append(lines, "", "快捷操作", renderControlOptions(actions))
@@ -335,16 +335,16 @@ func (h *Handler) openCodexAccount(ctx context.Context, userID string) string {
 	if usage, usageOK := h.codex.(codex.UsageProvider); usageOK {
 		if limits, exists := usage.RateLimits(); exists {
 			if limits.Primary != nil {
-				lines = append(lines, formatSlashLimit("主额度", limits.Primary))
+				lines = append(lines, formatRateLimit("主额度", limits.Primary))
 			}
 			if limits.Secondary != nil {
-				lines = append(lines, formatSlashLimit("次额度", limits.Secondary))
+				lines = append(lines, formatRateLimit("次额度", limits.Secondary))
 			}
 		}
 	}
 	options := []controlOption{
-		{Label: "线程用量 · /usage", Action: actionCodexUsage},
-		{Label: "模型与权限 · /model /permissions", Action: actionCodexModelOverview},
+		{Label: "线程用量", Action: actionCodexUsage},
+		{Label: "模型与权限", Action: actionCodexModelOverview},
 		{Label: "返回全局总览", Action: actionCodexGlobalOverview},
 	}
 	lines = append(lines, "", renderControlOptions(options))
@@ -385,8 +385,8 @@ func (h *Handler) openCodexModelOverview(ctx context.Context, userID string) str
 		"目标线程：" + target,
 	}
 	options := []controlOption{
-		{Label: "设置目标线程模型 · /model", Action: actionThreadModels},
-		{Label: "查看执行权限 · /permissions", Action: actionCodexPermissions},
+		{Label: "设置目标线程模型", Action: actionThreadModels},
+		{Label: "查看执行权限", Action: actionCodexPermissions},
 		{Label: "返回全局总览", Action: actionCodexGlobalOverview},
 	}
 	lines = append(lines, "", renderControlOptions(options))

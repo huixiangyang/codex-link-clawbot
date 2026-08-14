@@ -213,7 +213,7 @@ func DefaultRegistry() (*Registry, error) {
 
 func DefaultDefinitions() []Definition {
 	return []Definition{
-		{ID: IntentMenu, Domain: DomainSystem, ExactPhrases: []string{"/", "菜单", "打开菜单", "功能", "操作", "功能菜单", "打开功能"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_menu"},
+		{ID: IntentMenu, Domain: DomainSystem, ExactPhrases: []string{"菜单", "打开菜单", "功能", "操作", "功能菜单", "打开功能"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_menu"},
 		{ID: IntentGuide, Domain: DomainSystem, ExactPhrases: []string{"帮助", "怎么用", "使用说明"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_guide"},
 		{ID: IntentRuntime, Domain: DomainSystem, ExactPhrases: []string{"运行中心", "运行信息", "系统信息", "服务信息", "Codex 信息", "Codex信息"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "open_runtime"},
 		{ID: IntentNoReplyDiagnostic, Domain: DomainSystem, ExactPhrases: []string{"为什么没回复", "怎么没回复", "为什么没反应", "怎么没反应", "没响应", "没有响应", "没回复"}, AllowDuringTask: true, AllowDuringDrain: true, AuditEvent: "diagnose_no_reply"},

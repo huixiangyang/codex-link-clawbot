@@ -93,7 +93,7 @@ func TestMobileReviewBuildsDedicatedStructuredVisual(t *testing.T) {
 		Facts:    []mobileReviewFact{{Label: "变更事实", Value: "12 个文件"}, {Label: "验证事实", Value: "3 项通过"}, {Label: "交付事实", Value: "1 项可再次发送"}},
 		Findings: []mobileReviewFinding{{Priority: "P1", Title: "修复投递竞态", Location: "bridge/handler.go:221", Detail: "避免重复发送。"}},
 	}
-	options := []controlOption{{Label: "继续修复 · 当前线程"}, {Label: "接受结论 · 结束审查"}, {Label: "重新审查 · /review"}}
+	options := []controlOption{{Label: "继续修复 · 当前线程"}, {Label: "接受结论 · 结束审查"}, {Label: "重新审查"}}
 	review := mobileReviewVisual(packet, options)
 	if review.Verdict != visual.ReviewVerdictAttention || review.Highest != "P1" || len(review.Facts) != 3 || len(review.Findings) != 1 || len(review.Options) != 3 {
 		t.Fatalf("review = %#v", review)

@@ -24,6 +24,12 @@ type commandDirectorySection struct {
 	Items    []controlOption
 }
 
+type workbenchDirectGroup struct {
+	Title   string
+	Tone    string
+	Options []controlOption
+}
+
 // buildGlobalWorkbench 聚合 Codex 线程目录与 codex-link-clawbot 队列，首页只承担全局观察和高频调度。
 func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) controlPage {
 	now := time.Now()
@@ -85,14 +91,15 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 
 	queueState, activeRequests := h.workbenchQueueState(userID)
 	quickActions := []controlOption{
-		{Code: "5", Label: "全部线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
-		{Code: "6", Label: "新建线程 · /new", Action: actionPromptNewSession},
+		{Code: "5", Label: "全部线程", Action: actionCodexGlobalThreadPage, Page: 1},
+		{Code: "6", Label: "新建线程", Action: actionPromptNewSession},
 		{Code: "7", Label: "执行与队列", Action: actionActivityPage, Page: 1},
 		{Code: "8", Label: "工作空间", Action: actionProjectCenter},
 		{Code: "9", Label: "刷新工作台", Action: actionMain},
 	}
+	directGroups := workbenchDirectGroups(h.hasActiveTask(userID))
 	options = append(options, quickActions...)
-	options = append(options, workbenchDirectOptions(h.hasActiveTask(userID))...)
+	options = append(options, flattenWorkbenchDirectOptions(directGroups)...)
 	if !h.storeChoiceWithTTL(userID, viewSystemMain, options, controlOption{Action: actionExit}, controlWorkbenchTTL) {
 		return textControlPage(controlStateFailureResult().Text)
 	}
@@ -114,12 +121,12 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 		lines = append(lines, recentLines...)
 	}
 	lines = append(lines, "", "快捷操作", renderControlOptions(quickActions))
-	lines = append(lines, "", "Codex 功能")
-	lines = append(lines, renderWorkbenchCodexCommands()...)
+	lines = append(lines, "", "编号直达")
+	lines = append(lines, renderWorkbenchDirectGroups(directGroups)...)
 	if activeRequests > 0 {
 		lines = append(lines, "", "切换目标前请先在执行与队列中处理当前微信请求。")
 	}
-	text := strings.Join(lines, "\n") + "\n\n回复编号操作，或直接发送上方任意 /command；普通内容继续当前目标，首页 5 分钟内有效，0 退出。"
+	text := strings.Join(lines, "\n") + "\n\n回复图片中的数字编号；普通内容继续当前目标，首页 5 分钟内有效，0 退出。"
 	actions := make([]visual.WorkbenchAction, 0, len(quickActions))
 	icons := map[string]string{"5": "messages-square", "6": "plus", "7": "list-filter", "8": "folder-kanban", "9": "refresh-cw"}
 	for _, option := range quickActions {
@@ -134,45 +141,56 @@ func (h *Handler) buildGlobalWorkbench(ctx context.Context, userID string) contr
 			{Label: "运行中", Value: fmt.Sprintf("%d 个", runningThreads)},
 			{Label: "微信队列", Value: queueState},
 		},
-		Target: target, Threads: threads, Actions: actions, Commands: workbenchCodexCommandGroups(),
-		Footer: "回复编号操作 · 斜杠命令可直接发送 · 普通内容进入当前目标 · 首页 5 分钟内有效",
+		Target: target, Threads: threads, Actions: actions, Controls: workbenchNumberedControlGroups(directGroups),
+		Footer: "回复数字编号操作 · 普通内容进入当前目标 · 首页 5 分钟内有效",
 	}
 	return controlPage{Text: text, visual: &actionVisual{Workbench: model}}
 }
 
-// workbenchDirectOptions 让原稳定能力编号在首页直接执行，不再要求先进入“全部功能”。
-func workbenchDirectOptions(hasActiveTask bool) []controlOption {
+// workbenchDirectGroups 是首页编号、文字降级与视觉画布的唯一编号事实来源。
+func workbenchDirectGroups(hasActiveTask bool) []workbenchDirectGroup {
 	cancelLabel := "取消执行"
 	if !hasActiveTask {
 		cancelLabel += " · 当前无执行"
 	}
-	return []controlOption{
-		{Code: "11", Label: "全局总览", Action: actionCodexGlobalOverview},
-		{Code: "12", Label: "全局线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
-		{Code: "13", Label: "账号与额度 · /usage", Action: actionCodexAccount},
-		{Code: "21", Label: "工作空间", Action: actionProjectCenter},
-		{Code: "22", Label: "目标线程 · /status", Action: actionCurrentSession},
-		{Code: "23", Label: "模型与权限 · /model /permissions", Action: actionCodexModelOverview},
-		{Code: "24", Label: "技能与工具 · /skills /mcp", Action: actionCodexCapabilities},
-		{Code: "25", Label: "微信可用命令", Action: actionCodexCommands},
-		{Code: "31", Label: "新建工作 · /new", Action: actionPromptNewSession},
-		{Code: "32", Label: "审查改动 · /review", Action: actionReviewThread},
-		{Code: "33", Label: "请求队列", Action: actionActivityPage, Page: 1},
-		{Code: "34", Label: cancelLabel, Action: actionConfirmCancelTask},
-		{Code: "41", Label: "最近结果与交付箱", Action: actionResultsDeliveryCenter},
-		{Code: "42", Label: "系统健康与诊断", Action: actionDiagnosticsCenter},
-		{Code: "43", Label: "呈现与安全", Action: actionSettingsCenter},
+	return []workbenchDirectGroup{
+		{Title: "全局与目标", Tone: "codex", Options: []controlOption{
+			{Code: "11", Label: "全局总览", Action: actionCodexGlobalOverview},
+			{Code: "12", Label: "全局线程", Action: actionCodexGlobalThreadPage, Page: 1},
+			{Code: "13", Label: "账号与额度", Action: actionCodexAccount},
+			{Code: "21", Label: "工作空间", Action: actionProjectCenter},
+			{Code: "22", Label: "目标线程", Action: actionCurrentSession},
+		}},
+		{Title: "能力与执行", Tone: "codex", Options: []controlOption{
+			{Code: "23", Label: "模型与权限", Action: actionCodexModelOverview},
+			{Code: "24", Label: "技能与工具", Action: actionCodexCapabilities},
+			{Code: "25", Label: "Codex 操作", Action: actionCodexCommands},
+			{Code: "31", Label: "新建工作", Action: actionPromptNewSession},
+			{Code: "32", Label: "审查改动", Action: actionReviewThread},
+		}},
+		{Title: "队列与系统", Tone: "bridge", Options: []controlOption{
+			{Code: "33", Label: "请求队列", Action: actionActivityPage, Page: 1},
+			{Code: "34", Label: cancelLabel, Action: actionConfirmCancelTask},
+			{Code: "41", Label: "最近结果与交付箱", Action: actionResultsDeliveryCenter},
+			{Code: "42", Label: "系统健康与诊断", Action: actionDiagnosticsCenter},
+			{Code: "43", Label: "呈现与安全", Action: actionSettingsCenter},
+		}},
 	}
 }
 
-func renderWorkbenchCodexCommands() []string {
-	lines := make([]string, 0, codexSlashRemoteCommandCount()+len(codexSlashWorkbenchGroups()))
-	for _, group := range codexSlashWorkbenchGroups() {
+func flattenWorkbenchDirectOptions(groups []workbenchDirectGroup) []controlOption {
+	options := make([]controlOption, 0, 15)
+	for _, group := range groups {
+		options = append(options, group.Options...)
+	}
+	return options
+}
+
+func renderWorkbenchDirectGroups(groups []workbenchDirectGroup) []string {
+	lines := make([]string, 0, 18)
+	for _, group := range groups {
 		lines = append(lines, "["+group.Title+"]")
-		for _, command := range group.Commands {
-			line := command.Label + " · /" + command.Name
-			lines = append(lines, line)
-		}
+		lines = append(lines, renderControlOptions(group.Options))
 	}
 	return lines
 }
@@ -307,8 +325,8 @@ func (h *Handler) buildCommandDirectory(ctx context.Context, userID string) cont
 			Category: controlOption{Code: "1", Label: "Codex · 全局", Action: actionCodexGlobalOverview},
 			Items: []controlOption{
 				{Code: "11", Label: "全局总览", Action: actionCodexGlobalOverview},
-				{Code: "12", Label: "全局线程 · /resume", Action: actionCodexGlobalThreadPage, Page: 1},
-				{Code: "13", Label: "账号与额度 · /usage", Action: actionCodexAccount},
+				{Code: "12", Label: "全局线程", Action: actionCodexGlobalThreadPage, Page: 1},
+				{Code: "13", Label: "账号与额度", Action: actionCodexAccount},
 			},
 		},
 		{
@@ -316,18 +334,18 @@ func (h *Handler) buildCommandDirectory(ctx context.Context, userID string) cont
 			Category: controlOption{Code: "2", Label: "Codex · 工作空间", Action: actionProjectCenter},
 			Items: []controlOption{
 				{Code: "21", Label: "工作空间", Action: actionProjectCenter},
-				{Code: "22", Label: "目标线程 · /status", Action: actionCurrentSession},
-				{Code: "23", Label: "模型与权限 · /model /permissions", Action: actionCodexModelOverview},
-				{Code: "24", Label: "技能与工具 · /skills /mcp", Action: actionCodexCapabilities},
-				{Code: "25", Label: "微信可用命令", Action: actionCodexCommands},
+				{Code: "22", Label: "目标线程", Action: actionCurrentSession},
+				{Code: "23", Label: "模型与权限", Action: actionCodexModelOverview},
+				{Code: "24", Label: "技能与工具", Action: actionCodexCapabilities},
+				{Code: "25", Label: "Codex 操作", Action: actionCodexCommands},
 			},
 		},
 		{
 			Code: "3", Title: "Codex · 执行",
 			Category: controlOption{Code: "3", Label: "Codex · 执行", Action: actionActivityPage, Page: 1},
 			Items: []controlOption{
-				{Code: "31", Label: "新建工作 · /new", Action: actionPromptNewSession},
-				{Code: "32", Label: "审查改动 · /review", Action: actionReviewThread},
+				{Code: "31", Label: "新建工作", Action: actionPromptNewSession},
+				{Code: "32", Label: "审查改动", Action: actionReviewThread},
 				{Code: "33", Label: "请求队列", Action: actionActivityPage, Page: 1},
 				{Code: "34", Label: cancelLabel, Action: actionConfirmCancelTask},
 			},
@@ -359,7 +377,7 @@ func (h *Handler) buildCommandDirectory(ctx context.Context, userID string) cont
 	if !h.storeChoiceWithTTL(userID, viewSystemMain, options, controlOption{Action: actionMain}, controlDirectoryTTL) {
 		return textControlPage(controlStateFailureResult().Text)
 	}
-	text := strings.Join(lines, "\n") + "\n\n回复编号或直接发送 /command，0 返回全局工作台；功能目录 30 分钟内有效。"
+	text := strings.Join(lines, "\n") + "\n\n回复图片中的数字编号，0 返回全局工作台；功能目录 30 分钟内有效。"
 	icons := map[string]string{"1": "activity", "2": "folder-kanban", "3": "list-todo", "4": "settings-2"}
 	directorySections := make([]visual.DirectorySection, 0, len(sections))
 	for _, section := range sections {
@@ -377,7 +395,7 @@ func (h *Handler) buildCommandDirectory(ctx context.Context, userID string) cont
 			{Label: "目标线程", Value: currentSession},
 			{Label: "codex-link-clawbot 执行", Value: taskState},
 		},
-		Sections: directorySections, Footer: "回复编号或直接发送 /command · 0 返回全局工作台 · 目录 30 分钟内有效",
+		Sections: directorySections, Footer: "回复数字编号 · 0 返回全局工作台 · 目录 30 分钟内有效",
 	}
 	return controlPage{Text: text, visual: &actionVisual{Directory: model}}
 }
