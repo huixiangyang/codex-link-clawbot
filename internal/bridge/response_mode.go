@@ -6,7 +6,6 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/presentation"
 	"log"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
@@ -113,8 +112,6 @@ func (h *Handler) sendVoiceCodexReplySnapshot(ctx context.Context, client *ilink
 		outboundMediaPayload{FileName: "codex-link-clawbot-reply.mp3", Source: "codex-link-clawbot-reply.mp3", Data: mp3, ContentType: "audio/mpeg"},
 	)
 
-	// 发送阶段开始后响应可能丢失，先保留完整原文，避免用户看到部分卡片却无法取回文字版。
-	h.visualReplies.Store(userID, &cachedVisualReply{Text: reply, ExpiresAt: time.Now().Add(visualReplyCacheTTL)})
 	if err := sendMediaBatch(ctx, client, userID, contextToken, payloads); err != nil {
 		return mediaBatchMayBeVisible(err), err
 	}

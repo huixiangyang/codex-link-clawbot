@@ -34,28 +34,20 @@ func TestRetiredArchitectureCannotReturn(t *testing.T) {
 			t.Fatalf("bridge runtime exposes mutable dependency setter: %s", handlerType.Method(index).Name)
 		}
 	}
-	assertSourceExcludes(t, filepath.Join(root, "internal", "bridge", "control_visual.go"),
-		"controlWorkbenchFromText", "controlDirectoryFromText", "controlThreadMapFromText", "reviewControlFromText")
-	assertSourceExcludes(t, filepath.Join(root, "internal", "control", "intent_registry.go"), "MustDefaultRegistry")
-}
-
-func assertSourceExcludes(t *testing.T, path string, retired ...string) {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(data)
-	for _, name := range retired {
-		if strings.Contains(source, name) {
-			t.Fatalf("retired source entry returned in %s: %s", path, name)
+	for _, retired := range []string{
+		filepath.Join(root, "internal", "bridge", "control.go"),
+		filepath.Join(root, "internal", "bridge", "control_visual.go"),
+		filepath.Join(root, "internal", "control"),
+	} {
+		if _, err := os.Stat(retired); !os.IsNotExist(err) {
+			t.Fatalf("retired WeChat control surface still exists: %s", retired)
 		}
 	}
 }
 
 func TestDomainPackagesDoNotDependOnCompositionOrBridge(t *testing.T) {
 	root := repositoryRoot(t)
-	for _, directory := range []string{"access", "codex", "control", "delivery", "execution", "preference", "presentation", "request", "thread", "workspace"} {
+	for _, directory := range []string{"access", "codex", "delivery", "execution", "preference", "presentation", "request", "thread", "workspace"} {
 		path := filepath.Join(root, "internal", directory)
 		err := filepath.WalkDir(path, func(file string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil || entry.IsDir() || filepath.Ext(file) != ".go" {

@@ -1,42 +1,32 @@
-# 本机管理面安全
+# 管理面安全模型
 
-## 唯一管理边界
+## 网络边界
 
-codex-link-clawbot 不创建管理 TCP 监听，也不提供通用主动发送 API。健康、排空、恢复和部署提交固定通过当前用户私有的 `~/.codex-link-clawbot/control.sock`；外部系统不能借 codex-link-clawbot 向微信任意发送文字或媒体。
+管理服务默认监听 `127.0.0.1:18120`，配置验证会拒绝公网和局域网地址。需要远程访问时，只允许通过 HTTPS 反向代理或 Cloudflare Tunnel 转发到回环端口。
 
-历史上的共享 TCP `api_addr`、`CODEX_LINK_CLAWBOT_API_ADDR`、`start --api-addr`、`codex-link-clawbot.send_api`、`codex-link-clawbot send`、`codex-link-clawbot send-token` 和主动发送回执均已删除。配置 v6 不接受这些字段，运行时没有旧接口兼容、双写或降级分支。
+`public_url` 是展示信息，不改变监听方式，也不会降低认证要求。
 
-## Unix socket 约束
+## 认证
 
-服务启动后创建 `~/.codex-link-clawbot/control.sock`：
+首次启动使用系统加密随机源生成 32 字节令牌，以 64 位十六进制保存到 `~/.codex-link-clawbot/management-token`：
 
-- 状态根目录必须是当前用户拥有的真实 `0700` 目录。
-- socket 必须是当前用户拥有的真实 Unix socket，权限固定为 `0600`。
-- CLI 在创建客户端和每次拨号前都重新校验路径类型、所有者和权限。
-- 已存活 socket 不会被覆盖；只有当前用户拥有且无法连接的旧 socket 才能作为残留项删除。
-- `GET /health`、`POST /admin/drain`、`POST /admin/resume` 与类型化部署通知只注册在该 socket。
-- 不存在 TCP `/health`、`/admin/*` 或 `/api/send`。
+- 状态目录为 `0700`；
+- 令牌文件必须是常规文件、不是符号链接、权限严格为 `0600`；
+- 每次加载验证长度和编码；
+- API 通过 `X-Codex-Link-Token` 请求头认证并使用常量时间比较；
+- HTML、日志和管理 URL 不包含令牌；
+- 浏览器只写入当前标签页的 `sessionStorage`。
 
-部署通知只接受 `from_version`、`to_version` 和 `service` 三项短元数据。运行中服务生成固定正文，为全部绑定者写入待阅通知并返回 `deferred`；部署器不能提交自定义正文、图片、文件、目标绑定者或外部 URL。
+`codex-link-clawbot console` 会把令牌打印到当前终端，调用者必须自行保护终端历史和屏幕共享。
 
-## 待阅通知
+## 浏览器隔离
 
-没有新微信消息时不发送任何内容。以下两条确定性路径只能写入严格 v1 `~/.codex-link-clawbot/pending-notices.json`：
+服务返回严格 Content Security Policy，只允许同源脚本、样式和连接；禁止框架嵌入、摄像头、麦克风和定位，并设置 `no-referrer` 与 `nosniff`。管理页面没有第三方脚本、CDN 字体或分析代码。
 
-1. 部署事务在新版本完成切换后，经 Unix socket 提交类型化完成事件。
-2. 长任务结果或失败说明无法确定交付时，协调器写入只含安全摘要的恢复提醒。
+管理 API 不启用跨域响应头。自定义令牌请求头和同源策略共同限制跨站调用，但令牌泄漏仍等价于管理权限泄漏。
 
-待阅状态不保存 `context_token`。绑定者下一次发来携带有效上下文的消息时，最多合并四条补送；明确失败继续保留，响应不确定则按可能可见处理并删除，避免重复。两条路径都不能接受远程自由文本、自由命令、自由文件路径或自由收件人。
+## 权限范围
 
-## 验收
+管理令牌允许切换受信任工作空间和线程、修改队列、排空进程及控制远程锁定；它不允许新增任意工作目录、执行 Shell、读取 Codex 对话全文或修改机器级密钥。
 
-自动化覆盖 Unix socket 类型、所有者、权限、残留 socket、管理方法、排空与恢复、类型化通知字段、待阅通知持久化以及 TCP 监听缺失。运维验证使用：
-
-```bash
-codex-link-clawbot status
-go test ./...
-go test -race ./internal/management ./internal/config ./internal/cli ./internal/bridge
-go vet ./...
-```
-
-不要使用 TCP `curl /health` 判断运行状态；该路由不存在。
+公网部署建议在 Cloudflare 层额外启用 Access 身份验证和速率限制。应用令牌仍必须保留，不能以边缘认证替代。

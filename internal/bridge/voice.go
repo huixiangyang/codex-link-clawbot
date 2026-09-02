@@ -4,14 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/huixiangyang/codex-link-clawbot/internal/control"
-	"log"
 	"os/exec"
 	"strings"
 	"time"
-
-	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
-	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 )
 
 const (
@@ -175,95 +170,4 @@ func (b *boundedVoiceOutputBuffer) Write(data []byte) (int, error) {
 		b.remaining -= len(data)
 	}
 	return originalLength, nil
-}
-
-func (h *Handler) requestVoiceBriefing(userID string) ActionResult {
-	if h.voice == nil {
-		return newActionResult(string(actionVoiceBriefing), control.DomainQueue, "语音简报未启用。需要配置语音提供商。")
-	}
-	return effectActionResult(string(actionVoiceBriefing), control.DomainQueue, "正在生成语音简报。", EffectVoiceBriefing, "")
-}
-
-func (h *Handler) sendVoiceBriefing(ctx context.Context, client *ilink.Client, userID, contextToken string) (string, error) {
-	if strings.TrimSpace(contextToken) == "" {
-		return "", fmt.Errorf("发送微信音频必须使用当前线程的消息上下文令牌")
-	}
-	projectName := "未配置"
-	if h.projects != nil {
-		projectName = h.projects.Current(userID).Name
-	}
-	parts := []string{"codex-link-clawbot 工作简报。当前项目入口：" + projectName + "。"}
-	if h.tasks == nil || len(h.tasks.List(userID)) == 0 {
-		parts = append(parts, "目前还没有已完成请求。")
-	} else {
-		tasks := h.tasks.List(userID)
-		if len(tasks) > 3 {
-			tasks = tasks[:3]
-		}
-		parts = append(parts, fmt.Sprintf("最近有 %d 条 codex-link-clawbot 执行记录。", len(tasks)))
-		for index, task := range tasks {
-			parts = append(parts, fmt.Sprintf("第 %d 项，%s，状态%s。", index+1, task.Summary, taskStateText(task.State)))
-		}
-	}
-	script := strings.Join(parts, "")
-	synthesis, err := h.voice.Generate(ctx, script)
-	if err != nil {
-		return "", err
-	}
-	log.Printf("[voice] synthesized provider=%s format=%s bytes=%d for %s", synthesis.ProviderID, synthesis.Audio.Format, len(synthesis.Audio.Data), ilink.LogLabel(userID))
-	mp3, err := EncodeVoiceMP3(ctx, h.voice.ffmpegCommand, synthesis.Audio)
-	if err != nil {
-		return "", err
-	}
-	log.Printf("[voice] encoded MP3 bytes=%d for %s", len(mp3), ilink.LogLabel(userID))
-	artifact, err := h.renderVoiceCompanionCard(ctx, userID, projectName, synthesis.ProviderID, script)
-	if err != nil {
-		return "", fmt.Errorf("发送语音配套阅读卡: %w", err)
-	}
-	if artifact.Cleanup != nil {
-		defer artifact.Cleanup()
-	}
-	cardPayload, err := outboundMediaFromPath(artifact.Path)
-	if err != nil {
-		return "", fmt.Errorf("读取语音配套阅读卡: %w", err)
-	}
-	if err := sendMediaBatch(ctx, client, userID, contextToken, []outboundMediaPayload{
-		cardPayload,
-		{FileName: "codex-link-clawbot-briefing.mp3", Source: "codex-link-clawbot-briefing.mp3", Data: mp3, ContentType: "audio/mpeg"},
-	}); err != nil {
-		return "", err
-	}
-	h.visualReplies.Store(userID, &cachedVisualReply{Text: script, ExpiresAt: time.Now().Add(visualReplyCacheTTL)})
-	log.Printf("[voice] delivered companion card and MP3 for %s", ilink.LogLabel(userID))
-	return synthesis.ProviderID, nil
-}
-
-func (h *Handler) renderVoiceCompanionCard(ctx context.Context, userID, projectName, providerID, script string) (*visual.Artifact, error) {
-	if h.visual == nil {
-		return nil, fmt.Errorf("未配置阅读卡渲染器")
-	}
-	// 语音配图使用专用单卡，避免通用长文档模板产生单页页码、进度条等无意义元素。
-	card := visual.Card{
-		Variant: visual.VariantSystem,
-		Style:   h.currentVisualStyle(userID),
-		Title:   "语音简报",
-		Facts: []visual.Fact{
-			{Label: "Codex 工作空间", Value: projectName},
-			{Label: "音频来源", Value: providerID},
-		},
-		Body:   []string{script},
-		Footer: "配套 MP3 音频文件随后发送",
-	}
-	artifact, err := h.visual.Render(ctx, card)
-	if err != nil {
-		return nil, fmt.Errorf("渲染阅读卡: %w", err)
-	}
-	if artifact == nil || strings.TrimSpace(artifact.Path) == "" {
-		if artifact != nil && artifact.Cleanup != nil {
-			artifact.Cleanup()
-		}
-		return nil, fmt.Errorf("阅读卡渲染器未生成图片")
-	}
-	log.Printf("[voice] rendered companion reading card for %s", ilink.LogLabel(userID))
-	return artifact, nil
 }

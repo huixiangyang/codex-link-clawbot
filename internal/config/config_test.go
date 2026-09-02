@@ -62,6 +62,9 @@ func TestDefaultConfigUsesCodexOnly(t *testing.T) {
 	if reply.Voice.Enabled || reply.Voice.FFmpegCommand != "" || len(reply.Voice.Providers) != 0 {
 		t.Fatalf("unexpected default voice config: %#v", reply.Voice)
 	}
+	if cfg.Clawbot.Management.Listen != "127.0.0.1:18120" || cfg.Clawbot.Management.PublicURL != "" {
+		t.Fatalf("unexpected default management config: %#v", cfg.Clawbot.Management)
+	}
 }
 
 func TestLoadEnvOverridesCodex(t *testing.T) {
@@ -69,6 +72,7 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	t.Setenv("CODEX_LINK_CLAWBOT_CODEX_MODEL", "gpt-test")
 	t.Setenv("CODEX_LINK_CLAWBOT_VISUAL_BROWSER", "/opt/chromium")
 	t.Setenv("CODEX_LINK_CLAWBOT_MIMO_API_KEY", "mimo-test-key")
+	t.Setenv("CODEX_LINK_CLAWBOT_MANAGEMENT_PUBLIC_URL", "https://link.example.com")
 
 	cfg := DefaultConfig()
 	cfg.Clawbot.Reply.Voice.Providers = []VoiceProviderConfig{{
@@ -84,6 +88,9 @@ func TestLoadEnvOverridesCodex(t *testing.T) {
 	}
 	if cfg.Clawbot.Reply.Voice.Providers[0].MiMo.APIKey != "mimo-test-key" {
 		t.Fatalf("MiMo API key override was not applied")
+	}
+	if cfg.Clawbot.Management.PublicURL != "https://link.example.com" {
+		t.Fatalf("management public URL override = %q", cfg.Clawbot.Management.PublicURL)
 	}
 }
 
@@ -105,6 +112,21 @@ func TestVisualConfigRejectsUnsafeLongReplyThreshold(t *testing.T) {
 	}
 }
 
+func TestManagementConfigRejectsPublicOrInsecureListen(t *testing.T) {
+	for _, listen := range []string{"0.0.0.0:18120", "192.168.1.10:18120", ":18120"} {
+		cfg := DefaultConfig()
+		cfg.Clawbot.Management.Listen = listen
+		if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "loopback") {
+			t.Fatalf("listen %q validation error = %v", listen, err)
+		}
+	}
+	cfg := DefaultConfig()
+	cfg.Clawbot.Management.PublicURL = "http://link.example.com"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("public URL validation error = %v", err)
+	}
+}
+
 func TestLoadKeepsVisualDefaultWhenSectionIsOmitted(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -114,7 +136,7 @@ func TestLoadKeepsVisualDefaultWhenSectionIsOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := []byte(`{
-  "schema_version": 6,
+  "schema_version": 7,
   "codex": {"command": "codex", "model": ""},
   "codex-link-clawbot": {
     "project_entries": [{"id": "project", "name": "Project", "root": "/srv/project"}],
@@ -153,7 +175,7 @@ func TestLoadRejectsFlatConfigurationSchema(t *testing.T) {
 }
 
 func TestDecodeRejectsRetiredTimedProgressInterval(t *testing.T) {
-	_, err := decodeConfig([]byte(`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{"progress":{"enabled":true,"typing_interval_seconds":8,"first_message_delay_seconds":15,"message_interval_seconds":45}},"security":{}}}`))
+	_, err := decodeConfig([]byte(`{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{"progress":{"enabled":true,"typing_interval_seconds":8,"first_message_delay_seconds":15,"message_interval_seconds":45}},"security":{}}}`))
 	if err == nil || !strings.Contains(err.Error(), "message_interval_seconds") {
 		t.Fatalf("decodeConfig() error = %v, want retired interval rejection", err)
 	}
@@ -196,9 +218,9 @@ func TestLoadRejectsRemovedProjectQuickTasks(t *testing.T) {
 
 func TestDecodeRejectsRemovedProjectMonitoringFields(t *testing.T) {
 	for _, data := range []string{
-		`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","service_name":"app.service"}],"reply":{},"security":{}}}`,
-		`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","health_url":"http://127.0.0.1/health"}],"reply":{},"security":{}}}`,
-		`{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"project_watches":[],"reply":{},"security":{}}}`,
+		`{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","service_name":"app.service"}],"reply":{},"security":{}}}`,
+		`{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project","health_url":"http://127.0.0.1/health"}],"reply":{},"security":{}}}`,
+		`{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"project_watches":[],"reply":{},"security":{}}}`,
 	} {
 		if _, err := decodeConfig([]byte(data)); err == nil || !strings.Contains(err.Error(), "unknown field") {
 			t.Fatalf("decodeConfig() error = %v, want removed project monitoring field rejection", err)

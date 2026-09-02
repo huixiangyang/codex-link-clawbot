@@ -12,8 +12,8 @@ var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:     "codex-link-clawbot",
-	Short:   "WeChat to Codex bridge",
-	Long:    "codex-link-clawbot connects a bound WeChat account to a local Codex App Server.",
+	Short:   "Codex Link for WeChat",
+	Long:    "codex-link-clawbot connects a bound WeChat account to Codex and keeps management in a separate web console.",
 	Version: Version,
 	RunE:    runStart, // default command is start
 }

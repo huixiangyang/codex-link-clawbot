@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -124,9 +125,9 @@ func TestMigrateStateRejectsPreRenameConfigurations(t *testing.T) {
 	}
 }
 
-func TestMigrateStateAcceptsCurrentConfigurationV6(t *testing.T) {
+func TestMigrateStateAcceptsCurrentConfigurationV7(t *testing.T) {
 	root := t.TempDir()
-	current := `{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[],"reply":{},"security":{}}}`
+	current := `{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[],"reply":{},"security":{},"management":{"listen":"127.0.0.1:18120"}}}`
 	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte(current), 0o640); err != nil {
 		t.Fatal(err)
@@ -140,6 +141,39 @@ func TestMigrateStateAcceptsCurrentConfigurationV6(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("current config mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestMigrateStateUpgradesSchemaV6ToManagementConsole(t *testing.T) {
+	root := t.TempDir()
+	legacy := `{"schema_version":6,"codex":{"command":"codex","env":{"CODEX_HOME":"/srv/codex"}},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{},"security":{}}}`
+	path := filepath.Join(root, "config.json")
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateState(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrated struct {
+		SchemaVersion int `json:"schema_version"`
+		Codex         struct {
+			Environment map[string]string `json:"env"`
+		} `json:"codex"`
+		Clawbot struct {
+			Management struct {
+				Listen string `json:"listen"`
+			} `json:"management"`
+		} `json:"codex-link-clawbot"`
+	}
+	if err := json.Unmarshal(data, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.SchemaVersion != 7 || migrated.Clawbot.Management.Listen != "127.0.0.1:18120" || migrated.Codex.Environment["CODEX_HOME"] != "/srv/codex" {
+		t.Fatalf("unexpected migrated config: %s", data)
 	}
 }
 
@@ -208,91 +242,23 @@ func TestMigrateStateRemovesOnlyProjectWatchNotices(t *testing.T) {
 	}
 }
 
-func TestMigrateStateReplacesLegacyControlStateWithEmptyV15(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":1,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{"source":{"action_id":"thread.new"}}}`
-	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateState(root); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "{\n  \"version\": 15,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
-		t.Fatalf("migrated control state = %s", data)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("control state mode = %v, %v", info.Mode().Perm(), err)
-	}
-}
-
-func TestMigrateStateReplacesV2ControlStateWithEmptyV15(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":2,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
-	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateState(root); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "{\n  \"version\": 15,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
-		t.Fatalf("migrated control state = %s", data)
-	}
-}
-
-func TestMigrateStateReplacesV14ControlStateWithEmptyV15(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "control-state.json")
-	legacy := `{"version":14,"owners":{"owner":{"revision":"0123456789abcdef0123456789abcdef"}},"receipts":{}}`
-	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrateState(root); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "{\n  \"version\": 15,\n  \"owners\": {},\n  \"receipts\": {}\n}\n" {
-		t.Fatalf("migrated control state = %s", data)
-	}
-}
-
-func TestMigrateStateRejectsUnknownControlStateVersion(t *testing.T) {
+func TestMigrateStateRemovesRetiredControlState(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "control-state.json")
 	if err := os.WriteFile(path, []byte(`{"version":99,"owners":{},"receipts":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "unsupported control state version") {
-		t.Fatalf("migrateState() error = %v", err)
-	}
-}
-
-func TestMigrateStateRejectsUnknownControlStateField(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "control-state.json")
-	if err := os.WriteFile(path, []byte(`{"version":2,"owners":{},"receipts":{},"legacy":true}`), 0o600); err != nil {
+	if err := migrateState(root); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateState(root); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("migrateState() error = %v", err)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retired control state still exists: %v", err)
 	}
 }
 
 func TestMigrateStateDestroysRetiredWorkflowFile(t *testing.T) {
 	root := t.TempDir()
-	configData := `{"schema_version":6,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{},"security":{}}}`
+	configData := `{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"project","name":"Project","root":"/srv/project"}],"reply":{},"security":{},"management":{"listen":"127.0.0.1:18120"}}}`
 	configPath := filepath.Join(root, "config.json")
 	if err := os.WriteFile(configPath, []byte(configData), 0o600); err != nil {
 		t.Fatal(err)

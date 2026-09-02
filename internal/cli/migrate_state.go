@@ -107,8 +107,8 @@ func migrateState(root string) error {
 	if err := removeRetiredPromptTemplates(filepath.Join(root, "workflows.json")); err != nil {
 		return fmt.Errorf("remove prompt templates: %w", err)
 	}
-	if err := validateConfigurationV6(filepath.Join(root, "config.json")); err != nil {
-		return fmt.Errorf("validate config: %w", err)
+	if err := migrateConfigurationV7(filepath.Join(root, "config.json")); err != nil {
+		return fmt.Errorf("migrate config: %w", err)
 	}
 	if err := migrateDeliveryLibrary(root); err != nil {
 		return fmt.Errorf("migrate delivery library: %w", err)
@@ -119,14 +119,14 @@ func migrateState(root string) error {
 	if err := removeRetiredProjectWatchNotices(filepath.Join(root, "pending-notices.json")); err != nil {
 		return fmt.Errorf("remove retired project watch notices: %w", err)
 	}
-	if err := migrateControlState(filepath.Join(root, "control-state.json")); err != nil {
-		return fmt.Errorf("migrate control state: %w", err)
+	if err := removeRetiredControlState(filepath.Join(root, "control-state.json")); err != nil {
+		return fmt.Errorf("remove retired WeChat control state: %w", err)
 	}
 	return syncDirectoryPath(root)
 }
 
-// migrateControlState 丢弃旧版短期菜单和回执；v15 只接受纯数字微信控制面。
-func migrateControlState(path string) error {
+// removeRetiredControlState 销毁旧微信数字菜单状态，管理操作不再通过消息协议承载。
+func removeRetiredControlState(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -137,33 +137,7 @@ func migrateControlState(path string) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("control state must be a regular file")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var state struct {
-		Version  int                        `json:"version"`
-		Owners   map[string]json.RawMessage `json:"owners"`
-		Receipts map[string]json.RawMessage `json:"receipts"`
-	}
-	if err := decodeStrictJSONBytes(data, &state); err != nil {
-		return err
-	}
-	if state.Version <= 0 || state.Owners == nil || state.Receipts == nil {
-		return fmt.Errorf("control state schema is invalid")
-	}
-	switch state.Version {
-	case 15:
-		return os.Chmod(path, 0o600)
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14:
-		return writePrivateJSONAtomic(path, struct {
-			Version  int                        `json:"version"`
-			Owners   map[string]json.RawMessage `json:"owners"`
-			Receipts map[string]json.RawMessage `json:"receipts"`
-		}{Version: 15, Owners: map[string]json.RawMessage{}, Receipts: map[string]json.RawMessage{}})
-	default:
-		return fmt.Errorf("unsupported control state version %d", state.Version)
-	}
+	return os.Remove(path)
 }
 
 // removeRetiredPromptTemplates 直接销毁当前命名空间中已下线的模板状态。
@@ -183,8 +157,9 @@ func removeRetiredPromptTemplates(workflowPath string) error {
 	return nil
 }
 
-// validateConfigurationV6 拒绝定时重复进度字段；阶段五只保留真实阶段更新节奏。
-func validateConfigurationV6(path string) error {
+// migrateConfigurationV7 在离线事务中把最后一个旧版本单向升级到 Web 管理面配置。
+// 运行时仍只接受 schema 7，不保留任何 schema 6 兼容分支。
+func migrateConfigurationV7(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -199,6 +174,88 @@ func validateConfigurationV6(path string) error {
 	if err != nil {
 		return err
 	}
+	var header struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	if header.SchemaVersion == 6 {
+		var fields map[string]json.RawMessage
+		if err := decodeStrictJSONBytes(data, &fields); err != nil {
+			return err
+		}
+		if fields == nil {
+			return fmt.Errorf("config must be a JSON object")
+		}
+		allowed := map[string]bool{"schema_version": true, "codex": true, "codex-link-clawbot": true}
+		for name := range fields {
+			if !allowed[name] {
+				return fmt.Errorf("unknown field %q", name)
+			}
+		}
+		if _, exists := fields["codex"]; !exists {
+			return fmt.Errorf("codex is required")
+		}
+		rawClawbot, exists := fields["codex-link-clawbot"]
+		if !exists {
+			return fmt.Errorf("codex-link-clawbot is required")
+		}
+		var clawbot map[string]json.RawMessage
+		if err := decodeStrictJSONBytes(rawClawbot, &clawbot); err != nil {
+			return err
+		}
+		allowedClawbot := map[string]bool{"project_entries": true, "reply": true, "security": true}
+		for name := range clawbot {
+			if !allowedClawbot[name] {
+				return fmt.Errorf("unknown codex-link-clawbot field %q", name)
+			}
+		}
+		management, err := json.Marshal(map[string]string{"listen": "127.0.0.1:18120"})
+		if err != nil {
+			return err
+		}
+		clawbot["management"] = management
+		clawbotData, err := json.Marshal(clawbot)
+		if err != nil {
+			return err
+		}
+		fields["schema_version"] = json.RawMessage("7")
+		fields["codex-link-clawbot"] = clawbotData
+		data, err = json.Marshal(fields)
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateConfigurationV7Data(data); err != nil {
+		return err
+	}
+	return writePrivateJSONAtomic(path, json.RawMessage(data))
+}
+
+// validateConfigurationV7 只接受管理面彻底分离后的当前配置。
+func validateConfigurationV7(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("config must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := validateConfigurationV7Data(data); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func validateConfigurationV7Data(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := decodeStrictJSONBytes(data, &fields); err != nil {
 		return err
@@ -217,7 +274,7 @@ func validateConfigurationV6(path string) error {
 		return fmt.Errorf("schema_version is required")
 	}
 	var version int
-	if err := json.Unmarshal(rawVersion, &version); err != nil || version != 6 {
+	if err := json.Unmarshal(rawVersion, &version); err != nil || version != 7 {
 		return fmt.Errorf("unsupported configuration schema version")
 	}
 	if _, exists := fields["codex"]; !exists {
@@ -230,6 +287,7 @@ func validateConfigurationV6(path string) error {
 		ProjectEntries json.RawMessage `json:"project_entries"`
 		Reply          json.RawMessage `json:"reply"`
 		Security       json.RawMessage `json:"security"`
+		Management     json.RawMessage `json:"management"`
 	}
 	if err := decodeStrictJSONBytes(fields["codex-link-clawbot"], &clawbot); err != nil {
 		return err
@@ -254,7 +312,7 @@ func validateConfigurationV6(path string) error {
 			}
 		}
 	}
-	return os.Chmod(path, 0o600)
+	return nil
 }
 
 // migrateDeliveryLibrary 破坏性升级交付箱：v3 要求每个文件都有任务、线程与摘要校验来源。

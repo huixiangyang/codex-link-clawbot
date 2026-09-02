@@ -11,7 +11,6 @@ import (
 )
 
 // prepareQueuedInput 在确认入队前完成所有微信附件的下载与内容校验。
-// 返回值只在内存中短暂存在，随后由 request 原子写入私有请求目录。
 func prepareQueuedInput(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem) (string, []request.InputAttachment, []request.InputAttachment, error) {
 	return prepareQueuedInputWithDownloaders(ctx, text, images, files, inboundDownloaders{
 		image: downloadInboundImage,

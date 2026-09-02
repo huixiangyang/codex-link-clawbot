@@ -1,62 +1,41 @@
-# 安装与启动
+# 安装与首次绑定
 
-## 前置要求
+## 依赖
 
-- Go 1.25 或更高版本。
-- 已安装并登录 `codex`，可运行 `codex app-server --listen stdio://`。
-- 至少一个允许 Codex 工作的本机工作空间绝对路径。
-- 启用视觉能力时，需要非 Snap Chromium；推荐 `npx playwright install chromium`。
-- 启用语音能力时，需要 FFmpeg，以及至少一个 Piper 或 MiMo 提供商。
+- Go 1.25 或更新版本；
+- 已安装并完成账号认证的 `codex`；
+- 可访问微信 iLink 服务；
+- 视觉回复启用时，安装非 Snap Chromium；
+- 语音模式启用时，安装 FFmpeg 和至少一个 TTS 提供商。
 
-## 从源码安装
+## 安装与扫码
 
 ```bash
 go install github.com/huixiangyang/codex-link-clawbot/cmd/codex-link-clawbot@main
-```
-
-仓库内构建使用唯一入口：
-
-```bash
-go build -o codex-link-clawbot ./cmd/codex-link-clawbot
-```
-
-根模块不再提供可安装的 `main` 包，也不存在旧入口兼容层。
-
-## 配置
-
-配置文件固定为 `~/.codex-link-clawbot/config.json`。先阅读 [配置参考](configuration.md)，至少确认工作空间白名单、Codex 命令和视觉浏览器。
-
-## 登录与前台启动
-
-```bash
 codex-link-clawbot login
+```
+
+终端显示二维码后，用准备绑定的个人微信扫码并在手机确认。凭据写入私有账号目录。服务只接受凭据中 `ilink_user_id` 对应绑定者的私聊消息。
+
+## 配置并启动
+
+先按[配置指南](configuration.md)设置工作空间，再启动：
+
+```bash
+codex-link-clawbot config
 codex-link-clawbot start
 ```
 
-首次登录显示微信二维码。codex-link-clawbot 只接受扫码凭据中绑定者的私聊消息，其他联系人和群聊直接拒绝。
-
-`start` 始终前台运行，不创建 daemon 或 PID 文件。生产环境使用仓库中的 `service/codex-link-clawbot.service` 作为 systemd 用户服务模板。
-
-## 运行检查
+另开终端读取管理入口：
 
 ```bash
-codex-link-clawbot status
-codex-link-clawbot restart
-codex-link-clawbot stop
+codex-link-clawbot console
 ```
 
-这些命令只连接权限为 `0600` 的 `~/.codex-link-clawbot/control.sock`。正常状态至少应显示版本、Codex 就绪、微信监控正常和同步游标可提交。
+打开输出的 URL，粘贴令牌。管理页面成功连接后应显示微信监听器、Codex App Server、当前工作空间和目标线程。
 
-## 微信首次验证
+## 首条消息
 
-1. 发送“菜单”，确认只收到一张 1080×780 的艺术画布；最近线程逐项显示项目名称和线程文件目录，与 `5`–`9` 一起收在顶部左侧。右上单行显示工作空间、全部线程、运行中和微信队列，线程拓扑位于遥测带下方，所有顶部内容不得超过 390 像素；其余区域以三个等宽列面板完整显示 15 个稳定数字动作，对应 `/command` 以次要文字保留并标明仅作功能对照，不得出现 CLI、TUI、Windows、实验协议专属项。当前线程只用柔和选中态和“当前”标记识别，不得出现独立统计卡、当前目标面板或表格边框。
-2. 发送一条普通问题，确认进入 codex-link-clawbot 持久请求队列，并在启动 Codex 轮次后收到回复。
-3. 回复 `5` 打开全局线程，确认当前线程可见；重新发送“菜单”后直接回复 `22` 查看目标线程；回复 `8` 应直接进入工作空间，最后从线程管理页选择“重命名线程”并输入新名称。
-4. 切换“阅读模式”，发送短问题，确认收到阅读图片并可回复“文字版”。
-5. 如已启用语音，发送“发语音”，确认先收到阅读图，再收到 MP3 文件。
+在微信发送 `菜单` 验证连接摘要；再发送一个真实任务，例如“检查当前项目的测试失败原因”。第二条消息应先收到可靠入队确认，随后收到 Codex 结果。
 
-完整回归见 [微信端与部署验收清单](../operations/acceptance.md)。
-
-## 安全提醒
-
-Codex 使用 `approvalPolicy: never` 与 `dangerFullAccess` 在工作空间白名单中工作。绑定者能够通过微信驱动本机代码工具，因此只能绑定你信任的个人账号，并为 codex-link-clawbot 使用独立、最小化的工作空间列表和操作系统用户。
+不要用旧数字菜单验证。`1`、`状态` 和 `取消` 已经是普通 Codex 输入。

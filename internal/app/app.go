@@ -17,7 +17,6 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/bridge"
 	"github.com/huixiangyang/codex-link-clawbot/internal/codex/appserver"
 	"github.com/huixiangyang/codex-link-clawbot/internal/config"
-	"github.com/huixiangyang/codex-link-clawbot/internal/control"
 	"github.com/huixiangyang/codex-link-clawbot/internal/delivery"
 	"github.com/huixiangyang/codex-link-clawbot/internal/execution"
 	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
@@ -64,10 +63,6 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	}
 	defer codexClient.Stop()
 
-	controlStates, err := bridge.NewControlStateStore("")
-	if err != nil {
-		return fmt.Errorf("initialize persistent control state: %w", err)
-	}
 	preferences, err := preference.NewStore("")
 	if err != nil {
 		return fmt.Errorf("initialize owner preferences: %w", err)
@@ -115,15 +110,15 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	if err != nil {
 		return fmt.Errorf("initialize remote lock: %w", err)
 	}
-	intents, err := control.DefaultRegistry()
-	if err != nil {
-		return fmt.Errorf("initialize control intents: %w", err)
+	managementURL := strings.TrimRight(cfg.Clawbot.Management.PublicURL, "/")
+	if managementURL == "" {
+		managementURL = "http://" + cfg.Clawbot.Management.Listen
 	}
 	bridgeRuntime, err := bridge.NewRuntime(bridge.Dependencies{
-		Codex: codexClient, ControlStates: controlStates, Intents: intents,
+		Codex:      codexClient,
 		Workspaces: workspaces, Threads: threads, Visual: visualRenderer, Preferences: preferences,
 		Requests: requests, Lifecycle: runtimeController, Deliveries: deliveries, PendingNotices: notices,
-		RemoteLock: remoteLock, Voice: buildVoice(replyConfig), Version: options.Version,
+		RemoteLock: remoteLock, Voice: buildVoice(replyConfig), ManagementURL: managementURL,
 		VisualReplyEnabled: replyConfig.Visual.LongReplies, VisualReplyMinRunes: replyConfig.Visual.LongReplyMinRunes,
 		Progress: execution.ProgressConfig{
 			Enabled:           replyConfig.Progress.Enabled,
@@ -139,10 +134,22 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	drainer.coordinator = coordinator
 
 	for _, credentials := range accounts {
-		if strings.TrimSpace(credentials.ILinkUserID) == "" {
+		if credentials == nil || strings.TrimSpace(credentials.ILinkUserID) == "" {
 			return fmt.Errorf("account owner is missing")
 		}
 		coordinator.RegisterClient(ilink.NewClient(credentials))
+	}
+	consoleToken, err := management.EnsureConsoleToken(options.StateRoot)
+	if err != nil {
+		return fmt.Errorf("initialize management console token: %w", err)
+	}
+	consoleServer, err := management.NewConsoleServer(cfg.Clawbot.Management.Listen, consoleToken, management.ConsoleDependencies{
+		Runtime: runtimeController, Workspaces: workspaces, Threads: threads, Requests: requests,
+		Deliveries: deliveries, Preferences: preferences, RemoteLock: remoteLock, Codex: codexClient,
+		Queue: coordinator, OwnerID: accounts[0].ILinkUserID, AccountCount: len(accounts), PublicURL: cfg.Clawbot.Management.PublicURL,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize management console: %w", err)
 	}
 	managementServer := management.NewManagementServer(
 		runtimeController,
@@ -150,11 +157,21 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 		deploymentNotifier(accounts, notices),
 	)
 	managementErrors := make(chan error, 1)
+	consoleErrors := make(chan error, 1)
 	go func() { managementErrors <- managementServer.Run(ctx) }()
+	go func() { consoleErrors <- consoleServer.Run(ctx) }()
 	select {
 	case <-managementServer.Ready():
 	case err := <-managementErrors:
 		return fmt.Errorf("start local management server: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-consoleServer.Ready():
+		log.Printf("Management console listening on %s", cfg.Clawbot.Management.Listen)
+	case err := <-consoleErrors:
+		return fmt.Errorf("start management console: %w", err)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -196,6 +213,12 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 			return nil
 		}
 		return fmt.Errorf("local management server stopped: %w", err)
+	case err := <-consoleErrors:
+		if ctx.Err() != nil {
+			<-monitorsDone
+			return nil
+		}
+		return fmt.Errorf("management console stopped: %w", err)
 	case <-ctx.Done():
 		<-monitorsDone
 		return nil

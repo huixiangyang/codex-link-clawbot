@@ -22,11 +22,14 @@ func TestConfigStatusRedactsSecrets(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &status); err != nil {
 		t.Fatalf("decode config status: %v", err)
 	}
-	if status.Status != "valid" || status.SchemaVersion != 6 || len(status.Clawbot.ProjectEntries) != 1 {
+	if status.Status != "valid" || status.SchemaVersion != 7 || len(status.Clawbot.ProjectEntries) != 1 {
 		t.Fatalf("unexpected status: %#v", status)
 	}
 	if !status.Clawbot.Reply.Visual || !status.Clawbot.Reply.Progress || status.Clawbot.Reply.Voice {
 		t.Fatalf("unexpected reply status: %#v", status.Clawbot.Reply)
+	}
+	if status.Clawbot.Management.Listen != "127.0.0.1:18120" {
+		t.Fatalf("unexpected management status: %#v", status.Clawbot.Management)
 	}
 	if bytes.Contains(output.Bytes(), []byte("token_sha256")) || bytes.Contains(output.Bytes(), []byte("remote_lock_code")) || bytes.Contains(output.Bytes(), []byte("api_key")) {
 		t.Fatalf("configuration status exposed secret fields: %s", output.String())

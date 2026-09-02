@@ -1,61 +1,55 @@
-# 日常部署
+# 部署
 
-## 构建候选
+## 构建
 
-唯一二进制入口是 `./cmd/codex-link-clawbot`：
-
-```bash
-version=v2.7.0-local.1
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-  -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${version}" \
-  -o /absolute/path/to/codex-link-clawbot ./cmd/codex-link-clawbot
-```
-
-候选必须先通过：
+在目标架构或交叉编译环境生成带版本的二进制：
 
 ```bash
-make check
+go test ./...
+go vet ./...
+go build -ldflags '-X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=v3.0.0' -o codex-link-clawbot ./cmd/codex-link-clawbot
 ```
 
-发布流水线还会构建 Linux amd64 与 arm64，并为不可变发布物生成 SHA-256 清单。
+候选二进制会在服务停止且快照完成后，把严格合法的 schema 6 单向升级为 schema 7；不要在事务部署前手工改写线上配置。更旧或包含已下线字段的配置会被拒绝并触发整体回滚。
 
 ## 事务部署
 
-已进入当前管理面后的生产环境统一使用：
+在 Linux 目标机执行：
 
 ```bash
-codex-link-clawbot deploy v2.7.0
-codex-link-clawbot deploy --binary /absolute/path/to/codex-link-clawbot --expect-version v2.7.0-local.1
+codex-link-clawbot deploy \
+  --binary /absolute/path/codex-link-clawbot \
+  --expect-version v3.0.0
 ```
 
-部署事务依次执行候选校验、旧服务排空、停机状态快照、离线迁移、原子安装、新服务排空启动、健康验收、正式单元恢复和队列放行。
+部署器通过私有 Unix socket 排空请求、创建快照、执行离线状态迁移、原子替换二进制并等待新版本就绪。失败时恢复上一版本及状态快照。
 
-以下任何一项失败都会触发完整回滚：
+## systemd 用户服务
 
-- 候选版本、平台或 SHA-256 不符。
-- 旧服务无法排空或停止。
-- 状态快照、迁移或原子安装失败。
-- 新进程版本、Codex、微信监控、同步游标或管理 socket 不健康。
+服务以专用普通用户运行，不使用 root：
 
-回滚同时恢复旧二进制、systemd 单元、配置、游标和状态，不只替换可执行文件。
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now codex-link-clawbot.service
+journalctl --user -u codex-link-clawbot.service -f
+```
 
-## 部署后验证
+## 公网管理域名
+
+Cloudflare Tunnel 的入口应指向：
+
+```text
+http://127.0.0.1:18120
+```
+
+创建 HTTPS 主机名且候选部署提交后，把公网 HTTPS 地址写入 `management.public_url` 并重启服务。不要把应用监听改成 `0.0.0.0`，也不要把令牌写入 Tunnel 配置或 URL 查询参数。
+
+## 检查
 
 ```bash
 codex-link-clawbot status
-systemctl --user status codex-link-clawbot.service
+codex-link-clawbot config
+codex-link-clawbot console
 ```
 
-然后在微信检查 `/`、codex-link-clawbot 执行状态、Codex 线程列表、阅读回复、“为什么没回复”和一次图片或文件请求。完整矩阵见 [验收清单](acceptance.md)。
-
-## 首次跨管理面切换
-
-仍运行旧 TCP 管理面的生产实例不能由新 CLI 直接驱动事务部署。必须按 [旧生产线迁移](migration.md) 和 [首次生产切换](production-cutover.md) 安排维护窗口；完成一次性切换后才回到本文流程。
-
-## 生产边界
-
-- 不在正常运行的生产状态目录上手工执行迁移。
-- 不启动第二个微信轮询进程验证候选。
-- 不绕过排空直接覆盖二进制。
-- 不把包含任务正文、附件或令牌的状态快照长期保留。
-- 部署成功只写入固定格式待阅通知，并在绑定者下一次有效交互中补送；不允许部署器借管理面发送任意内容。
+`status` 和部署生命周期使用 Unix socket；`console` 输出 Web 管理入口。两者是不同安全边界。

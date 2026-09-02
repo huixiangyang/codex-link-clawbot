@@ -4,12 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"github.com/huixiangyang/codex-link-clawbot/internal/control"
 	"log"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/huixiangyang/codex-link-clawbot/internal/access"
 	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
@@ -26,14 +23,11 @@ import (
 // Handler processes incoming WeChat messages and dispatches replies.
 type Handler struct {
 	codex               codex.Runtime
-	controlStates       *ControlStateStore
-	intents             *control.Registry
 	progress            execution.ProgressConfig
 	projects            *workspace.Manager
 	sessions            *thread.Manager
 	visual              VisualRenderer
 	preferences         *preference.Store
-	visualReplies       sync.Map // map[userID]*cachedVisualReply — 最近一条可取回的视觉长回复
 	visualReplyEnabled  bool
 	visualReplyMinRunes int
 	tasks               *request.Store
@@ -43,8 +37,7 @@ type Handler struct {
 	pendingNotices      *delivery.NoticeStore
 	remoteLock          *access.RemoteLock
 	voice               *VoiceBriefing
-	bridgeVersion       string
-	startedAt           time.Time
+	managementURL       string
 }
 
 type Lifecycle interface {
@@ -54,8 +47,6 @@ type Lifecycle interface {
 
 type Dependencies struct {
 	Codex               codex.Runtime
-	ControlStates       *ControlStateStore
-	Intents             *control.Registry
 	Workspaces          *workspace.Manager
 	Threads             *thread.Manager
 	Visual              VisualRenderer
@@ -69,7 +60,7 @@ type Dependencies struct {
 	Progress            execution.ProgressConfig
 	VisualReplyEnabled  bool
 	VisualReplyMinRunes int
-	Version             string
+	ManagementURL       string
 }
 
 type Runtime struct {
@@ -79,15 +70,10 @@ type Runtime struct {
 
 // NewRuntime 原子构造消息入口和唯一串行执行器，不允许运行期补注入依赖。
 func NewRuntime(dependencies Dependencies) (*Runtime, error) {
-	if dependencies.Codex == nil || dependencies.ControlStates == nil || dependencies.Intents == nil ||
-		dependencies.Workspaces == nil || dependencies.Threads == nil || dependencies.Preferences == nil ||
+	if dependencies.Codex == nil || dependencies.Workspaces == nil || dependencies.Threads == nil || dependencies.Preferences == nil ||
 		dependencies.Requests == nil || dependencies.Lifecycle == nil || dependencies.Deliveries == nil ||
 		dependencies.PendingNotices == nil || dependencies.RemoteLock == nil {
 		return nil, fmt.Errorf("bridge dependencies are incomplete")
-	}
-	version := strings.TrimSpace(dependencies.Version)
-	if version == "" {
-		return nil, fmt.Errorf("bridge version is required")
 	}
 	if err := dependencies.Progress.Validate(); err != nil {
 		return nil, err
@@ -97,12 +83,12 @@ func NewRuntime(dependencies Dependencies) (*Runtime, error) {
 		minimumRunes = 900
 	}
 	handler := &Handler{
-		codex: dependencies.Codex, controlStates: dependencies.ControlStates, intents: dependencies.Intents,
+		codex:    dependencies.Codex,
 		progress: dependencies.Progress, projects: dependencies.Workspaces, sessions: dependencies.Threads,
 		visual: dependencies.Visual, preferences: dependencies.Preferences, tasks: dependencies.Requests,
 		lifecycle: dependencies.Lifecycle, deliveries: dependencies.Deliveries, pendingNotices: dependencies.PendingNotices,
-		remoteLock: dependencies.RemoteLock, voice: dependencies.Voice, bridgeVersion: version,
-		visualReplyEnabled: dependencies.VisualReplyEnabled, visualReplyMinRunes: minimumRunes, startedAt: time.Now(),
+		remoteLock: dependencies.RemoteLock, voice: dependencies.Voice, managementURL: strings.TrimRight(strings.TrimSpace(dependencies.ManagementURL), "/"),
+		visualReplyEnabled: dependencies.VisualReplyEnabled, visualReplyMinRunes: minimumRunes,
 	}
 	coordinator, err := newCoordinator(handler, dependencies.Requests)
 	if err != nil {
@@ -155,48 +141,16 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 
 	trimmed := strings.TrimSpace(text)
 	clientID := NewClientID()
-	controlSourceKey, _ := sourceMessageKey(client, msg)
 	if h.remoteLock != nil && h.remoteLock.IsLocked(msg.FromUserID) {
-		reply := h.handleLockedInput(msg.FromUserID, trimmed)
-		if h.isNoReplyDiagnostic(trimmed) {
-			reply = h.buildNoReplyDiagnostic(msg.FromUserID)
-		}
-		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+		if err := SendTextReply(ctx, client, msg.FromUserID, h.codexLinkMenu(msg.FromUserID, true), msg.ContextToken, clientID); err != nil {
 			log.Printf("[security] failed to send locked-state reply to %s: %v", userLabel, err)
 		}
 		return nil
 	}
 	h.flushPendingNotices(ctx, client, msg.FromUserID, msg.ContextToken)
-	if len(images) == 0 && len(files) == 0 && h.sendCachedVisualReply(ctx, client, msg, trimmed, clientID) {
-		return nil
-	}
-
-	// 控制层只公开中文入口与数字菜单；数字状态必须先于普通 Codex 消息解析。
-	if result, handled := h.handleControlInput(ctx, msg.FromUserID, trimmed, len(images) > 0 || len(files) > 0, controlSourceKey); handled {
-		if err := h.presentActionResult(ctx, client, msg, result, clientID); err != nil {
-			log.Printf("[handler] failed to present action result to %s: %v", userLabel, err)
-			// 入队和重试使用持久来源键，失败可以安全交给微信长轮询重投。
-			// 其他控制动作可能已经修改本地状态，投递失败不能再次执行。
-			if result.Effect.Kind == EffectEnqueuePrompt || result.Effect.Kind == EffectRetryTask {
-				if result.rollback != nil && h.controlStates != nil {
-					var rollbackErr error
-					if result.rollback.State != nil {
-						rollbackErr = h.controlStates.RollbackConsumedReceipt(
-							result.rollback.OwnerID, result.rollback.SourceKey, *result.rollback.State,
-						)
-					} else {
-						rollbackErr = h.controlStates.RollbackReservedReceipt(
-							result.rollback.OwnerID, result.rollback.SourceKey,
-							result.rollback.ActionID, result.rollback.Domain,
-						)
-					}
-					if rollbackErr != nil {
-						logControlStateError(msg.FromUserID, rollbackErr)
-						return fmt.Errorf("present action result: %w; restore control receipt: %v", err, rollbackErr)
-					}
-				}
-				return err
-			}
+	if len(images) == 0 && len(files) == 0 && isCodexLinkMenu(trimmed) {
+		if err := SendTextReply(ctx, client, msg.FromUserID, h.codexLinkMenu(msg.FromUserID, false), msg.ContextToken, clientID); err != nil {
+			return fmt.Errorf("send Codex Link menu: %w", err)
 		}
 		return nil
 	}
@@ -204,75 +158,56 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 	return h.enqueueCodexTask(ctx, client, msg, text, images, files, clientID)
 }
 
-func (h *Handler) sendFrozenTaskText(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, taskID, clientID string) {
-	if h.tasks == nil {
-		return
-	}
-	result, err := h.tasks.LoadResult(msg.FromUserID, taskID)
-	if err != nil {
-		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结结果已过期或损坏，无法取回文字。", msg.ContextToken, clientID)
-		return
-	}
-	if err := SendTextReply(ctx, client, msg.FromUserID, result.Reply, msg.ContextToken, clientID); err != nil {
-		log.Printf("[queue] failed to send manually recovered task text: %v", err)
-		_ = h.sendControlReply(ctx, client, msg.FromUserID, "冻结文字发送失败。执行记录没有改写，可从 codex-link-clawbot 请求队列再次尝试。", msg.ContextToken, NewClientID())
+func isCodexLinkMenu(text string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(text)), " "))
+	switch normalized {
+	case "菜单", "codex", "codex 菜单", "codex菜单", "codex link", "codex-link":
+		return true
+	default:
+		return false
 	}
 }
 
-func (h *Handler) retryCodexTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, taskID, clientID string) error {
-	if h.tasks == nil || h.coordinator == nil || h.projects == nil {
-		return fmt.Errorf("task queue is not initialized")
-	}
-	sourceKey, err := sourceMessageKey(client, msg)
-	if err != nil {
-		return err
-	}
-	task, err := h.tasks.Retry(msg.FromUserID, taskID, sourceKey, msg.ContextToken, true)
-	if err != nil {
-		reply := "请求无法重试：" + err.Error()
-		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
-			return fmt.Errorf("send retry rejection: %w", sendErr)
-		}
-		return nil
-	}
-	projectName := task.ProjectID
-	if definition, ok := h.projects.Get(task.ProjectID); ok {
-		projectName = definition.Name
-	}
-	if err := h.sendControlReply(ctx, client, msg.FromUserID, queuedTaskAcknowledgement(h.tasks, task, projectName, false), msg.ContextToken, clientID); err != nil {
-		return fmt.Errorf("confirm retried task: %w", err)
-	}
-	if task.AwaitingAcknowledgement {
-		if err := h.tasks.Acknowledge(msg.FromUserID, task.ID); err != nil {
-			return fmt.Errorf("persist retried task acknowledgement: %w", err)
+// codexLinkMenu 是微信中唯一的管理入口；其余消息全部作为 Codex 请求处理。
+func (h *Handler) codexLinkMenu(ownerID string, locked bool) string {
+	workspaceName := "未选择"
+	threadLabel := "首次发送消息时自动创建"
+	if h.projects != nil {
+		current := h.projects.Current(ownerID)
+		workspaceName = current.Name
+		if h.sessions != nil {
+			if threadID := h.sessions.SnapshotThreadID(ownerID, current.ID); threadID != "" {
+				threadLabel = thread.ShortCode(threadID)
+			}
 		}
 	}
-	h.coordinator.Wake()
-	return nil
+	status := "已连接"
+	if locked {
+		status = "已锁定"
+	}
+	managementURL := h.managementURL
+	if managementURL == "" {
+		managementURL = "仅本机管理页面"
+	}
+	return strings.Join([]string{
+		"Codex Link",
+		"连接状态：" + status,
+		"工作空间：" + workspaceName,
+		"目标线程：" + threadLabel,
+		"管理页面：" + managementURL,
+		"",
+		"直接发送文字、图片或文件即可交给 Codex。线程、队列、工作空间与安全设置请在管理页面处理。",
+	}, "\n")
 }
 
 // enqueueCodexTask 只负责可靠入队。Codex 执行权始终由全局 Coordinator 持有。
 func (h *Handler) enqueueCodexTask(ctx context.Context, client *ilink.Client, msg ilink.WeixinMessage, text string, images []*ilink.ImageItem, files []*ilink.FileItem, clientID string) error {
-	return h.enqueueCodexTaskInProject(ctx, client, msg, text, images, files, clientID, "", "", false)
-}
-
-// enqueueCodexTaskInProject 允许工作流和任务复用冻结项目、既有线程或强制新线程；普通消息使用界面快照。
-func (h *Handler) enqueueCodexTaskInProject(
-	ctx context.Context,
-	client *ilink.Client,
-	msg ilink.WeixinMessage,
-	text string,
-	images []*ilink.ImageItem,
-	files []*ilink.FileItem,
-	clientID, projectID, threadID string,
-	newThread bool,
-) error {
 	if h.tasks == nil || h.coordinator == nil || h.projects == nil || h.sessions == nil || h.preferences == nil {
 		return fmt.Errorf("task queue is not initialized")
 	}
 	sourceKey, err := sourceMessageKey(client, msg)
 	if err != nil {
-		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, "这条微信消息没有稳定来源编号，无法安全入队。", msg.ContextToken, clientID); sendErr != nil {
+		if sendErr := h.sendBridgeNotice(ctx, client, msg.FromUserID, "这条微信消息没有稳定来源编号，无法安全入队。", msg.ContextToken, clientID); sendErr != nil {
 			log.Printf("[queue] failed to send invalid source notice: %v", sendErr)
 		}
 		return nil
@@ -283,7 +218,7 @@ func (h *Handler) enqueueCodexTaskInProject(
 			projectName = definition.Name
 		}
 		reply := queuedTaskAcknowledgement(h.tasks, existing, projectName, true)
-		if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+		if err := h.sendBridgeNotice(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			return fmt.Errorf("confirm existing queued task: %w", err)
 		}
 		if existing.AwaitingAcknowledgement {
@@ -301,23 +236,13 @@ func (h *Handler) enqueueCodexTaskInProject(
 	text, queuedImages, queuedFiles, err := prepareQueuedInput(ctx, text, images, files)
 	if err != nil {
 		reply := "附件接收失败：" + err.Error()
-		if sendErr := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
+		if sendErr := h.sendBridgeNotice(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); sendErr != nil {
 			log.Printf("[queue] failed to send attachment rejection: %v", sendErr)
 		}
 		return nil
 	}
 	currentProject := h.projects.Current(msg.FromUserID)
-	if strings.TrimSpace(projectID) != "" {
-		var exists bool
-		currentProject, exists = h.projects.Get(strings.TrimSpace(projectID))
-		if !exists {
-			return fmt.Errorf("frozen project is unavailable")
-		}
-	}
-	taskThreadID := strings.TrimSpace(threadID)
-	if !newThread && taskThreadID == "" {
-		taskThreadID = h.sessions.SnapshotThreadID(msg.FromUserID, currentProject.ID)
-	}
+	taskThreadID := h.sessions.SnapshotThreadID(msg.FromUserID, currentProject.ID)
 	preferences := h.preferences.Get(msg.FromUserID)
 	task, existed, err := h.tasks.Enqueue(request.EnqueueInput{
 		SourceMessageKey:       sourceKey,
@@ -338,7 +263,7 @@ func (h *Handler) enqueueCodexTaskInProject(
 		return fmt.Errorf("persist WeChat task: %w", err)
 	}
 	reply := queuedTaskAcknowledgement(h.tasks, task, currentProject.Name, existed)
-	if err := h.sendControlReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
+	if err := h.sendBridgeNotice(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 		// 确认失败也不推进游标；同一来源键重投只会返回已有任务。
 		return fmt.Errorf("confirm queued task: %w", err)
 	}
@@ -420,6 +345,21 @@ func taskActivitySummary(text string, imageCount, fileCount int) string {
 		text += fmt.Sprintf(" · %d 个文件", fileCount)
 	}
 	return normalizeSessionLine(text, 120)
+}
+
+func normalizeSessionLine(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit == 1 {
+		return "…"
+	}
+	return strings.TrimSpace(string(runes[:limit-1])) + "…"
 }
 
 // sendReplyWithMedia 发送最终文字、远程图片和本次 turn 的专属交付物。
@@ -598,115 +538,18 @@ func suggestedSessionName(request codex.ChatRequest) string {
 }
 
 func isImageAnnotationIntent(text string) bool {
-	normalized := normalizeControlPhrase(text)
+	normalized := normalizeMessageIntent(text)
 	for _, marker := range []string{"批注图片", "标注图片", "批注这张图", "标注这张图", "在图上标注"} {
-		if strings.Contains(normalized, normalizeControlPhrase(marker)) {
+		if strings.Contains(normalized, normalizeMessageIntent(marker)) {
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handler) cancelActiveTask(userID string) string {
-	if h.coordinator == nil || !h.hasActiveTask(userID) {
-		return "codex-link-clawbot 当前没有正在执行的请求。"
-	}
-	if !h.coordinator.Cancel(userID) {
-		return "当前请求正在取消或已进入发送阶段，请稍候。"
-	}
-	return "已请求取消 codex-link-clawbot 当前执行。如果 Codex 轮次已经启动，也会请求中断；队列会保留取消记录。"
-}
-
-func (h *Handler) buildTaskStatus(userID string) string {
-	if h.tasks != nil {
-		for _, task := range h.tasks.List(userID) {
-			if task.State == request.StateRunning || task.State == request.StateDelivering {
-				return strings.Join([]string{
-					"codex-link-clawbot 执行状态：" + taskStateText(task.State),
-					"当前阶段：" + task.Stage,
-					"摘要：" + task.Summary,
-				}, "\n")
-			}
-		}
-	}
-	return "codex-link-clawbot 执行状态：空闲\n" + h.buildStatus(userID)
-}
-
-func (h *Handler) sessionContext() (codex.ThreadClient, error) {
-	if h.sessions == nil {
-		return nil, fmt.Errorf("Codex 线程管理器未初始化")
-	}
-	if h.codex == nil {
-		return nil, fmt.Errorf("Codex 当前不可用")
-	}
-	threadAgent, ok := h.codex.(codex.ThreadClient)
-	if !ok {
-		return nil, fmt.Errorf("Codex 线程运行时无效")
-	}
-	return threadAgent, nil
-}
-
-// buildStatus 返回桥接器与唯一 Codex 运行时的完整摘要。
-func (h *Handler) buildStatus(userID string) string {
-	lines := []string{
-		"codex-link-clawbot 运行状态",
-		"codex-link-clawbot：运行中",
-		"版本：" + h.bridgeVersion,
-		"已运行：" + formatUptime(time.Since(h.startedAt)),
-	}
-	if h.codex == nil {
-		return strings.Join(append(lines, "Codex：不可用"), "\n")
-	}
-	info := h.codex.Info()
-	model := info.Model
-	if model == "" {
-		model = "使用 Codex 默认配置"
-	}
-	lines = append(lines,
-		"Codex：运行中",
-		"协议：Codex 应用服务",
-		"模型："+model,
-	)
-	if h.projects != nil {
-		lines = append(lines, "Codex 工作目录："+h.projects.Current(userID).Root)
-	}
-	if info.PID > 0 {
-		lines = append(lines, fmt.Sprintf("Codex PID：%d", info.PID))
-	}
-	if usageProvider, ok := h.codex.(codex.UsageProvider); ok {
-		if limits, exists := usageProvider.RateLimits(); exists {
-			if limits.Primary != nil {
-				lines = append(lines, fmt.Sprintf("主额度：已用 %d%%", limits.Primary.UsedPercent))
-			}
-			if limits.Secondary != nil {
-				lines = append(lines, fmt.Sprintf("次额度：已用 %d%%", limits.Secondary.UsedPercent))
-			}
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func formatUptime(elapsed time.Duration) string {
-	if elapsed < 0 {
-		elapsed = 0
-	}
-	days := int(elapsed / (24 * time.Hour))
-	if days > 0 {
-		hours := int((elapsed % (24 * time.Hour)) / time.Hour)
-		if hours == 0 {
-			return fmt.Sprintf("%d 天", days)
-		}
-		return fmt.Sprintf("%d 天 %d 小时", days, hours)
-	}
-	hours := int(elapsed / time.Hour)
-	if hours > 0 {
-		minutes := int((elapsed % time.Hour) / time.Minute)
-		if minutes == 0 {
-			return fmt.Sprintf("%d 小时", hours)
-		}
-		return fmt.Sprintf("%d 小时 %d 分", hours, minutes)
-	}
-	return presentation.Elapsed(elapsed)
+func normalizeMessageIntent(text string) string {
+	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "", "，", "", "。", "", "！", "", "？", "", ",", "", ".", "", "!", "", "?", "")
+	return replacer.Replace(strings.ToLower(strings.TrimSpace(text)))
 }
 
 func extractText(msg ilink.WeixinMessage) string {

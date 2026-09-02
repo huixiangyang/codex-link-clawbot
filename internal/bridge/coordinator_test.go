@@ -181,9 +181,8 @@ func TestQueuedTaskKeepsProjectSessionAndPreferenceSnapshot(t *testing.T) {
 	}
 	handler.tasks = store
 	handler.coordinator = coordinator
-	created := handler.createSession(context.Background(), "owner", "冻结线程")
-	if created == "" {
-		t.Fatal("session was not created")
+	if _, err := handler.sessions.New(context.Background(), "owner", runtime, "冻结线程"); err != nil {
+		t.Fatalf("create session: %v", err)
 	}
 	originalThread := handler.sessions.SnapshotThreadID("owner", "alpha")
 	if originalThread == "" {

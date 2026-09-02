@@ -24,6 +24,7 @@ type clawbotConfigurationStatus struct {
 	ProjectEntries []projectEntryStatus     `json:"project_entries"`
 	Reply          replyConfigurationStatus `json:"reply"`
 	Security       securityStatus           `json:"security"`
+	Management     managementStatus         `json:"management"`
 }
 
 type projectEntryStatus struct {
@@ -42,6 +43,11 @@ type replyConfigurationStatus struct {
 
 type securityStatus struct {
 	RemoteLock bool `json:"remote_lock"`
+}
+
+type managementStatus struct {
+	Listen    string `json:"listen"`
+	PublicURL string `json:"public_url,omitempty"`
 }
 
 func init() {
@@ -83,6 +89,9 @@ func runConfigStatus(cmd *cobra.Command, _ []string) error {
 				BrowserMode:    "自动发现",
 			},
 			Security: securityStatus{RemoteLock: cfg.Clawbot.Security.RemoteLockCode != ""},
+			Management: managementStatus{
+				Listen: cfg.Clawbot.Management.Listen, PublicURL: cfg.Clawbot.Management.PublicURL,
+			},
 		},
 	}
 	if cfg.Clawbot.Reply.Visual.BrowserCommand != "" {

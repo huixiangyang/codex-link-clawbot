@@ -15,7 +15,7 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 7
 
 // Config 明确分隔 Codex 本身与 codex-link-clawbot 接入层配置。
 type Config struct {
@@ -49,9 +49,39 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 // ClawbotConfig 只描述微信接入层、机器能力和确定性功能，不承载 Codex 线程偏好。
 type ClawbotConfig struct {
-	ProjectEntries []ProjectConfig `json:"project_entries"`
-	Reply          ReplyConfig     `json:"reply"`
-	Security       SecurityConfig  `json:"security"`
+	ProjectEntries []ProjectConfig  `json:"project_entries"`
+	Reply          ReplyConfig      `json:"reply"`
+	Security       SecurityConfig   `json:"security"`
+	Management     ManagementConfig `json:"management"`
+}
+
+// ManagementConfig 描述独立管理页面。监听地址只允许回环网卡，公网发布交给反向代理或 Tunnel。
+type ManagementConfig struct {
+	Listen    string `json:"listen"`
+	PublicURL string `json:"public_url,omitempty"`
+}
+
+func defaultManagementConfig() ManagementConfig {
+	return ManagementConfig{Listen: "127.0.0.1:18120"}
+}
+
+func (c ManagementConfig) validate() error {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(c.Listen))
+	if err != nil || port == "" {
+		return fmt.Errorf("codex-link-clawbot.management.listen must be a loopback host:port")
+	}
+	ip := net.ParseIP(host)
+	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		return fmt.Errorf("codex-link-clawbot.management.listen must use a loopback address")
+	}
+	if c.PublicURL == "" {
+		return nil
+	}
+	publicURL, err := url.Parse(strings.TrimSpace(c.PublicURL))
+	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" {
+		return fmt.Errorf("codex-link-clawbot.management.public_url must be an HTTPS URL without credentials, query, or fragment")
+	}
+	return nil
 }
 
 // ReplyConfig 统一管理从等待提示到最终媒体交付的微信回复体验。
@@ -333,6 +363,7 @@ func DefaultConfig() *Config {
 		Codex:         defaultCodexConfig(),
 		Clawbot: ClawbotConfig{
 			ProjectEntries: defaultProjects(),
+			Management:     defaultManagementConfig(),
 			Reply: ReplyConfig{
 				Progress: defaultProgressConfig(),
 				Visual:   defaultVisualConfig(),
@@ -413,6 +444,9 @@ func (c *Config) validate() error {
 	if err := c.Clawbot.Security.validate(); err != nil {
 		return err
 	}
+	if err := c.Clawbot.Management.validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -425,6 +459,12 @@ func loadEnv(cfg *Config) {
 	}
 	if v := os.Getenv("CODEX_LINK_CLAWBOT_VISUAL_BROWSER"); v != "" {
 		cfg.Clawbot.Reply.Visual.BrowserCommand = v
+	}
+	if v := os.Getenv("CODEX_LINK_CLAWBOT_MANAGEMENT_LISTEN"); v != "" {
+		cfg.Clawbot.Management.Listen = v
+	}
+	if v := os.Getenv("CODEX_LINK_CLAWBOT_MANAGEMENT_PUBLIC_URL"); v != "" {
+		cfg.Clawbot.Management.PublicURL = v
 	}
 	if v := os.Getenv("CODEX_LINK_CLAWBOT_MIMO_API_KEY"); v != "" {
 		for index := range cfg.Clawbot.Reply.Voice.Providers {

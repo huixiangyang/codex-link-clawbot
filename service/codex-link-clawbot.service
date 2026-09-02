@@ -1,14 +1,15 @@
 [Unit]
-Description=codex-link-clawbot - WeChat to Codex Bridge
-After=network.target
+Description=codex-link-clawbot - Codex Link for WeChat
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/codex-link-clawbot start
+ExecStart=%h/.local/bin/codex-link-clawbot start
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
