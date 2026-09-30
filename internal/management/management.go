@@ -82,15 +82,9 @@ func (s *ManagementServer) Run(ctx context.Context) error {
 	}
 
 	server := &http.Server{Handler: s.handler()}
-	go func() {
-		<-ctx.Done()
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownContext)
-	}()
 
 	s.once.Do(func() { close(s.ready) })
-	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := serveHTTP(ctx, server, listener); err != nil {
 		return fmt.Errorf("serve management socket: %w", err)
 	}
 	return nil

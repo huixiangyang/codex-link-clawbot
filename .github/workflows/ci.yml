@@ -21,27 +21,8 @@ jobs:
           go-version: '1.25'
           cache: true
 
-      - name: Check formatting
-        shell: bash
-        run: |
-          unformatted="$(gofmt -l $(git ls-files '*.go'))"
-          if [ -n "$unformatted" ]; then
-            echo "The following files need gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: Check documentation links
-        run: ./scripts/check-doc-links.sh
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test with race detector
-        run: go test ./... -count=1 -race
-
-      - name: Build packages
-        run: go build ./...
+      - name: Run shared development checks
+        run: make check
 
   fuzz-smoke:
     runs-on: ubuntu-latest

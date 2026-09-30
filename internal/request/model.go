@@ -1,6 +1,8 @@
 package request
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -11,22 +13,23 @@ import (
 )
 
 const (
-	indexVersion               = 1
-	requestVersion             = 1
-	MaxQueuedPerOwner          = 20
-	MaxTerminalPerOwner        = 20
+	indexVersion               = 4
+	requestVersion             = 2
+	MaxRecordsPerOwner         = 1000
+	MaxResultStoreBytes  int64 = 1 << 30
 	MaxImageBytes        int64 = 20 << 20
 	MaxFileBytes         int64 = 50 << 20
 	MaxTaskBytes         int64 = 100 << 20
-	MaxQueueBytes        int64 = 500 << 20
+	MaxInputStoreBytes   int64 = 500 << 20
 	maxRequestTextBytes        = 1 << 20
 	maxContextTokenBytes       = 64 << 10
 )
 
+var ErrCapacity = errors.New("请求容量不足")
+
 type State string
 
 const (
-	StateQueued      State = "queued"
 	StateRunning     State = "running"
 	StateDelivering  State = "delivering"
 	StateSucceeded   State = "succeeded"
@@ -37,7 +40,7 @@ const (
 
 func (state State) Valid() bool {
 	switch state {
-	case StateQueued, StateRunning, StateDelivering, StateSucceeded, StateFailed, StateInterrupted, StateCancelled:
+	case StateRunning, StateDelivering, StateSucceeded, StateFailed, StateInterrupted, StateCancelled:
 		return true
 	default:
 		return false
@@ -54,41 +57,48 @@ func (state State) Terminal() bool {
 }
 
 type Task struct {
-	ID                      string                    `json:"id"`
-	SourceMessageKey        string                    `json:"source_message_key"`
-	OwnerID                 string                    `json:"owner_id"`
-	ProjectID               string                    `json:"project_id"`
-	ThreadID                string                    `json:"thread_id,omitempty"`
-	Summary                 string                    `json:"summary"`
-	State                   State                     `json:"state"`
-	Stage                   string                    `json:"stage"`
-	Reason                  string                    `json:"reason,omitempty"`
-	AwaitingAcknowledgement bool                      `json:"awaiting_acknowledgement,omitempty"`
-	ResponseMode            presentation.ResponseMode `json:"response_mode"`
-	VisualStyle             presentation.Style        `json:"visual_style"`
-	Order                   int64                     `json:"order"`
-	CreatedAt               int64                     `json:"created_at"`
-	StartedAt               int64                     `json:"started_at,omitempty"`
-	FinishedAt              int64                     `json:"finished_at,omitempty"`
-	PayloadExpiresAt        int64                     `json:"payload_expires_at,omitempty"`
-	RetryOf                 string                    `json:"retry_of,omitempty"`
-	ImageCount              int                       `json:"image_count,omitempty"`
-	FileCount               int                       `json:"file_count,omitempty"`
-	PayloadBytes            int64                     `json:"payload_bytes,omitempty"`
-	InputTokens             int64                     `json:"input_tokens,omitempty"`
-	OutputTokens            int64                     `json:"output_tokens,omitempty"`
-	TotalTokens             int64                     `json:"total_tokens,omitempty"`
+	InputPending         bool                      `json:"input_pending,omitempty"`
+	ArchiveFailed        bool                      `json:"archive_failed,omitempty"`
+	TurnID               string                    `json:"turn_id,omitempty"`
+	TargetID             string                    `json:"target_id,omitempty"`
+	ExecutionCompletedAt int64                     `json:"execution_completed_at,omitempty"`
+	ResultExpiresAt      int64                     `json:"result_expires_at,omitempty"`
+	ResultBytes          int64                     `json:"result_bytes,omitempty"`
+	ID                   string                    `json:"id"`
+	SourceMessageKey     string                    `json:"source_message_key"`
+	OwnerID              string                    `json:"owner_id"`
+	ProjectID            string                    `json:"project_id"`
+	ThreadID             string                    `json:"thread_id,omitempty"`
+	Summary              string                    `json:"summary"`
+	State                State                     `json:"state"`
+	Stage                string                    `json:"stage"`
+	Reason               string                    `json:"reason,omitempty"`
+	ResponseMode         presentation.ResponseMode `json:"response_mode"`
+	VisualStyle          presentation.Style        `json:"visual_style"`
+	Order                int64                     `json:"order"`
+	CreatedAt            int64                     `json:"created_at"`
+	StartedAt            int64                     `json:"started_at,omitempty"`
+	FinishedAt           int64                     `json:"finished_at,omitempty"`
+	PayloadExpiresAt     int64                     `json:"payload_expires_at,omitempty"`
+	RetryOf              string                    `json:"retry_of,omitempty"`
+	ImageCount           int                       `json:"image_count,omitempty"`
+	FileCount            int                       `json:"file_count,omitempty"`
+	PayloadBytes         int64                     `json:"payload_bytes,omitempty"`
+	InputTokens          int64                     `json:"input_tokens,omitempty"`
+	OutputTokens         int64                     `json:"output_tokens,omitempty"`
+	TotalTokens          int64                     `json:"total_tokens,omitempty"`
 }
 
-type OwnerQueue struct {
-	Paused bool   `json:"paused"`
-	Tasks  []Task `json:"tasks"`
+type OwnerRecords struct {
+	Tasks []Task `json:"tasks"`
 }
 
 type indexFile struct {
-	Version   int                   `json:"version"`
-	NextOrder int64                 `json:"next_order"`
-	Owners    map[string]OwnerQueue `json:"owners"`
+	Version   int                       `json:"version"`
+	NextOrder int64                     `json:"next_order"`
+	Owners    map[string]OwnerRecords   `json:"owners"`
+	Rejected  map[string]Rejection      `json:"rejected"`
+	Cleared   map[string]ClearedReceipt `json:"cleared"`
 }
 
 type Attachment struct {
@@ -100,6 +110,7 @@ type Attachment struct {
 }
 
 type Request struct {
+	SourceData       []byte       `json:"source_data,omitempty"`
 	Version          int          `json:"version"`
 	SourceMessageKey string       `json:"source_message_key"`
 	Text             string       `json:"text,omitempty"`
@@ -114,6 +125,7 @@ type LoadedAttachment struct {
 }
 
 type LoadedRequest struct {
+	SourceData       []byte
 	SourceMessageKey string
 	Text             string
 	ContextToken     string
@@ -127,35 +139,33 @@ type InputAttachment struct {
 	Data        []byte
 }
 
-type EnqueueInput struct {
-	SourceMessageKey       string
-	OwnerID                string
-	ProjectID              string
-	ThreadID               string
-	Summary                string
-	Text                   string
-	ContextToken           string
-	ResponseMode           presentation.ResponseMode
-	VisualStyle            presentation.Style
-	RetryOf                string
-	RequireAcknowledgement bool
-	Images                 []InputAttachment
-	Files                  []InputAttachment
+type StartInput struct {
+	SourceData       []byte
+	TargetID         string
+	SourceMessageKey string
+	OwnerID          string
+	ProjectID        string
+	ThreadID         string
+	Summary          string
+	Text             string
+	ContextToken     string
+	ResponseMode     presentation.ResponseMode
+	VisualStyle      presentation.Style
+	RetryOf          string
+	Images           []InputAttachment
+	Files            []InputAttachment
 }
 
 type OwnerStatus struct {
-	Paused      bool
-	Queued      int
-	Running     int
-	Delivering  int
-	Succeeded   int
-	Failed      int
-	Interrupted int
-	Cancelled   int
+	Running     int `json:"running"`
+	Delivering  int `json:"delivering"`
+	Succeeded   int `json:"succeeded"`
+	Failed      int `json:"failed"`
+	Interrupted int `json:"interrupted"`
+	Cancelled   int `json:"cancelled"`
 }
 
-type QueueStatus struct {
-	Queued     int
+type ExecutionStatus struct {
 	Running    int
 	Delivering int
 }
@@ -168,11 +178,22 @@ var (
 	reasonPattern   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
-func defaultIndex() indexFile {
-	return indexFile{Version: indexVersion, NextOrder: 1, Owners: make(map[string]OwnerQueue)}
+// Rejection 只保存拒绝回执，不保存或等待执行新指令。
+type Rejection struct {
+	Source   string `json:"source"`
+	OwnerID  string `json:"owner_id"`
+	TargetID string `json:"target_id"`
+	ThreadID string `json:"thread_id,omitempty"`
+	TaskID   string `json:"task_id,omitempty"`
+	TurnID   string `json:"turn_id,omitempty"`
+	At       int64  `json:"at"`
 }
 
-func validateEnqueueInput(input EnqueueInput) error {
+func defaultIndex() indexFile {
+	return indexFile{Version: indexVersion, NextOrder: 1, Owners: make(map[string]OwnerRecords), Rejected: make(map[string]Rejection), Cleared: make(map[string]ClearedReceipt)}
+}
+
+func validateStartInput(input StartInput) error {
 	if !validSingleLine(input.SourceMessageKey, 512) {
 		return fmt.Errorf("task source message key is invalid")
 	}
@@ -189,7 +210,7 @@ func validateEnqueueInput(input EnqueueInput) error {
 		return fmt.Errorf("task summary is invalid")
 	}
 	if !utf8.ValidString(input.Text) || strings.ContainsRune(input.Text, '\x00') ||
-		len([]byte(input.Text)) > maxRequestTextBytes || len([]byte(input.ContextToken)) > maxContextTokenBytes {
+		len(input.SourceData) > 128<<10 || len(input.SourceData) > 0 && !json.Valid(input.SourceData) || len([]byte(input.Text)) > maxRequestTextBytes || len([]byte(input.ContextToken)) > maxContextTokenBytes {
 		return fmt.Errorf("task text or context token exceeds the limit")
 	}
 	if strings.TrimSpace(input.Text) == "" && len(input.Images) == 0 && len(input.Files) == 0 {
@@ -242,13 +263,11 @@ func validateIndex(state indexFile) error {
 	}
 	ids := make(map[string]struct{})
 	sources := make(map[string]struct{})
-	active := 0
+	active := make(map[string]bool)
 	for ownerID, owner := range state.Owners {
 		if strings.TrimSpace(ownerID) == "" || len(ownerID) > 512 || strings.ContainsAny(ownerID, "\r\n") {
 			return fmt.Errorf("invalid task owner")
 		}
-		queued := 0
-		terminal := 0
 		for _, task := range owner.Tasks {
 			if err := validateTask(task, ownerID); err != nil {
 				return err
@@ -261,22 +280,34 @@ func validateIndex(state indexFile) error {
 				return fmt.Errorf("duplicated task source")
 			}
 			sources[task.SourceMessageKey] = struct{}{}
-			if task.State == StateQueued {
-				queued++
-			}
 			if task.State == StateRunning || task.State == StateDelivering {
-				active++
-			}
-			if task.State.Terminal() {
-				terminal++
+				key := SessionKey(task.OwnerID, task.TargetID, task.ThreadID)
+				if active[key] {
+					return fmt.Errorf("multiple active requests in one session")
+				}
+				active[key] = true
 			}
 		}
-		if queued > MaxQueuedPerOwner || terminal > MaxTerminalPerOwner {
+		if len(owner.Tasks) > MaxRecordsPerOwner {
 			return fmt.Errorf("task owner limits are invalid")
 		}
 	}
-	if active > 1 {
-		return fmt.Errorf("multiple active tasks are not allowed")
+	for source, receipt := range state.Cleared {
+		if !validSingleLine(source, 512) || !validSingleLine(receipt.OwnerID, 512) || !taskIDPattern.MatchString(receipt.TaskID) || !receipt.State.Terminal() || receipt.At <= 0 {
+			return fmt.Errorf("invalid cleared source receipt")
+		}
+		if _, exists := sources[source]; exists {
+			return fmt.Errorf("cleared source also has an execution")
+		}
+		sources[source] = struct{}{}
+	}
+	for source, rejection := range state.Rejected {
+		if source != rejection.Source || !validSingleLine(source, 512) || !validSingleLine(rejection.OwnerID, 512) || rejection.At <= 0 {
+			return fmt.Errorf("invalid rejection receipt")
+		}
+		if _, exists := sources[source]; exists {
+			return fmt.Errorf("rejected message also has an execution")
+		}
 	}
 	return nil
 }
@@ -294,48 +325,47 @@ func validateTask(task Task, ownerID string) error {
 	if !task.State.Valid() || !task.ResponseMode.Valid() || !task.VisualStyle.Valid() {
 		return fmt.Errorf("invalid task state or preferences")
 	}
+	if task.TargetID != "" && !validSingleLine(task.TargetID, 64) {
+		return fmt.Errorf("invalid target intent")
+	}
+	if task.TurnID != "" && !validSingleLine(task.TurnID, 512) || task.ArchiveFailed && task.ExecutionCompletedAt == 0 {
+		return fmt.Errorf("invalid execution completion metadata")
+	}
+	if task.ExecutionCompletedAt < 0 || task.ResultExpiresAt < 0 || task.ResultBytes < 0 {
+		return fmt.Errorf("invalid result metadata")
+	}
+	if task.ExecutionCompletedAt > 0 && (task.ExecutionCompletedAt < task.StartedAt || task.State == StateFailed || task.State == StateInterrupted || task.State == StateCancelled) {
+		return fmt.Errorf("completed execution has inconsistent state")
+	}
+	if task.ResultExpiresAt > 0 && (task.ExecutionCompletedAt == 0 || task.ResultExpiresAt < task.ExecutionCompletedAt) || task.ResultBytes > 0 && task.ResultExpiresAt == 0 {
+		return fmt.Errorf("invalid result retention")
+	}
 	if task.CreatedAt <= 0 || task.StartedAt < 0 || task.FinishedAt < 0 || task.PayloadExpiresAt < 0 {
 		return fmt.Errorf("invalid task timestamps")
 	}
 	if task.RetryOf != "" && !taskIDPattern.MatchString(task.RetryOf) {
 		return fmt.Errorf("invalid task retry source")
 	}
-	if task.ImageCount < 0 || task.ImageCount > 4 || task.FileCount < 0 || task.FileCount > 8 || task.PayloadBytes < 0 || task.PayloadBytes > MaxTaskBytes {
+	if task.ImageCount < 0 || task.ImageCount > 4 || task.FileCount < 0 || task.FileCount > 8 || task.PayloadBytes < 0 || task.PayloadBytes > MaxTaskBytes+maxRequestTextBytes+maxContextTokenBytes+(128<<10) {
 		return fmt.Errorf("invalid task attachment metadata")
 	}
 	if task.InputTokens < 0 || task.OutputTokens < 0 || task.TotalTokens < 0 {
 		return fmt.Errorf("invalid task token usage")
 	}
 	switch task.State {
-	case StateQueued:
-		if task.StartedAt != 0 || task.FinishedAt != 0 || task.PayloadExpiresAt != 0 {
-			return fmt.Errorf("invalid queued task timestamps")
-		}
 	case StateRunning, StateDelivering:
-		if task.AwaitingAcknowledgement {
-			return fmt.Errorf("active task still awaits acknowledgement")
-		}
 		if task.StartedAt < task.CreatedAt || task.FinishedAt != 0 || task.PayloadExpiresAt != 0 {
 			return fmt.Errorf("invalid active task timestamps")
 		}
 	case StateSucceeded:
-		if task.AwaitingAcknowledgement {
-			return fmt.Errorf("successful task still awaits acknowledgement")
-		}
-		if task.StartedAt < task.CreatedAt || task.FinishedAt < task.StartedAt || task.PayloadExpiresAt != 0 {
+		if task.StartedAt < task.CreatedAt || task.FinishedAt < task.StartedAt || task.PayloadExpiresAt < task.FinishedAt {
 			return fmt.Errorf("invalid successful task timestamps")
 		}
 	case StateCancelled:
-		if task.AwaitingAcknowledgement {
-			return fmt.Errorf("cancelled task still awaits acknowledgement")
-		}
-		if task.FinishedAt < task.CreatedAt || task.PayloadExpiresAt != 0 {
+		if task.FinishedAt < task.CreatedAt || task.PayloadExpiresAt < task.FinishedAt {
 			return fmt.Errorf("invalid cancelled task timestamps")
 		}
 	case StateFailed, StateInterrupted:
-		if task.AwaitingAcknowledgement {
-			return fmt.Errorf("failed task still awaits acknowledgement")
-		}
 		if task.StartedAt < task.CreatedAt || task.FinishedAt < task.StartedAt || task.PayloadExpiresAt < task.FinishedAt {
 			return fmt.Errorf("invalid retained task timestamps")
 		}
@@ -348,7 +378,7 @@ func validateRequest(request Request) error {
 		return fmt.Errorf("invalid task request schema")
 	}
 	if !utf8.ValidString(request.Text) || strings.ContainsRune(request.Text, '\x00') ||
-		len([]byte(request.Text)) > maxRequestTextBytes || len([]byte(request.ContextToken)) > maxContextTokenBytes {
+		len(request.SourceData) > 128<<10 || len(request.SourceData) > 0 && !json.Valid(request.SourceData) || len([]byte(request.Text)) > maxRequestTextBytes || len([]byte(request.ContextToken)) > maxContextTokenBytes {
 		return fmt.Errorf("task request exceeds the limit")
 	}
 	if strings.TrimSpace(request.Text) == "" && len(request.Images) == 0 && len(request.Files) == 0 {
@@ -408,4 +438,12 @@ func storedExtension(name string) string {
 		return extension
 	}
 	return ""
+}
+
+// SessionKey 在会话建立前按意图隔离，已有会话按原生线程 ID 互斥。
+func SessionKey(owner, target, thread string) string {
+	if thread != "" {
+		return "thread:" + thread
+	}
+	return "intent:" + owner + ":" + target
 }

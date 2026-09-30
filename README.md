@@ -1,8 +1,8 @@
 # codex-link-clawbot
 
-Connect a personal WeChat account to Codex while keeping every management action in a separate self-hosted web console.
+Connect a personal WeChat account to Codex with single-digit menus designed for small phone screens.
 
-The bridge has one narrow job: accept text, images, and files from the bound owner; durably route them to the selected Codex workspace and thread; and return the result and artifacts to WeChat. Threads, queue state, workspaces, presentation preferences, runtime controls, and the remote lock are managed in the web console, not through chat commands.
+The bridge has one narrow job: accept text, images, and files from the bound owner; durably route them to the selected Codex workspace and thread; and return the result and artifacts to WeChat. Numbered WeChat menus handle everyday conversations, workspaces, live sessions, results, preferences, and locking. The web console provides search, detailed management, and runtime maintenance.
 
 > This is not an official WeChat, Tencent, or OpenAI project. The iLink integration is intended for personal, self-hosted use.
 
@@ -14,18 +14,18 @@ The bridge has one narrow job: accept text, images, and files from the bound own
 
 | Surface | Responsibility |
 | --- | --- |
-| WeChat | `菜单`, `Codex`, or `Codex Link` shows connection details; every other text, image, or file becomes a Codex request |
-| Web console | Workspace and thread targeting, queue actions, response preferences, deliveries, drain/resume, and remote lock |
+| WeChat | `0` or `菜单` opens numbered menus for conversations, workspaces, requests, results, and preferences; ordinary content becomes a Codex request |
+| Web console | Workspace and thread targeting, live session controls, response preferences, deliveries, drain/resume, and remote lock |
 | Local CLI | Login, process lifecycle, deployment, and retrieval of the console URL and token |
 
-The former numeric menu, natural-language control intents, chat diagnostics, chat cancellation/retry, and persisted menu state have been removed. There is no compatibility path.
+The new menu uses single digits and four-item pages. Legacy multi-digit commands, natural-language control intents, and old menu state files have no compatibility path.
 
 ## Data flow
 
 ```text
 bound WeChat owner
   → private-message and attachment validation
-  → durable request queue
+  → immediate per-session admission (busy → reject)
   → Codex App Server
   → frozen result and artifacts
   → WeChat text / reading images / files / MP3
@@ -33,10 +33,10 @@ bound WeChat owner
 browser
   → management token
   → 127.0.0.1:18120 management API
-  → threads / workspaces / queue / settings
+  → threads / workspaces / live sessions / settings
 ```
 
-Inputs are persisted before acknowledgement. Execution uses the workspace, thread, and presentation preferences frozen at enqueue time. There is no fallback protocol or model when Codex App Server is unavailable.
+Inputs are persisted before acknowledgement. Execution uses the workspace, thread, and presentation preferences captured at acceptance. There is no fallback protocol or model when Codex App Server is unavailable.
 
 ## Quick start
 
@@ -55,7 +55,7 @@ Configuration uses schema version 7. The management server must listen on loopba
 
 ## WeChat behavior
 
-`菜单`, `Codex`, and `Codex Link` return a compact connection summary with the current workspace, target thread, and console URL. Everything else—including `状态`, `取消`, numeric input, and former menu phrases—is sent to Codex as ordinary user input.
+Send `0`, `菜单`, `Codex`, or `Codex Link` to open the menu. Choose `1–6` on the home page; lists show up to four entries. Use `7/8` to page, `0` for home, and `9` to exit. Ordinary content exits the menu and becomes a request. Unlock input is handled separately and never sent to Codex.
 
 ## Security
 
@@ -64,11 +64,22 @@ The web API requires a 256-bit token, sets a strict CSP, rejects framing, and ca
 ## Development
 
 ```bash
+make check-fast
 make check
 ```
 
-See the [architecture](docs/architecture/overview.md), [deployment guide](docs/operations/deployment.md), and [acceptance checklist](docs/operations/acceptance.md).
+CI runs the same `make check` target. See the [development guide](docs/guides/development.md), [architecture](docs/architecture/overview.md), [refactoring decisions](docs/architecture/refactoring.md), and [acceptance checklist](docs/operations/acceptance.md).
 
 ## License
 
 MIT.
+
+## Personal workbench
+
+Menus send one compact numbered image, with matching text as a fallback. Numbers bind to the displayed IDs, expire after ten minutes, and cannot silently select a different task when lists change. Long saved answers use 500-character pages. See the [menu design](docs/design/wechat-menu.md).
+
+The first request establishes a persistent conversation intent, shared by subsequent messages. Each active request keeps its original workspace, target, and preferences. A second command to a busy session is rejected immediately with an action menu; it is never deferred. Users can interrupt that execution or switch to another session. Execution completion and WeChat delivery have separate outcomes; saved answers and artifacts remain accessible from the authenticated console even when delivery fails.
+
+Inputs are retained for 24 hours after completion, results for 7 days, and records for 30 days. Explicit retry creates a linked request; redelivery sends the frozen result without rerunning Codex. Only one explicitly selected WeChat binding is active.
+
+See the [workbench guide](docs/guides/workbench.md) and [offline migration instructions](docs/operations/migration.md). Existing installations must migrate to request index v4, input manifest v2 and result format v2 before startup.

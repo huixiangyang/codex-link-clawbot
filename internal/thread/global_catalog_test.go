@@ -2,7 +2,7 @@ package thread
 
 import (
 	"context"
-	"fmt"
+
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,6 +57,10 @@ func TestGlobalListUsesCodexAsVisibilitySourceAndFiltersWorkspaces(t *testing.T)
 	if page.Items[0].WorkspaceID != "root" || page.Items[1].WorkspaceID != "nested" {
 		t.Fatalf("workspace matching = %#v", page.Items)
 	}
+	if _, err := manager.GlobalList(context.Background(), "owner-1", client, workspaces, false, false, "", 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	// 同一目录翻页复用短缓存，不再对每页全量调用上游。
 	if len(client.listOptions) != 1 || len(client.listOptions[0].SourceKinds) != 0 {
 		t.Fatalf("global list must omit sourceKinds: %#v", client.listOptions)
 	}
@@ -76,61 +80,8 @@ func TestUseGlobalThreadAdoptsExternalThreadAsWorkspaceFocus(t *testing.T) {
 	if err != nil || selected.ID != threadID {
 		t.Fatalf("UseGlobalThread() = %#v, %v", selected, err)
 	}
-	current, exists := manager.store.ActiveForProject("owner-1", "workspace")
-	if !exists || current != threadID {
-		t.Fatalf("workspace focus = %q, %v", current, exists)
-	}
-	if len(client.resumed) != 1 || client.resumed[0] != threadID {
+	if len(client.resumed) != 0 {
 		t.Fatalf("resumed = %#v", client.resumed)
-	}
-}
-
-func TestCurrentRelationsUsesNativeOneLevelTopologyAndTrustedWorkspaces(t *testing.T) {
-	manager, err := newTestManager(filepath.Join(t.TempDir(), "session-index.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	outside := t.TempDir()
-	const parentID = "019fcc03-fc8b-7842-a812-000000000101"
-	const currentID = "019fcc03-fc8b-7842-a812-000000000102"
-	client := newFakeThreadClient()
-	client.threads[parentID] = codex.ThreadInfo{ID: parentID, Name: "父线程", Cwd: root, UpdatedAt: 10, Status: codex.ThreadStatus{Type: "idle"}}
-	client.threads[currentID] = codex.ThreadInfo{ID: currentID, Name: "当前分支", ForkedFromID: parentID, Cwd: root, UpdatedAt: 20, Status: codex.ThreadStatus{Type: "idle"}}
-	for index := 0; index < 7; index++ {
-		id := fmt.Sprintf("019fcc03-fc8b-7842-a812-%012d", 200+index)
-		client.threads[id] = codex.ThreadInfo{
-			ID: id, Name: fmt.Sprintf("直接子线程 %d", index+1), ForkedFromID: currentID,
-			Cwd: root, UpdatedAt: int64(100 + index), Status: codex.ThreadStatus{Type: "idle"},
-		}
-	}
-	client.threads["019fcc03-fc8b-7842-a812-000000000300"] = codex.ThreadInfo{
-		ID: "019fcc03-fc8b-7842-a812-000000000300", Name: "越界子线程", ForkedFromID: currentID,
-		Cwd: outside, UpdatedAt: 999, Status: codex.ThreadStatus{Type: "active"},
-	}
-	workspace := Workspace{ID: "workspace", Name: "Workspace", Root: root}
-	manager.resolveWorkspace = func(string) Workspace { return workspace }
-	if _, err := manager.UseGlobalThread(context.Background(), "owner-1", workspace, currentID, client); err != nil {
-		t.Fatal(err)
-	}
-
-	relations, err := manager.CurrentRelations(context.Background(), "owner-1", client, []Workspace{workspace}, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if relations.Current.ID != currentID || relations.Parent == nil || relations.Parent.ID != parentID || relations.ParentUnavailable {
-		t.Fatalf("relation anchors = %#v", relations)
-	}
-	if len(relations.Children) != 5 || relations.Truncated != 2 {
-		t.Fatalf("relation children = %d truncated=%d", len(relations.Children), relations.Truncated)
-	}
-	if relations.Children[0].Title != "直接子线程 1" || relations.Children[4].Title != "直接子线程 5" {
-		t.Fatalf("relation order = %#v", relations.Children)
-	}
-	for _, child := range relations.Children {
-		if child.WorkspaceID != "workspace" {
-			t.Fatalf("untrusted relation leaked: %#v", child)
-		}
 	}
 }
 

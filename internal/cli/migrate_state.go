@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/huixiangyang/codex-link-clawbot/internal/businessmigration"
+	"github.com/huixiangyang/codex-link-clawbot/internal/config"
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 	"github.com/spf13/cobra"
 )
@@ -121,6 +123,16 @@ func migrateState(root string) error {
 	}
 	if err := removeRetiredControlState(filepath.Join(root, "control-state.json")); err != nil {
 		return fmt.Errorf("remove retired WeChat control state: %w", err)
+	}
+	cfg := config.DefaultConfig()
+	if _, err := statefile.ReadJSON(filepath.Join(root, "config.json"), cfg, statefile.Options{MaxBytes: 4 << 20}); err != nil {
+		return err
+	}
+	if len(cfg.Clawbot.ProjectEntries) == 0 {
+		return fmt.Errorf("migration requires a default workspace")
+	}
+	if _, err := businessmigration.RunLeased(root, cfg.Clawbot.ProjectEntries[0].ID); err != nil {
+		return fmt.Errorf("migrate workbench: %w", err)
 	}
 	return syncDirectoryPath(root)
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/huixiangyang/codex-link-clawbot/internal/access"
 	"github.com/huixiangyang/codex-link-clawbot/internal/bridge"
+	"github.com/huixiangyang/codex-link-clawbot/internal/businessmigration"
 	"github.com/huixiangyang/codex-link-clawbot/internal/codex/appserver"
 	"github.com/huixiangyang/codex-link-clawbot/internal/config"
 	"github.com/huixiangyang/codex-link-clawbot/internal/delivery"
@@ -25,6 +26,7 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/request"
 	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/target"
 	"github.com/huixiangyang/codex-link-clawbot/internal/thread"
 	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
 	"github.com/huixiangyang/codex-link-clawbot/internal/workspace"
@@ -37,8 +39,16 @@ type Options struct {
 }
 
 func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials, options Options) error {
-	if cfg == nil || len(accounts) == 0 || strings.TrimSpace(options.Version) == "" || strings.TrimSpace(options.StateRoot) == "" {
+	if cfg == nil || len(accounts) != 1 || strings.TrimSpace(options.Version) == "" || !filepath.IsAbs(options.StateRoot) {
 		return fmt.Errorf("application bootstrap input is invalid")
+	}
+	for _, credentials := range accounts {
+		if credentials == nil || strings.TrimSpace(credentials.ILinkUserID) == "" {
+			return fmt.Errorf("account owner is missing")
+		}
+	}
+	if err := businessmigration.CheckReady(options.StateRoot); err != nil {
+		return err
 	}
 	entries := cfg.Clawbot.ProjectEntries
 	replyConfig := cfg.Clawbot.Reply
@@ -51,9 +61,13 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	for _, entry := range entries {
 		definitions = append(definitions, workspace.Definition{ID: entry.ID, Name: entry.Name, Root: entry.Root})
 	}
-	workspaces, err := workspace.NewManager(definitions, "")
+	workspaces, err := workspace.NewManager(definitions)
 	if err != nil {
 		return fmt.Errorf("initialize workspace manager: %w", err)
+	}
+	targets, err := target.Open(filepath.Join(options.StateRoot, "targets.json"), workspaces.List()[0].ID)
+	if err != nil {
+		return fmt.Errorf("initialize conversation targets: %w", err)
 	}
 	initialWorkspace := workspaces.List()[0]
 	codexClient := appserver.New(appserver.Config{Command: cfg.Codex.Command, Env: cfg.Codex.Env, Model: cfg.Codex.Model})
@@ -63,7 +77,7 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	}
 	defer codexClient.Stop()
 
-	preferences, err := preference.NewStore("")
+	preferences, err := preference.NewStore(filepath.Join(options.StateRoot, "preferences.json"))
 	if err != nil {
 		return fmt.Errorf("initialize owner preferences: %w", err)
 	}
@@ -76,18 +90,15 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 		visualRenderer = renderer
 		log.Printf("Visual control cards enabled (browser=%s)", renderer.BrowserCommand())
 	}
-	threads, err := thread.NewManager("", func(ownerID string) thread.Workspace {
-		definition := workspaces.Current(ownerID)
-		return thread.Workspace{ID: definition.ID, Name: definition.Name, Root: definition.Root}
-	})
+	threads, err := thread.NewManager()
 	if err != nil {
 		return fmt.Errorf("initialize thread manager: %w", err)
 	}
-	requests, err := request.NewStore("")
+	requests, err := request.NewStore(filepath.Join(options.StateRoot, "tasks"))
 	if err != nil {
-		return fmt.Errorf("initialize persistent request queue: %w", err)
+		return fmt.Errorf("initialize execution records: %w", err)
 	}
-	notices, err := delivery.OpenNoticeStore("", time.Now)
+	notices, err := delivery.OpenNoticeStore(filepath.Join(options.StateRoot, "pending-notices.json"), time.Now)
 	if err != nil {
 		return fmt.Errorf("initialize pending notice store: %w", err)
 	}
@@ -97,16 +108,9 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	drainer := &runtimeDrainer{messageHold: &messageHold}
 	runtimeController := runtimecontrol.New(options.Version, requests, drainer)
 	runtimeController.SetCodexReady(true)
-	if options.Draining {
-		runtimeController.Drain()
-	}
 	defer runtimeController.SetStopping()
 
-	deliveries, err := delivery.OpenStore("", time.Now)
-	if err != nil {
-		return fmt.Errorf("initialize delivery store: %w", err)
-	}
-	remoteLock, err := access.NewRemoteLock("", cfg.Clawbot.Security.RemoteLockCode)
+	remoteLock, err := access.NewRemoteLock(filepath.Join(options.StateRoot, "remote-lock.json"), cfg.Clawbot.Security.RemoteLockCode)
 	if err != nil {
 		return fmt.Errorf("initialize remote lock: %w", err)
 	}
@@ -115,9 +119,10 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 		managementURL = "http://" + cfg.Clawbot.Management.Listen
 	}
 	bridgeRuntime, err := bridge.NewRuntime(bridge.Dependencies{
+		Targets:    targets,
 		Codex:      codexClient,
 		Workspaces: workspaces, Threads: threads, Visual: visualRenderer, Preferences: preferences,
-		Requests: requests, Lifecycle: runtimeController, Deliveries: deliveries, PendingNotices: notices,
+		Requests: requests, Lifecycle: runtimeController, PendingNotices: notices,
 		RemoteLock: remoteLock, Voice: buildVoice(replyConfig), ManagementURL: managementURL,
 		VisualReplyEnabled: replyConfig.Visual.LongReplies, VisualReplyMinRunes: replyConfig.Visual.LongReplyMinRunes,
 		Progress: execution.ProgressConfig{
@@ -132,21 +137,22 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	handler := bridgeRuntime.Handler
 	coordinator := bridgeRuntime.Coordinator
 	drainer.coordinator = coordinator
+	if options.Draining {
+		runtimeController.Drain()
+	}
 
 	for _, credentials := range accounts {
-		if credentials == nil || strings.TrimSpace(credentials.ILinkUserID) == "" {
-			return fmt.Errorf("account owner is missing")
-		}
-		coordinator.RegisterClient(ilink.NewClient(credentials))
+		bridgeRuntime.RegisterClient(ilink.NewClient(credentials))
 	}
 	consoleToken, err := management.EnsureConsoleToken(options.StateRoot)
 	if err != nil {
 		return fmt.Errorf("initialize management console token: %w", err)
 	}
 	consoleServer, err := management.NewConsoleServer(cfg.Clawbot.Management.Listen, consoleToken, management.ConsoleDependencies{
+		Targets: targets, Recovery: bridgeRuntime, VisualEnabled: replyConfig.Visual.Enabled, VoiceEnabled: replyConfig.Voice.Enabled,
 		Runtime: runtimeController, Workspaces: workspaces, Threads: threads, Requests: requests,
-		Deliveries: deliveries, Preferences: preferences, RemoteLock: remoteLock, Codex: codexClient,
-		Queue: coordinator, OwnerID: accounts[0].ILinkUserID, AccountCount: len(accounts), PublicURL: cfg.Clawbot.Management.PublicURL,
+		Preferences: preferences, RemoteLock: remoteLock, Codex: codexClient,
+		Execution: coordinator, OwnerID: accounts[0].ILinkUserID, PublicURL: cfg.Clawbot.Management.PublicURL,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize management console: %w", err)
@@ -156,73 +162,54 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 		filepath.Join(options.StateRoot, management.ManagementSocketName),
 		deploymentNotifier(accounts, notices),
 	)
-	managementErrors := make(chan error, 1)
-	consoleErrors := make(chan error, 1)
-	go func() { managementErrors <- managementServer.Run(ctx) }()
-	go func() { consoleErrors <- consoleServer.Run(ctx) }()
-	select {
-	case <-managementServer.Ready():
-	case err := <-managementErrors:
-		return fmt.Errorf("start local management server: %w", err)
-	case <-ctx.Done():
-		return ctx.Err()
+	services := newServiceGroup(ctx)
+	defer services.Stop()
+	services.Go("codex app-server", func(ctx context.Context) error {
+		select {
+		case <-codexClient.Done():
+			return codexClient.ExitError()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	services.Go("local management server", managementServer.Run)
+	services.Go("management console", consoleServer.Run)
+	if err := services.WaitReady(managementServer.Ready()); err != nil {
+		return err
 	}
-	select {
-	case <-consoleServer.Ready():
-		log.Printf("Management console listening on %s", cfg.Clawbot.Management.Listen)
-	case err := <-consoleErrors:
-		return fmt.Errorf("start management console: %w", err)
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := services.WaitReady(consoleServer.Ready()); err != nil {
+		return err
 	}
+	log.Printf("Management console listening on %s", cfg.Clawbot.Management.Listen)
 
 	statefile.ClearLastFailure()
-	coordinatorErrors := make(chan error, 1)
-	go func() { coordinatorErrors <- coordinator.Run(ctx) }()
-
+	services.Go("request coordinator", coordinator.Run)
+	services.Go("retention cleanup", func(ctx context.Context) error {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+				bridgeRuntime.ExpireMessageContexts()
+				if err := requests.CleanupExpired(); err != nil {
+					return fmt.Errorf("清理到期请求数据: %w", err)
+				}
+			}
+		}
+	})
 	log.Printf("Starting message bridge for %d account(s)...", len(accounts))
 	probes := make([]ilink.MonitorObserver, 0, len(accounts))
 	for range accounts {
 		probes = append(probes, runtimeController.NewMonitorProbe())
 	}
 	runtimeController.SetReady()
-	monitorsDone := runMonitors(ctx, accounts, handler, probes, &messageHold)
-
-	select {
-	case <-monitorsDone:
-		log.Println("All monitors stopped")
-		return nil
-	case <-codexClient.Done():
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		if exitErr := codexClient.ExitError(); exitErr != nil {
-			return fmt.Errorf("codex app-server exited: %w", exitErr)
-		}
-		return fmt.Errorf("codex app-server exited unexpectedly")
-	case err := <-coordinatorErrors:
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		return fmt.Errorf("request coordinator stopped: %w", err)
-	case err := <-managementErrors:
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		return fmt.Errorf("local management server stopped: %w", err)
-	case err := <-consoleErrors:
-		if ctx.Err() != nil {
-			<-monitorsDone
-			return nil
-		}
-		return fmt.Errorf("management console stopped: %w", err)
-	case <-ctx.Done():
-		<-monitorsDone
-		return nil
-	}
+	services.Go("message monitors", func(ctx context.Context) error {
+		<-runMonitors(ctx, accounts, handler, probes, &messageHold)
+		return ctx.Err()
+	})
+	return services.Wait()
 }
 
 func buildVoice(reply config.ReplyConfig) *bridge.VoiceBriefing {
@@ -323,7 +310,7 @@ func runMonitorWithRestart(ctx context.Context, credentials *ilink.Credentials, 
 }
 
 type runtimeDrainer struct {
-	coordinator *bridge.Coordinator
+	coordinator *execution.Coordinator
 	messageHold *atomic.Bool
 }
 

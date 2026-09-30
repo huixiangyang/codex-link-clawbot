@@ -161,7 +161,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 		return fmt.Errorf("stop old service: %w", stopErr)
 	}
 	resumeNeeded = false
-	// 服务完全停下后再复制状态，避免微信入站在快照过程中改写队列或同步游标。
+	// 服务完全停下后再复制状态，避免微信入站在快照过程中改写执行记录或同步游标。
 	snapshot, err := createDeploymentSnapshot(deploymentDir, options.StateRoot, options.TargetBinary, unitPath)
 	if err != nil {
 		_ = os.RemoveAll(filepath.Join(deploymentDir, "state"))
@@ -199,7 +199,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	if _, err := waitForHealthyDrain(ctx, controlSocket, candidate.Version, options.Timeout); err != nil {
 		return failAndRollback(options, current.Version, snapshot, unitPath, &receipt, receiptPath, err)
 	}
-	// 当前进程继续保持排空；先把下次启动单元恢复为正常模式，再显式放行队列。
+	// 当前进程继续保持排空；先把下次启动单元恢复为正常模式，再显式开放新工作。
 	if err := rewriteSystemdUnit(unitPath, options.TargetBinary, false); err != nil {
 		return failAndRollback(options, current.Version, snapshot, unitPath, &receipt, receiptPath, err)
 	}

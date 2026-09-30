@@ -126,3 +126,11 @@ func validateState(state stateFile) error {
 	}
 	return nil
 }
+
+// Save 整体校验并一次落盘，避免回复模式与风格部分生效。
+func (store *Store) Save(ownerID string, next OwnerPreferences) error {
+	if !next.ResponseMode.Valid() || !next.Style.Valid() {
+		return fmt.Errorf("回复设置无效")
+	}
+	return store.update(ownerID, func(value *OwnerPreferences) { *value = next })
+}

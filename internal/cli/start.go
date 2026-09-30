@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	qrterminal "github.com/mdp/qrterminal/v3"
 	"log"
 	"os"
 	"os/signal"
@@ -12,14 +13,14 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/config"
 	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
-	"github.com/mdp/qrterminal/v3"
+
 	"github.com/spf13/cobra"
 )
 
 var startDrainingFlag bool
 
 func init() {
-	startCmd.Flags().BoolVar(&startDrainingFlag, "draining", false, "start without claiming queued tasks")
+	startCmd.Flags().BoolVar(&startDrainingFlag, "draining", false, "start without accepting new work")
 	_ = startCmd.Flags().MarkHidden("draining")
 	rootCmd.AddCommand(startCmd)
 }
@@ -59,6 +60,11 @@ func runStart(_ *cobra.Command, _ []string) error {
 		}
 		accounts = append(accounts, credentials)
 	}
+	account, err := ilink.ActiveBinding(stateRoot, accounts)
+	if err != nil {
+		return err
+	}
+	accounts = []*ilink.Credentials{account}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)

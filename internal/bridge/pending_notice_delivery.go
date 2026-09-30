@@ -14,6 +14,10 @@ import (
 const pendingNoticeDeliveryLimit = 4
 
 func (h *Handler) flushPendingNotices(ctx context.Context, client *ilink.Client, ownerID, contextToken string) {
+	if !h.noticeSending.CompareAndSwap(false, true) {
+		return
+	}
+	defer h.noticeSending.Store(false)
 	if h.pendingNotices == nil || client == nil || strings.TrimSpace(contextToken) == "" {
 		return
 	}

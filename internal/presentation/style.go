@@ -15,9 +15,9 @@ const (
 )
 
 type StyleDefinition struct {
-	ID          Style
-	Name        string
-	Description string
+	ID          Style  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 var styleDefinitions = []StyleDefinition{

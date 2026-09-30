@@ -435,9 +435,6 @@ func (c *Config) validate() error {
 	if err := c.Clawbot.Reply.Visual.validate(); err != nil {
 		return err
 	}
-	if c.Clawbot.Reply.Voice.Enabled && !c.Clawbot.Reply.Visual.Enabled {
-		return fmt.Errorf("codex-link-clawbot.reply.voice.enabled requires codex-link-clawbot.reply.visual.enabled for paired image and audio delivery")
-	}
 	if err := c.Clawbot.Reply.Voice.validate(); err != nil {
 		return err
 	}

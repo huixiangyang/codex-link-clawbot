@@ -175,7 +175,7 @@ func TestDocumentTemplateUsesContentFirstChrome(t *testing.T) {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			singleHTML, renderErr := renderer.renderDocumentHTML(normalizeDocument(Document{
 				Style: definition.ID, Blocks: []DocumentBlock{{Kind: "paragraph", Text: "正文直接开始"}},
-				PageNumber: 1, TotalPages: 1, Footer: "回复文字版获取原文",
+				PageNumber: 1, TotalPages: 1, Footer: "回复 0，再选 5 查看结果原文",
 			}))
 			if renderErr != nil {
 				t.Fatal(renderErr)
@@ -186,7 +186,7 @@ func TestDocumentTemplateUsesContentFirstChrome(t *testing.T) {
 					t.Fatalf("single-page document contains %q", unwanted)
 				}
 			}
-			if !strings.Contains(single, "回复文字版获取原文") {
+			if !strings.Contains(single, "回复 0，再选 5 查看结果原文") {
 				t.Fatal("final page footer is missing")
 			}
 
@@ -198,7 +198,7 @@ func TestDocumentTemplateUsesContentFirstChrome(t *testing.T) {
 				t.Fatal(renderErr)
 			}
 			middle := string(middleHTML)
-			if !strings.Contains(middle, ">2 / 3<") || strings.Contains(middle, "只应出现在第一页") || strings.Contains(middle, "回复文字版") {
+			if !strings.Contains(middle, ">2 / 3<") || strings.Contains(middle, "只应出现在第一页") || strings.Contains(middle, "回复 0，再选 5") {
 				t.Fatalf("middle-page chrome is invalid")
 			}
 		})
@@ -237,36 +237,6 @@ func TestEveryStyleProvidesEscapedCardAndDocumentTemplates(t *testing.T) {
 	}
 }
 
-func TestEveryStyleProvidesEscapedReviewTemplate(t *testing.T) {
-	tmpl := newVisualTestTemplate(t)
-	for _, definition := range presentation.Styles() {
-		t.Run(string(definition.ID), func(t *testing.T) {
-			review, err := prepareReview(Review{
-				Style: definition.ID, Theme: ThemeDay, Verdict: ReviewVerdictAttention,
-				Headline: `<script>alert("x")</script>`, Summary: "审查摘要", Workspace: "codex-link-clawbot",
-				Thread: "移动审查", Target: "未提交改动", Highest: "P1",
-				Findings: []ReviewFinding{{Priority: "P1", Title: `<img src=x onerror=alert(1)>`, Location: "handler.go:21"}},
-				Options:  []Option{{Number: "1", Label: "继续修复 · 当前线程"}}, Footer: "回复 1 继续",
-			}, time.Date(2026, 8, 8, 12, 0, 0, 0, time.Local))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var output strings.Builder
-			if err := tmpl.ExecuteTemplate(&output, reviewTemplateName(review.Style), review); err != nil {
-				t.Fatal(err)
-			}
-			html := output.String()
-			if strings.Contains(html, `<script>alert`) || strings.Contains(html, `<img src=x`) ||
-				!strings.Contains(html, `&lt;script&gt;`) || !strings.Contains(html, `&lt;img`) {
-				t.Fatalf("%s review template did not escape dynamic text", definition.ID)
-			}
-			if !strings.Contains(html, `class="day `+string(definition.ID)+` attention"`) || !strings.Contains(html, "scan-search") && !strings.Contains(html, `<svg`) {
-				t.Fatalf("%s review template identity is missing", definition.ID)
-			}
-		})
-	}
-}
-
 func TestEveryStyleProvidesEmbeddedBackground(t *testing.T) {
 	for _, definition := range presentation.Styles() {
 		dataURL := string(backgroundDataURL(definition.ID))
@@ -279,158 +249,6 @@ func TestEveryStyleProvidesEmbeddedBackground(t *testing.T) {
 	}
 }
 
-func TestEveryStyleProvidesEscapedDirectoryTemplate(t *testing.T) {
-	tmpl := newVisualTestTemplate(t)
-	for _, definition := range presentation.Styles() {
-		t.Run(string(definition.ID), func(t *testing.T) {
-			directory := testDirectory()
-			directory.Style = definition.ID
-			directory.Title = `<script>alert("x")</script>`
-			directory.Sections[0].Items[0].Label = `<img src=x onerror=alert(1)>`
-			prepared, err := prepareDirectory(directory, time.Date(2026, 8, 5, 10, 24, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var htmlOutput strings.Builder
-			if err := tmpl.ExecuteTemplate(&htmlOutput, directoryTemplateName(prepared.Style), prepared); err != nil {
-				t.Fatal(err)
-			}
-			output := htmlOutput.String()
-			if strings.Contains(output, `<script>alert`) || strings.Contains(output, `<img src=x`) ||
-				!strings.Contains(output, `&lt;script&gt;`) || !strings.Contains(output, `&lt;img`) {
-				t.Fatalf("%s directory template did not escape dynamic text", definition.ID)
-			}
-			if !strings.Contains(output, `class="day `+string(definition.ID)+`"`) {
-				t.Fatalf("%s directory template did not expose its style identity", definition.ID)
-			}
-			if !strings.Contains(output, `<svg viewBox="0 0 24 24" aria-hidden="true">`) {
-				t.Fatalf("%s directory template did not render the fixed Lucide icon", definition.ID)
-			}
-		})
-	}
-}
-
-func TestDirectoryAcceptsCompleteManagedHomeSurface(t *testing.T) {
-	directory := testDirectory()
-	actionCount := len(directory.Sections)
-	for _, section := range directory.Sections {
-		actionCount += len(section.Items)
-	}
-	if actionCount != 19 {
-		t.Fatalf("directory action count = %d", actionCount)
-	}
-	if _, err := prepareDirectory(directory, time.Date(2026, 8, 6, 12, 0, 0, 0, time.Local)); err != nil {
-		t.Fatalf("complete command directory was rejected: %v", err)
-	}
-
-	directory.Sections[0].Items = append(directory.Sections[0].Items,
-		DirectoryItem{Code: "14", Label: "越界入口一"},
-		DirectoryItem{Code: "15", Label: "越界入口二"},
-		DirectoryItem{Code: "16", Label: "越界入口三"},
-	)
-	if _, err := prepareDirectory(directory, time.Date(2026, 8, 6, 12, 0, 0, 0, time.Local)); err == nil || !strings.Contains(err.Error(), "invalid directory section") {
-		t.Fatalf("oversized directory section error = %v", err)
-	}
-}
-
-func TestWorkbenchKeepsRecentThreadsAndQuickActionsBounded(t *testing.T) {
-	workbench := testWorkbench()
-	prepared, err := prepareWorkbench(workbench, time.Date(2026, 8, 6, 12, 0, 0, 0, time.Local))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if prepared.Height != workbenchHeight(len(prepared.Threads)) || prepared.Threads[0].Tone != "live" || prepared.Theme != ThemeDay {
-		t.Fatalf("prepared workbench = %#v", prepared)
-	}
-	workbench.Threads = append(workbench.Threads, WorkbenchThread{Code: "4", Title: "越界线程", Project: "Workspace", Directory: "/workspace/overflow", Status: "空闲"})
-	workbench.Threads = append(workbench.Threads, WorkbenchThread{Code: "10", Title: "第五个线程", Project: "Workspace", Directory: "/workspace/fifth", Status: "空闲"})
-	if _, err := prepareWorkbench(workbench, time.Now()); err == nil {
-		t.Fatal("oversized workbench thread list was accepted")
-	}
-	invalidFact := testWorkbench()
-	invalidFact.Facts[0].Value = " "
-	if _, err := prepareWorkbench(invalidFact, time.Now()); err == nil {
-		t.Fatal("empty workbench telemetry fact was accepted")
-	}
-}
-
-func TestThreadMapBuildsOneLevelGeometryAndEscapesContent(t *testing.T) {
-	threadMap := ThreadMap{
-		Workspace: `<script>alert("workspace")</script>`,
-		Current:   ThreadMapNode{Title: "当前线程", Workspace: "Workspace", Status: "执行中"},
-		Parent:    &ThreadMapNode{Code: "1", Title: `<img src=x onerror=alert(1)>`, Workspace: "Workspace", Status: "空闲"},
-		Children: []ThreadMapNode{
-			{Code: "2", Title: "直接子线程", Workspace: "Workspace", Status: "未加载"},
-		},
-		Actions: []ThreadMapAction{
-			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
-			{Code: "9", Label: "全部线程", Icon: "list-tree"},
-		},
-		Truncated: 2,
-	}
-	prepared, err := prepareThreadMap(threadMap, time.Date(2026, 8, 13, 10, 0, 0, 0, time.Local))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if prepared.Theme != ThemeDay || prepared.Height != threadMapCanvasHeight || len(prepared.Edges) != 2 || prepared.Current.Tone != "live" || prepared.Children[0].Tone != "offline" {
-		t.Fatalf("prepared thread map = %#v", prepared)
-	}
-	var output strings.Builder
-	if err := newVisualTestTemplate(t).ExecuteTemplate(&output, "thread-map", prepared); err != nil {
-		t.Fatal(err)
-	}
-	html := output.String()
-	if strings.Contains(html, `<script>alert`) || strings.Contains(html, `<img src=x`) ||
-		!strings.Contains(html, `&lt;script&gt;`) || !strings.Contains(html, `&lt;img`) {
-		t.Fatal("thread map template did not escape dynamic content")
-	}
-	if !strings.Contains(html, `class="day atelier"`) || !strings.Contains(html, "另有 2 个直接子线程未展示") || !strings.Contains(html, `<svg viewBox="0 0 24 24"`) {
-		t.Fatal("thread map visual identity is incomplete")
-	}
-}
-
-func TestRenderThreadMapPreview(t *testing.T) {
-	previewRoot := strings.TrimSpace(os.Getenv("CODEX_LINK_CLAWBOT_THREAD_MAP_PREVIEW_DIR"))
-	if previewRoot == "" {
-		t.Skip("thread map preview output is not requested")
-	}
-	renderer, err := NewRenderer(Config{
-		RootDir: previewRoot, MaxConcurrent: 1,
-		Now: func() time.Time { return time.Date(2026, 8, 13, 21, 0, 0, 0, time.Local) },
-	})
-	if err != nil {
-		t.Skipf("Chromium is not installed: %v", err)
-	}
-	threadMap := ThreadMap{
-		Style: presentation.StyleAtelier, Theme: ThemeNight, Workspace: "codex-link-clawbot",
-		Current: ThreadMapNode{Title: "全局工作台重构", Workspace: "codex-link-clawbot", Status: "执行中"},
-		Parent:  &ThreadMapNode{Code: "1", Title: "微信远程工作台", Workspace: "codex-link-clawbot", Status: "空闲"},
-		Children: []ThreadMapNode{
-			{Code: "2", Title: "移动端关系图", Workspace: "codex-link-clawbot", Status: "空闲"},
-			{Code: "3", Title: "安全边界回归", Workspace: "codex-link-clawbot", Status: "未加载"},
-			{Code: "4", Title: "视觉验收", Workspace: "codex-link-clawbot", Status: "执行中"},
-			{Code: "5", Title: "文档同步", Workspace: "codex-link-clawbot", Status: "空闲"},
-		},
-		Actions: []ThreadMapAction{
-			{Code: "8", Label: "刷新关系图", Icon: "rotate-ccw"},
-			{Code: "9", Label: "全部线程", Icon: "list-tree"},
-		},
-		Truncated: 2,
-	}
-	artifact, err := renderer.RenderThreadMap(context.Background(), threadMap)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer artifact.Cleanup()
-	data, err := os.ReadFile(artifact.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(previewRoot, "thread-map-preview.png"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func newVisualTestTemplate(t *testing.T) *template.Template {
 	t.Helper()
 	tmpl, err := template.New("visual").Funcs(template.FuncMap{
@@ -440,85 +258,6 @@ func newVisualTestTemplate(t *testing.T) *template.Template {
 		t.Fatal(err)
 	}
 	return tmpl
-}
-
-func testDirectory() Directory {
-	return Directory{
-		Title: "Codex 全部功能", Subtitle: "按领域浏览 Codex 与 codex-link-clawbot 控制能力",
-		Facts: []Fact{
-			{Label: "工作空间", Value: "2 个 · 当前 codex-link-clawbot"},
-			{Label: "目标线程", Value: "移动端控制重构"},
-			{Label: "codex-link-clawbot 执行", Value: "运行中"},
-		},
-		Sections: []DirectorySection{
-			{Code: "1", Title: "Codex · 全局", Icon: "activity", Items: []DirectoryItem{
-				{Code: "11", Label: "全局总览"}, {Code: "12", Label: "全局线程"},
-				{Code: "13", Label: "账号与额度"},
-			}},
-			{Code: "2", Title: "Codex · 工作空间", Icon: "folder-kanban", Items: []DirectoryItem{
-				{Code: "21", Label: "工作空间"}, {Code: "22", Label: "目标线程"},
-				{Code: "23", Label: "模型与权限"},
-				{Code: "24", Label: "技能与工具"}, {Code: "25", Label: "Codex 操作"},
-			}},
-			{Code: "3", Title: "Codex · 执行", Icon: "list-todo", Items: []DirectoryItem{
-				{Code: "31", Label: "新建工作"}, {Code: "32", Label: "审查改动"},
-				{Code: "33", Label: "请求队列"}, {Code: "34", Label: "取消执行"},
-			}},
-			{Code: "4", Title: "codex-link-clawbot · 远程", Icon: "settings-2", Items: []DirectoryItem{
-				{Code: "41", Label: "最近结果与交付箱"}, {Code: "42", Label: "系统健康与诊断"},
-				{Code: "43", Label: "呈现与安全"},
-			}},
-		},
-		Footer: "回复数字编号 · 0 返回全局工作台 · 目录 30 分钟内有效",
-	}
-}
-
-func testWorkbench() Workbench {
-	return Workbench{
-		Title: "全局工作台", Subtitle: "从微信统筹 Codex 桌面端、CLI 与远程执行", State: "就绪",
-		Facts:  []Fact{{Label: "工作空间", Value: "2 个"}, {Label: "全部线程", Value: "12 个"}, {Label: "运行中", Value: "1 个"}, {Label: "微信队列", Value: "空闲"}},
-		Target: WorkbenchTarget{Title: "首页全局工作台重构", Project: "codex-link-clawbot", Directory: "/root/CODES/codex-link-clawbot", Status: "空闲", Time: "8 分钟前", Available: true},
-		Threads: []WorkbenchThread{
-			{Code: "1", Title: "登录排障", Project: "API", Directory: "/srv/api", Status: "运行中", Time: "刚刚", Wechat: "微信执行中"},
-			{Code: "2", Title: "首页全局工作台重构", Project: "codex-link-clawbot", Directory: "/root/CODES/codex-link-clawbot", Status: "空闲", Time: "8 分钟前", Current: true},
-			{Code: "3", Title: "OSS 数据补偿", Project: "SYJ", Directory: "/srv/syj/oss-repair", Status: "未加载", Time: "1 小时前"},
-		},
-		Actions: []WorkbenchAction{
-			{Code: "5", Label: "全部线程", Icon: "messages-square"},
-			{Code: "6", Label: "新建线程", Icon: "plus"},
-			{Code: "7", Label: "执行与队列", Icon: "list-filter"},
-			{Code: "8", Label: "工作空间", Icon: "folder-kanban"},
-			{Code: "9", Label: "刷新工作台", Icon: "refresh-cw"},
-		},
-		Controls: testWorkbenchControls(),
-		Footer:   "回复数字编号操作 · 普通内容进入当前目标 · 0 退出 · 首页 5 分钟内有效",
-	}
-}
-
-func testWorkbenchControls() []WorkbenchControlGroup {
-	return []WorkbenchControlGroup{
-		{Title: "全局与目标", Controls: []WorkbenchControl{
-			{Code: "11", Label: "全局总览", Tone: "codex"},
-			{Code: "12", Label: "全局线程", Reference: "/resume", Tone: "codex"},
-			{Code: "13", Label: "账号与额度", Reference: "/usage", Tone: "codex"},
-			{Code: "21", Label: "工作空间", Tone: "codex"},
-			{Code: "22", Label: "目标线程", Reference: "/status", Tone: "codex"},
-		}},
-		{Title: "能力与执行", Controls: []WorkbenchControl{
-			{Code: "23", Label: "模型与权限", Reference: "/model · /permissions", Tone: "codex"},
-			{Code: "24", Label: "技能与工具", Reference: "/skills · /mcp", Tone: "codex"},
-			{Code: "25", Label: "Codex 操作", Reference: "/clear … /mcp", Tone: "codex"},
-			{Code: "31", Label: "新建工作", Reference: "/new", Tone: "codex"},
-			{Code: "32", Label: "审查改动", Reference: "/review", Tone: "codex"},
-		}},
-		{Title: "队列与系统", Controls: []WorkbenchControl{
-			{Code: "33", Label: "请求队列", Tone: "bridge"},
-			{Code: "34", Label: "取消执行", Tone: "bridge"},
-			{Code: "41", Label: "最近结果与交付箱", Reference: "/copy", Tone: "bridge"},
-			{Code: "42", Label: "系统健康与诊断", Tone: "bridge"},
-			{Code: "43", Label: "呈现与安全", Tone: "bridge"},
-		}},
-	}
 }
 
 func TestResolveBrowserValidatesExplicitCommand(t *testing.T) {
@@ -552,7 +291,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 		t.Skipf("Chromium is not installed: %v", err)
 	}
 	renderRoot := t.TempDir()
-	previewRoot := strings.TrimSpace(os.Getenv("CODEX_LINK_CLAWBOT_DIRECTORY_PREVIEW_DIR"))
+	previewRoot := strings.TrimSpace(os.Getenv("CLAWBOT_VISUAL_PREVIEW_DIR"))
 	if previewRoot != "" {
 		renderRoot = filepath.Clean(previewRoot)
 		if err := os.MkdirAll(renderRoot, 0o700); err != nil {
@@ -572,11 +311,9 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	}
 	artifact, err := renderer.Render(context.Background(), Card{
 		Variant:  VariantHome,
-		Title:    "掌上控制台",
-		Subtitle: "微信里的本地 Codex",
-		Facts:    []Fact{{Label: "会话", Value: "视觉交互开发"}, {Label: "状态", Value: "运行中"}},
-		Options:  []Option{{Number: "1", Label: "会话"}, {Number: "2", Label: "任务状态"}},
-		Footer:   "回复数字即可，0 退出。",
+		Title:    "工作简报",
+		Subtitle: "Codex 回复",
+		Body:     []string{"已完成会话整理，可以继续检查改动。"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -589,7 +326,7 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 		t.Fatalf("rendered artifact is unavailable: info=%v err=%v", info, err)
 	}
 	saveVisualPreview(t, previewRoot, "card-atelier-day.png", artifact.Path)
-	nightArtifact, err := renderer.Render(context.Background(), Card{Theme: ThemeNight, Title: "夜间控制卡"})
+	nightArtifact, err := renderer.Render(context.Background(), Card{Theme: ThemeNight, Title: "夜间语音简报"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,95 +347,6 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 	saveVisualPreview(t, previewRoot, "document-atelier-day.png", documentArtifact.Path)
 	if documentArtifact.Width != CanvasWidth || documentArtifact.Height != documents[0].Height {
 		t.Fatalf("document dimensions = %dx%d", documentArtifact.Width, documentArtifact.Height)
-	}
-
-	directory := testDirectory()
-	directory.Style = presentation.StyleAtelier
-	directoryArtifact, err := renderer.RenderDirectory(context.Background(), directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer directoryArtifact.Cleanup()
-	saveVisualPreview(t, previewRoot, "directory-atelier-day.png", directoryArtifact.Path)
-	if directoryArtifact.Width != CanvasWidth || directoryArtifact.Height != directoryCanvasHeight {
-		t.Fatalf("directory dimensions = %dx%d", directoryArtifact.Width, directoryArtifact.Height)
-	}
-	if info, err := os.Stat(directoryArtifact.Path); err != nil || info.Size() == 0 || info.Size() >= 12<<20 {
-		t.Fatalf("directory artifact is invalid: info=%v err=%v", info, err)
-	}
-
-	workbench := testWorkbench()
-	workbench.Style = presentation.StyleAtelier
-	workbenchArtifact, err := renderer.RenderWorkbench(context.Background(), workbench)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workbenchArtifact.Cleanup()
-	saveVisualPreview(t, previewRoot, "workbench-atelier-day.png", workbenchArtifact.Path)
-	if workbenchArtifact.Width != workbenchCanvasWidth || workbenchArtifact.Height != workbenchHeight(len(workbench.Threads)) {
-		t.Fatalf("workbench dimensions = %dx%d", workbenchArtifact.Width, workbenchArtifact.Height)
-	}
-	nightWorkbench := testWorkbench()
-	nightWorkbench.Style = presentation.StyleAtelier
-	nightWorkbench.Theme = ThemeNight
-	nightWorkbenchArtifact, err := renderer.RenderWorkbench(context.Background(), nightWorkbench)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nightWorkbenchArtifact.Cleanup()
-	saveVisualPreview(t, previewRoot, "workbench-atelier-night.png", nightWorkbenchArtifact.Path)
-
-	reviewArtifact, err := renderer.RenderReview(context.Background(), Review{
-		Style: presentation.StyleAtelier, Verdict: ReviewVerdictAttention, Headline: "发现 2 项需要判断",
-		Summary: "优先处理高等级问题；完整证据可以随时取回。", Workspace: "codex-link-clawbot",
-		Thread: "移动端审查包", Target: "未提交改动", Highest: "P1",
-		Facts: []Fact{
-			{Label: "变更", Value: "12 个文件 · +180 / −42"},
-			{Label: "验证", Value: "3 项 · 3 通过 · 测试/检查"},
-			{Label: "交付", Value: "1 项可再次发送"},
-		},
-		Findings: []ReviewFinding{
-			{Priority: "P1", Title: "避免目标线程在菜单期间漂移", Location: "messaging/review_control.go:73", Detail: "继续修复必须冻结工作空间与线程。"},
-			{Priority: "P2", Title: "保留完整审查原文", Location: "messaging/reply_visual.go:126", Detail: "摘要不能替代可复制的审查证据。"},
-		},
-		Options: []Option{{Number: "1", Label: "继续修复 · 当前线程"}, {Number: "2", Label: "接受结论 · 结束审查"}, {Number: "3", Label: "重新审查"}},
-		Footer:  "回复数字继续；回复“文字版”获取完整审查原文；0 返回 Codex 开发",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reviewArtifact.Cleanup()
-	saveVisualPreview(t, previewRoot, "review-atelier-day.png", reviewArtifact.Path)
-	if reviewArtifact.Width != CanvasWidth || reviewArtifact.Height != reviewHeight(2, 3) {
-		t.Fatalf("review dimensions = %dx%d", reviewArtifact.Width, reviewArtifact.Height)
-	}
-
-	commandArtifact, err := renderer.Render(context.Background(), Card{
-		Style:    presentation.StyleAtelier,
-		Variant:  VariantSession,
-		Title:    "Codex 命令 · 会话管理",
-		Subtitle: "仅显示 codex-link-clawbot 可操作能力",
-		Facts: []Fact{
-			{Label: "可用命令", Value: "17 个"},
-			{Label: "页码", Value: "1 / 1"},
-		},
-		Options: []Option{
-			{Number: "1", Label: "清屏并新建线程"},
-			{Number: "2", Label: "重命名当前线程"},
-			{Number: "3", Label: "归档当前线程"},
-			{Number: "4", Label: "永久删除当前线程"},
-			{Number: "5", Label: "压缩上下文"},
-			{Number: "6", Label: "取回最近回答"},
-		},
-		Footer: "回复数字执行 · 0 返回可用命令",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer commandArtifact.Cleanup()
-	saveVisualPreview(t, previewRoot, "card-codex-command-catalog.png", commandArtifact.Path)
-	if commandArtifact.Width != CanvasWidth || commandArtifact.Height < minCanvasHeight {
-		t.Fatalf("command artifact dimensions = %dx%d", commandArtifact.Width, commandArtifact.Height)
 	}
 
 	for _, style := range []presentation.Style{presentation.StyleEditorial, presentation.StyleNoir, presentation.StyleCute, presentation.StyleMinimal} {
@@ -730,20 +378,6 @@ func TestRendererWithInstalledChromium(t *testing.T) {
 			t.Fatalf("%s document dimensions = %dx%d", style, styledDocumentArtifact.Width, styledDocumentArtifact.Height)
 		}
 
-		for _, theme := range []Theme{ThemeDay, ThemeNight} {
-			styledWorkbench := testWorkbench()
-			styledWorkbench.Style = style
-			styledWorkbench.Theme = theme
-			styledWorkbenchArtifact, renderErr := renderer.RenderWorkbench(context.Background(), styledWorkbench)
-			if renderErr != nil {
-				t.Fatal(renderErr)
-			}
-			defer styledWorkbenchArtifact.Cleanup()
-			saveVisualPreview(t, previewRoot, "workbench-"+string(style)+"-"+string(theme)+".png", styledWorkbenchArtifact.Path)
-			if styledWorkbenchArtifact.Width != workbenchCanvasWidth || styledWorkbenchArtifact.Height != workbenchHeight(len(styledWorkbench.Threads)) {
-				t.Fatalf("%s %s workbench dimensions = %dx%d", style, theme, styledWorkbenchArtifact.Width, styledWorkbenchArtifact.Height)
-			}
-		}
 	}
 }
 

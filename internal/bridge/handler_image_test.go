@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -40,9 +41,8 @@ func TestRepeatedWechatSourceDoesNotRedownloadAttachment(t *testing.T) {
 	})
 	handler := newBareHandler(&imageCaptureAgent{handlerThreadClient: newHandlerThreadClient()})
 	attachTestSessionManager(t, handler)
-	store, stop := attachTestTaskQueue(t, handler, client, "user-1")
+	store, stop := attachTestExecution(t, handler, client, "user-1")
 	defer stop()
-	handler.coordinator.SetDraining(true)
 	message := ilink.WeixinMessage{
 		MessageID: 77, FromUserID: "user-1", MessageType: ilink.MessageTypeUser,
 		MessageState: ilink.MessageStateFinish, ContextToken: "context",
@@ -53,6 +53,7 @@ func TestRepeatedWechatSourceDoesNotRedownloadAttachment(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	waitForTerminalTask(t, store, "user-1")
 	if downloads.Load() != 1 || len(store.List("user-1")) != 1 {
 		t.Fatalf("downloads=%d tasks=%d", downloads.Load(), len(store.List("user-1")))
 	}
@@ -98,7 +99,7 @@ func TestHandleMessagePassesWechatImageToAgent(t *testing.T) {
 	handler := newBareHandler(capture)
 	attachTestSessionManager(t, handler)
 	handler.progress = execution.ProgressConfig{Enabled: false}
-	store, stop := attachTestTaskQueue(t, handler, client, "user-1")
+	store, stop := attachTestExecution(t, handler, client, "user-1")
 	defer stop()
 
 	if err := handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
@@ -125,10 +126,10 @@ func TestHandleMessagePassesWechatImageToAgent(t *testing.T) {
 	if len(capture.imageData) != len(imageData) {
 		t.Fatalf("agent image bytes = %d, want %d", len(capture.imageData), len(imageData))
 	}
-	if _, err := os.Stat(capture.request.LocalImages[0]); !os.IsNotExist(err) {
-		t.Fatalf("inbound image was not cleaned after turn: %v", err)
+	if _, err := os.Stat(capture.request.LocalImages[0]); err != nil {
+		t.Fatalf("inbound image was not retained after turn: %v", err)
 	}
-	if len(sentReply.Msg.ItemList) != 1 || sentReply.Msg.ItemList[0].TextItem == nil || sentReply.Msg.ItemList[0].TextItem.Text != "已收到图片" {
+	if len(sentReply.Msg.ItemList) != 1 || sentReply.Msg.ItemList[0].TextItem == nil || !strings.HasSuffix(sentReply.Msg.ItemList[0].TextItem.Text, "已收到图片") || !strings.HasPrefix(sentReply.Msg.ItemList[0].TextItem.Text, "结果 · ") {
 		t.Fatalf("sent reply = %#v", sentReply.Msg.ItemList)
 	}
 }

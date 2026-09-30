@@ -37,6 +37,7 @@ func TestRetiredArchitectureCannotReturn(t *testing.T) {
 	for _, retired := range []string{
 		filepath.Join(root, "internal", "bridge", "control.go"),
 		filepath.Join(root, "internal", "bridge", "control_visual.go"),
+		filepath.Join(root, "internal", "bridge", "coordinator.go"),
 		filepath.Join(root, "internal", "control"),
 	} {
 		if _, err := os.Stat(retired); !os.IsNotExist(err) {
@@ -61,6 +62,13 @@ func TestDomainPackagesDoNotDependOnCompositionOrBridge(t *testing.T) {
 				value, _ := strconv.Unquote(spec.Path.Value)
 				if strings.Contains(value, "/internal/app") || strings.Contains(value, "/internal/bridge") || strings.Contains(value, "/internal/cli") {
 					t.Errorf("domain package %s imports upper layer %s", file, value)
+				}
+				if directory == "execution" {
+					for _, adapter := range []string{"ilink", "management", "codex/appserver"} {
+						if strings.Contains(value, "/internal/"+adapter) {
+							t.Errorf("execution scheduler %s imports adapter %s", file, value)
+						}
+					}
 				}
 			}
 			return nil

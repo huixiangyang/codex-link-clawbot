@@ -13,8 +13,6 @@ import (
 
 const globalThreadScanPageSize = 100
 
-const defaultRelationChildLimit = 5
-
 type Workspace struct {
 	ID   string
 	Name string
@@ -25,7 +23,6 @@ type GlobalThread struct {
 	Info          codex.ThreadInfo
 	WorkspaceID   string
 	WorkspaceName string
-	Current       bool
 	Archived      bool
 }
 
@@ -38,36 +35,6 @@ type GlobalPage struct {
 	Loaded     int
 }
 
-type ThreadRelationRole string
-
-const (
-	ThreadRelationParent  ThreadRelationRole = "parent"
-	ThreadRelationCurrent ThreadRelationRole = "current"
-	ThreadRelationChild   ThreadRelationRole = "child"
-)
-
-// ThreadRelationNode 是一次即时关系查询中的 Codex 原生线程节点。
-// 它不包含对话正文，也不会写入第二套线程树缓存。
-type ThreadRelationNode struct {
-	ID            string
-	ForkedFromID  string
-	Title         string
-	Status        codex.ThreadStatus
-	WorkspaceID   string
-	WorkspaceName string
-	Role          ThreadRelationRole
-}
-
-// ThreadRelations 只描述当前目标的一层父子关系。
-type ThreadRelations struct {
-	Current           ThreadRelationNode
-	Parent            *ThreadRelationNode
-	ParentUnavailable bool
-	Children          []ThreadRelationNode
-	Truncated         int
-}
-
-// GlobalList 直接读取 Codex 全局线程目录；本地索引只标记操作焦点，不参与可见性判断。
 func (m *Manager) GlobalList(ctx context.Context, ownerID string, client codex.ThreadClient, workspaces []Workspace, archived, runningOnly bool, query string, pageNumber, pageSize int) (GlobalPage, error) {
 	if pageSize <= 0 {
 		pageSize = DefaultPageSize
@@ -79,12 +46,11 @@ func (m *Manager) GlobalList(ctx context.Context, ownerID string, client codex.T
 	if err != nil {
 		return GlobalPage{}, err
 	}
-	threads, err := scanGlobalThreads(ctx, client, archived, strings.TrimSpace(query))
+	threads, err := m.directory(ctx, client, archived, strings.TrimSpace(query))
 	if err != nil {
 		return GlobalPage{}, err
 	}
 	items := make([]GlobalThread, 0, len(threads))
-	currentProjectID := m.currentProject(ownerID)
 	for _, thread := range threads {
 		if runningOnly && thread.Status.Type != "active" {
 			continue
@@ -93,13 +59,15 @@ func (m *Manager) GlobalList(ctx context.Context, ownerID string, client codex.T
 		if !allowed {
 			continue
 		}
-		currentID, _ := m.store.ActiveForProject(ownerID, workspace.ID)
 		items = append(items, GlobalThread{
 			Info: thread, WorkspaceID: workspace.ID, WorkspaceName: workspace.Name,
-			Current: workspace.ID == currentProjectID && currentID == thread.ID, Archived: archived,
+			Archived: archived,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
+		if (items[i].Info.Status.Type == "active") != (items[j].Info.Status.Type == "active") {
+			return items[i].Info.Status.Type == "active"
+		}
 		return recency(items[i].Info) > recency(items[j].Info)
 	})
 	result := GlobalPage{Total: len(items)}
@@ -128,74 +96,6 @@ func (m *Manager) GlobalList(ctx context.Context, ownerID string, client codex.T
 	return result, nil
 }
 
-// CurrentRelations 从 Codex 当前目录即时计算目标线程的一层关系。
-// maxChildren 只限制移动端画布密度；Truncated 会明确暴露未展示数量。
-func (m *Manager) CurrentRelations(ctx context.Context, ownerID string, client codex.ThreadClient, workspaces []Workspace, maxChildren int) (ThreadRelations, error) {
-	if maxChildren <= 0 {
-		maxChildren = defaultRelationChildLimit
-	}
-	resolved, err := resolveWorkspaces(workspaces)
-	if err != nil {
-		return ThreadRelations{}, err
-	}
-	projectID := m.currentProject(ownerID)
-	currentID, exists := m.store.ActiveForProject(ownerID, projectID)
-	if !exists {
-		return ThreadRelations{}, ErrNoActive
-	}
-	current, err := client.ReadThread(ctx, currentID)
-	if err != nil {
-		return ThreadRelations{}, fmt.Errorf("read current thread relation target: %w", err)
-	}
-	currentWorkspace, allowed := matchWorkspace(current.Cwd, resolved)
-	if !allowed || currentWorkspace.ID != projectID {
-		return ThreadRelations{}, fmt.Errorf("current thread is outside its trusted workspace")
-	}
-	result := ThreadRelations{Current: newThreadRelationNode(current, currentWorkspace, ThreadRelationCurrent)}
-
-	threads, err := scanGlobalThreads(ctx, client, false, "")
-	if err != nil {
-		return ThreadRelations{}, err
-	}
-	for _, thread := range threads {
-		if thread.ID == current.ID {
-			continue
-		}
-		workspace, trusted := matchWorkspace(thread.Cwd, resolved)
-		if !trusted {
-			continue
-		}
-		switch {
-		case current.ForkedFromID != "" && thread.ID == current.ForkedFromID:
-			node := newThreadRelationNode(thread, workspace, ThreadRelationParent)
-			result.Parent = &node
-		case thread.ForkedFromID == current.ID:
-			result.Children = append(result.Children, newThreadRelationNode(thread, workspace, ThreadRelationChild))
-		}
-	}
-	sort.SliceStable(result.Children, func(left, right int) bool {
-		leftName := result.Children[left].Title
-		rightName := result.Children[right].Title
-		if leftName == rightName {
-			return result.Children[left].ID < result.Children[right].ID
-		}
-		return leftName < rightName
-	})
-	if len(result.Children) > maxChildren {
-		result.Truncated = len(result.Children) - maxChildren
-		result.Children = result.Children[:maxChildren]
-	}
-	result.ParentUnavailable = current.ForkedFromID != "" && result.Parent == nil
-	return result, nil
-}
-
-func newThreadRelationNode(thread codex.ThreadInfo, workspace resolvedWorkspace, role ThreadRelationRole) ThreadRelationNode {
-	return ThreadRelationNode{
-		ID: thread.ID, ForkedFromID: thread.ForkedFromID, Title: strings.TrimSpace(thread.Name), Status: thread.Status,
-		WorkspaceID: workspace.ID, WorkspaceName: workspace.Name, Role: role,
-	}
-}
-
 func scanGlobalThreads(ctx context.Context, client codex.ThreadClient, archived bool, query string) ([]codex.ThreadInfo, error) {
 	threads := make([]codex.ThreadInfo, 0, globalThreadScanPageSize)
 	cursor := ""
@@ -215,13 +115,30 @@ func scanGlobalThreads(ctx context.Context, client codex.ThreadClient, archived 
 			seenThreads[thread.ID] = true
 			threads = append(threads, thread)
 		}
-		if page.NextCursor == "" || seenCursors[page.NextCursor] {
-			break
+		if page.NextCursor == "" {
+			return threads, nil
+		}
+		if seenCursors[page.NextCursor] {
+			return nil, fmt.Errorf("thread cursor did not advance")
 		}
 		seenCursors[page.NextCursor] = true
 		cursor = page.NextCursor
 	}
-	return threads, nil
+	return nil, fmt.Errorf("thread catalog exceeded the scan limit; narrow the search")
+}
+
+// ReadAvailableThread 确认线程仍在未归档目录，避免 Resume 隐式恢复已归档会话。
+func ReadAvailableThread(ctx context.Context, client codex.ThreadClient, threadID string) (codex.ThreadInfo, error) {
+	threads, err := scanGlobalThreads(ctx, client, false, "")
+	if err != nil {
+		return codex.ThreadInfo{}, err
+	}
+	for _, item := range threads {
+		if item.ID == threadID {
+			return item, nil
+		}
+	}
+	return codex.ThreadInfo{}, fmt.Errorf("thread is archived or unavailable")
 }
 
 // UseGlobalThread 把任意受信任工作空间中的 Codex 线程设为远程操作焦点。
@@ -232,26 +149,17 @@ func (m *Manager) UseGlobalThread(ctx context.Context, ownerID string, workspace
 	if ownerID == "" || projectID == "" || threadID == "" {
 		return codex.ThreadInfo{}, fmt.Errorf("owner, workspace and thread are required")
 	}
-	thread, err := client.ResumeThread(ctx, threadID, workspace.Root)
+	// 切换只改变输入目标；不取消订阅旧会话，也不重载正在执行的会话。
+	thread, err := ReadAvailableThread(ctx, client, threadID)
 	if err != nil {
-		return codex.ThreadInfo{}, fmt.Errorf("resume global thread: %w", err)
+		return codex.ThreadInfo{}, err
 	}
 	resolved, err := resolveWorkspaces([]Workspace{workspace})
 	if err != nil {
-		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), threadID)
 		return codex.ThreadInfo{}, err
 	}
 	if matched, allowed := matchWorkspace(thread.Cwd, resolved); !allowed || matched.ID != projectID {
-		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), threadID)
-		return codex.ThreadInfo{}, fmt.Errorf("resumed thread is outside the trusted workspace")
-	}
-	oldThreadID, _ := m.store.ActiveForProject(ownerID, projectID)
-	if err := m.store.RegisterProject(ownerID, projectID, thread, true, m.now()); err != nil {
-		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), threadID)
-		return codex.ThreadInfo{}, fmt.Errorf("persist global thread focus: %w", err)
-	}
-	if oldThreadID != "" && oldThreadID != threadID {
-		_ = client.UnsubscribeThread(context.WithoutCancel(ctx), oldThreadID)
+		return codex.ThreadInfo{}, fmt.Errorf("thread is outside the trusted workspace")
 	}
 	return thread, nil
 }

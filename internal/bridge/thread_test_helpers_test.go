@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
@@ -11,6 +12,8 @@ import (
 )
 
 type handlerThreadClient struct {
+	mu           sync.Mutex
+	chat         func(context.Context, string, codex.ChatRequest) (string, error)
 	next         int
 	threads      map[string]codex.ThreadInfo
 	archived     map[string]bool
@@ -27,6 +30,8 @@ func (a *handlerThreadClient) Info() codex.RuntimeInfo {
 }
 
 func (a *handlerThreadClient) StartThread(_ context.Context, workspaceRoot string) (codex.ThreadInfo, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.cwd = workspaceRoot
 	a.next++
 	id := fmt.Sprintf("019fcc03-fc8b-7842-a812-%012d", a.next)
@@ -39,6 +44,8 @@ func (a *handlerThreadClient) StartThread(_ context.Context, workspaceRoot strin
 }
 
 func (a *handlerThreadClient) ResumeThread(_ context.Context, threadID, workspaceRoot string) (codex.ThreadInfo, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.cwd = workspaceRoot
 	item, exists := a.threads[threadID]
 	if !exists || a.archived[threadID] {
@@ -48,6 +55,8 @@ func (a *handlerThreadClient) ResumeThread(_ context.Context, threadID, workspac
 }
 
 func (a *handlerThreadClient) ReadThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	item, exists := a.threads[threadID]
 	if !exists {
 		return codex.ThreadInfo{}, fmt.Errorf("thread not found")
@@ -56,6 +65,8 @@ func (a *handlerThreadClient) ReadThread(_ context.Context, threadID string) (co
 }
 
 func (a *handlerThreadClient) ListThreads(_ context.Context, options codex.ThreadListOptions) (codex.ThreadPage, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	items := make([]codex.ThreadInfo, 0, len(a.threads))
 	for id, item := range a.threads {
 		search := strings.ToLower(strings.TrimSpace(options.SearchTerm))
@@ -68,6 +79,8 @@ func (a *handlerThreadClient) ListThreads(_ context.Context, options codex.Threa
 }
 
 func (a *handlerThreadClient) SetThreadName(_ context.Context, threadID, name string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	item, exists := a.threads[threadID]
 	if !exists {
 		return fmt.Errorf("thread not found")
@@ -78,6 +91,8 @@ func (a *handlerThreadClient) SetThreadName(_ context.Context, threadID, name st
 }
 
 func (a *handlerThreadClient) ArchiveThread(_ context.Context, threadID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if _, exists := a.threads[threadID]; !exists {
 		return fmt.Errorf("thread not found")
 	}
@@ -85,31 +100,20 @@ func (a *handlerThreadClient) ArchiveThread(_ context.Context, threadID string) 
 	return nil
 }
 
-func (a *handlerThreadClient) UnarchiveThread(_ context.Context, threadID string) (codex.ThreadInfo, error) {
-	item, exists := a.threads[threadID]
-	if !exists || !a.archived[threadID] {
-		return codex.ThreadInfo{}, fmt.Errorf("archived thread not found")
-	}
-	delete(a.archived, threadID)
-	return item, nil
-}
-
-func (a *handlerThreadClient) UnsubscribeThread(context.Context, string) error { return nil }
-
-func (a *handlerThreadClient) ChatThread(_ context.Context, threadID string, _ codex.ChatRequest) (string, error) {
+func (a *handlerThreadClient) ChatThread(ctx context.Context, threadID string, input codex.ChatRequest) (string, error) {
+	a.mu.Lock()
 	a.chatThreadID = threadID
+	chat := a.chat
+	a.mu.Unlock()
+	if chat != nil {
+		return chat(ctx, threadID, input)
+	}
 	return "显式线程回复", nil
 }
 
-func attachTestSessionManager(t *testing.T, handler *Handler) {
+func attachTestSessionManager(t *testing.T, handler *testHandler) {
 	t.Helper()
-	manager, err := thread.NewManager(t.TempDir()+"/session-index.json", func(ownerID string) thread.Workspace {
-		if handler.projects == nil {
-			return thread.Workspace{ID: thread.DefaultProjectID, Name: "Workspace", Root: "/workspace"}
-		}
-		definition := handler.projects.Current(ownerID)
-		return thread.Workspace{ID: definition.ID, Name: definition.Name, Root: definition.Root}
-	})
+	manager, err := thread.NewManager()
 	if err != nil {
 		t.Fatal(err)
 	}

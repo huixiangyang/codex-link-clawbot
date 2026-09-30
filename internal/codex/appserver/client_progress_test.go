@@ -164,7 +164,7 @@ func TestCollectTurnIgnoresOtherTurnEventsOnSameThread(t *testing.T) {
 	}
 	var phases []codex.TurnPhaseEvent
 	reply, err := a.ChatThreadWithProgress(context.Background(), "thread-1", codex.ChatRequest{Text: "执行", WorkspaceRoot: "/workspace"}, func(event codex.TurnPhaseEvent) { phases = append(phases, event) })
-	if err != nil || reply != "正确答案" || len(phases) != 1 || phases[0].Phase != codex.TurnPhaseCompleted {
+	if err != nil || reply != "正确答案" || len(phases) != 2 || phases[0].Phase != codex.TurnPhaseStarted || phases[1].Phase != codex.TurnPhaseCompleted {
 		t.Fatalf("reply=%q phases=%#v err=%v", reply, phases, err)
 	}
 }
@@ -227,7 +227,7 @@ func TestChatRequestPromptTextIncludesInboundFilesAndOutboxContract(t *testing.T
 		ArtifactDir: "/tmp/turn/outbox",
 	}
 	prompt := request.PromptText()
-	for _, want := range []string{"检查构建失败原因", "build.log", "/tmp/turn/inbox/build.log", "不要执行", "/tmp/turn/outbox", "自动发送"} {
+	for _, want := range []string{"检查构建失败原因", "build.log", "/tmp/turn/inbox/build.log", "不要执行", "/tmp/turn/outbox", "结果菜单取回"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("PromptText() missing %q: %q", want, prompt)
 		}
@@ -244,6 +244,8 @@ func TestChatCodexAppServerInterruptsCancelledTurn(t *testing.T) {
 	interrupted := false
 	a.rpcCall = func(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
 		switch method {
+		case "thread/read":
+			return json.RawMessage(`{"thread":{"turns":[{"id":"turn-1","status":"interrupted"}]}}`), nil
 		case "turn/start":
 			return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
 		case "turn/interrupt":
@@ -267,5 +269,40 @@ func TestChatCodexAppServerInterruptsCancelledTurn(t *testing.T) {
 	}
 	if !interrupted {
 		t.Fatal("cancelled turn should call turn/interrupt")
+	}
+}
+
+func TestCancellationRequiresNativeTurnOutcome(t *testing.T) {
+	for _, status := range []string{"inProgress", "interrupted", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			client := &Client{}
+			client.rpcCall = func(_ context.Context, method string, _ interface{}) (json.RawMessage, error) {
+				if method == "turn/interrupt" {
+					return nil, errors.New("transport rejected interrupt")
+				}
+				if method == "thread/read" {
+					return json.RawMessage(`{"thread":{"turns":[{"id":"turn","status":"` + status + `","items":[{"type":"agentMessage","phase":"final_answer","text":"completed reply"}]}]}}`), nil
+				}
+				t.Fatalf("unexpected RPC %s", method)
+				return nil, nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			reply, err := client.collectTurn(ctx, "thread", "turn", make(chan *codexTurnEvent), nil)
+			switch status {
+			case "inProgress":
+				if !errors.Is(err, codex.ErrInterruptUnconfirmed) || errors.Is(err, context.Canceled) {
+					t.Fatalf("false stopped state: %v", err)
+				}
+			case "interrupted":
+				if !errors.Is(err, codex.ErrTurnInterrupted) {
+					t.Fatalf("confirmed interrupt: %v", err)
+				}
+			case "completed":
+				if err != nil || reply != "completed reply" {
+					t.Fatalf("completed work discarded: %q %v", reply, err)
+				}
+			}
+		})
 	}
 }

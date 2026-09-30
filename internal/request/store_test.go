@@ -11,28 +11,28 @@ import (
 	"time"
 )
 
-func TestStoreEnqueuesPrivatePayloadPersistsAndDeduplicates(t *testing.T) {
+func TestStoreStartsPrivatePayloadPersistsAndDeduplicates(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
 	now := time.Date(2026, 8, 5, 16, 30, 0, 0, time.Local)
 	store, err := newStore(root, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := testEnqueueInput("account-1:message-42", "owner-1", "project")
+	input := testStartInput("account-1:message-42", "owner-1", "project")
 	input.Text = "这是只应出现在私有请求中的完整问题"
 	input.ContextToken = "secret-context-token"
 	input.Images = []InputAttachment{{Name: "screen.png", ContentType: "image/png", Data: []byte("private-image")}}
 	input.Files = []InputAttachment{{Name: "report.pdf", ContentType: "application/pdf", Data: []byte("private-file")}}
-	task, existed, err := store.Enqueue(input)
+	task, existed, err := store.Start(input)
 	if err != nil || existed {
 		t.Fatalf("enqueue task = %#v existed=%v err=%v", task, existed, err)
 	}
-	if task.State != StateQueued || task.ProjectID != "project" || task.ResponseMode != presentation.ResponseAdaptive || task.VisualStyle != presentation.StyleEditorial {
-		t.Fatalf("queued task = %#v", task)
+	if task.State != StateRunning || task.ProjectID != "project" || task.ResponseMode != presentation.ResponseAdaptive || task.VisualStyle != presentation.StyleEditorial {
+		t.Fatalf("active request = %#v", task)
 	}
 	duplicateInput := input
 	duplicateInput.Text = "不得覆盖原任务"
-	duplicate, existed, err := store.Enqueue(duplicateInput)
+	duplicate, existed, err := store.Start(duplicateInput)
 	if err != nil || !existed || duplicate.ID != task.ID || len(store.List("owner-1")) != 1 {
 		t.Fatalf("deduplicated task = %#v existed=%v err=%v", duplicate, existed, err)
 	}
@@ -76,127 +76,6 @@ func TestStoreEnqueuesPrivatePayloadPersistsAndDeduplicates(t *testing.T) {
 	}
 }
 
-func TestStoreDoesNotClaimTaskBeforeAcknowledgement(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "tasks")
-	store, err := NewStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := testEnqueueInput("source:awaiting-ack", "owner", "project")
-	input.RequireAcknowledgement = true
-	task := mustEnqueue(t, store, input)
-	if !task.AwaitingAcknowledgement {
-		t.Fatalf("queued task did not retain acknowledgement gate: %#v", task)
-	}
-	if _, claimed, err := store.ClaimNext(nil); err != nil || claimed {
-		t.Fatalf("unacknowledged task claim: claimed=%v err=%v", claimed, err)
-	}
-
-	reloaded, err := NewStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, claimed, err := reloaded.ClaimNext(nil); err != nil || claimed {
-		t.Fatalf("reloaded unacknowledged task claim: claimed=%v err=%v", claimed, err)
-	}
-	if err := reloaded.Acknowledge("owner", task.ID); err != nil {
-		t.Fatal(err)
-	}
-	claimed, ok, err := reloaded.ClaimNext(nil)
-	if err != nil || !ok || claimed.ID != task.ID {
-		t.Fatalf("acknowledged task claim = %#v, %v, %v", claimed, ok, err)
-	}
-}
-
-func TestStoreSerialFIFORespectsPauseMoveAndLifecycle(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "tasks")
-	clock := time.Date(2026, 8, 5, 17, 0, 0, 0, time.Local)
-	store, err := newStore(root, func() time.Time { return clock })
-	if err != nil {
-		t.Fatal(err)
-	}
-	first := mustEnqueue(t, store, testEnqueueInput("a:1", "owner-a", "alpha"))
-	secondInput := testEnqueueInput("b:1", "owner-b", "beta")
-	second := mustEnqueue(t, store, secondInput)
-	third := mustEnqueue(t, store, testEnqueueInput("a:2", "owner-a", "alpha"))
-	if err := store.SetPaused("owner-a", true); err != nil {
-		t.Fatal(err)
-	}
-	claimed, ok, err := store.ClaimNext(nil)
-	if err != nil || !ok || claimed.ID != second.ID {
-		t.Fatalf("first claim = %#v ok=%v err=%v", claimed, ok, err)
-	}
-	if _, ok, err := store.ClaimNext(nil); err != nil || ok {
-		t.Fatalf("second active claim ok=%v err=%v", ok, err)
-	}
-	if _, err := store.BeginDelivery("owner-b", second.ID); err == nil {
-		t.Fatal("delivery began without a frozen result")
-	}
-	if _, err := store.FreezeResult("owner-b", second.ID, FreezeResultInput{Reply: "完成"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.BeginDelivery("owner-b", second.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Finish("owner-b", second.ID, StateSucceeded, ""); err != nil {
-		t.Fatal(err)
-	}
-	if prompt, err := store.LoadReusablePrompt("owner-b", second.ID); err != nil || prompt != secondInput.Text {
-		t.Fatalf("successful task reusable prompt = %q, %v", prompt, err)
-	}
-	entries, err := os.ReadDir(filepath.Join(root, second.ID))
-	if err != nil || len(entries) != 1 || entries[0].Name() != reusablePromptFile {
-		t.Fatalf("successful task private directory = %#v, %v", entries, err)
-	}
-	if _, err := store.LoadRequest("owner-b", second.ID); err == nil {
-		t.Fatal("successful task retained its full request")
-	}
-	if err := store.SetPaused("owner-a", false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.MoveToFront("owner-a", third.ID); err != nil {
-		t.Fatal(err)
-	}
-	if position, ok := store.QueuePosition("owner-a", third.ID); !ok || position != 1 {
-		t.Fatalf("moved queue position=%d ok=%v", position, ok)
-	}
-	claimed, ok, err = store.ClaimNext(nil)
-	if err != nil || !ok || claimed.ID != third.ID {
-		t.Fatalf("moved claim = %#v ok=%v err=%v", claimed, ok, err)
-	}
-	if err := store.AttachThread("owner-a", third.ID, "thread-fixed"); err != nil {
-		t.Fatal(err)
-	}
-	outbox, err := store.PrepareOutbox("owner-a", third.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertMode(t, outbox, 0o700)
-	if err := store.UpdateStage("owner-a", third.ID, "正在运行测试"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.AttachUsage("owner-a", third.ID, 10, 20, 30); err != nil {
-		t.Fatal(err)
-	}
-	failed, err := store.Finish("owner-a", third.ID, StateFailed, ReasonCodexFailed)
-	if err != nil || failed.ThreadID != "thread-fixed" || failed.TotalTokens != 30 || failed.PayloadExpiresAt <= clock.Unix() {
-		t.Fatalf("failed task = %#v err=%v", failed, err)
-	}
-	if _, err := store.LoadRequest("owner-a", third.ID); err != nil {
-		t.Fatalf("failed task request should remain: %v", err)
-	}
-	claimed, ok, err = store.ClaimNext(nil)
-	if err != nil || !ok || claimed.ID != first.ID {
-		t.Fatalf("remaining claim = %#v ok=%v err=%v", claimed, ok, err)
-	}
-	if _, err := store.Finish("owner-a", first.ID, StateCancelled, ReasonUserCancelled); err != nil {
-		t.Fatal(err)
-	}
-	if status := store.Status("owner-a"); status.Queued != 0 || status.Running != 0 || status.Failed != 1 || status.Cancelled != 1 {
-		t.Fatalf("owner status = %#v", status)
-	}
-}
-
 func TestStoreRecoversRunningAndDeliveryWithoutAutomaticRetry(t *testing.T) {
 	base := time.Date(2026, 8, 5, 18, 0, 0, 0, time.Local)
 	for _, test := range []struct {
@@ -213,10 +92,7 @@ func TestStoreRecoversRunningAndDeliveryWithoutAutomaticRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			task := mustEnqueue(t, store, testEnqueueInput("account:1", "owner", "project"))
-			if _, ok, err := store.ClaimNext(nil); err != nil || !ok {
-				t.Fatalf("claim ok=%v err=%v", ok, err)
-			}
+			task := mustStart(t, store, testStartInput("account:1", "owner", "project"))
 			if test.delivering {
 				if _, err := store.FreezeResult("owner", task.ID, FreezeResultInput{Reply: "待发送"}); err != nil {
 					t.Fatal(err)
@@ -230,11 +106,12 @@ func TestStoreRecoversRunningAndDeliveryWithoutAutomaticRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, ok := recovered.Find("owner", task.ID)
-			if !ok || got.State != StateInterrupted || got.Reason != test.reason || got.PayloadExpiresAt <= base.Unix() {
-				t.Fatalf("recovered task = %#v ok=%v", got, ok)
+			expectedState, expectedReason := StateInterrupted, test.reason
+			if test.delivering {
+				expectedState, expectedReason = StateSucceeded, ""
 			}
-			if _, ok, err := recovered.ClaimNext(nil); err != nil || ok {
-				t.Fatalf("interrupted task retried automatically: ok=%v err=%v", ok, err)
+			if !ok || got.State != expectedState || got.Reason != expectedReason || got.PayloadExpiresAt <= base.Unix() {
+				t.Fatalf("recovered task = %#v ok=%v", got, ok)
 			}
 			if _, err := recovered.LoadRequest("owner", task.ID); err != nil {
 				t.Fatalf("interrupted request should remain: %v", err)
@@ -246,7 +123,7 @@ func TestStoreRecoversRunningAndDeliveryWithoutAutomaticRetry(t *testing.T) {
 			if _, err := expired.LoadRequest("owner", task.ID); err == nil {
 				t.Fatal("expired interrupted payload was still readable")
 			}
-			if _, err := os.Stat(filepath.Join(root, task.ID)); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(root, task.ID, "request.json")); !os.IsNotExist(err) {
 				t.Fatalf("expired payload still exists: %v", err)
 			}
 		})
@@ -274,9 +151,9 @@ func TestStoreRejectsStrictIndexAndTamperedRequest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		input := testEnqueueInput("account:1", "owner", "project")
+		input := testStartInput("account:1", "owner", "project")
 		input.Files = []InputAttachment{{Name: "data.json", ContentType: "application/json", Data: []byte(`{"safe":true}`)}}
-		task := mustEnqueue(t, store, input)
+		task := mustStart(t, store, input)
 		loaded, err := store.LoadRequest("owner", task.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -308,12 +185,12 @@ func TestStoreRejectsStrictIndexAndTamperedRequest(t *testing.T) {
 	})
 }
 
-func TestStoreConcurrentSourceDeduplicationAndQueueLimit(t *testing.T) {
+func TestStoreConcurrentSourceDeduplicationAndSessionExclusion(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "tasks"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := testEnqueueInput("account:same", "owner", "project")
+	input := testStartInput("account:same", "owner", "project")
 	var wait sync.WaitGroup
 	ids := make(chan string, 12)
 	errors := make(chan error, 12)
@@ -321,7 +198,7 @@ func TestStoreConcurrentSourceDeduplicationAndQueueLimit(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			task, _, enqueueErr := store.Enqueue(input)
+			task, _, enqueueErr := store.Start(input)
 			if enqueueErr != nil {
 				errors <- enqueueErr
 				return
@@ -342,19 +219,15 @@ func TestStoreConcurrentSourceDeduplicationAndQueueLimit(t *testing.T) {
 	if len(unique) != 1 || len(store.List("owner")) != 1 {
 		t.Fatalf("deduplicated ids=%d tasks=%d", len(unique), len(store.List("owner")))
 	}
-	for index := 1; index < MaxQueuedPerOwner; index++ {
-		mustEnqueue(t, store, testEnqueueInput("account:"+string(rune('a'+index)), "owner", "project"))
+	if _, _, err := store.Start(testStartInput("second", "owner", "project")); err != ErrSessionBusy {
+		t.Fatalf("busy session accepted a second input: %v", err)
 	}
-	if _, _, err := store.Enqueue(testEnqueueInput("account:overflow", "owner", "project")); err == nil {
-		t.Fatal("queue accepted more than the owner limit")
+	other := testStartInput("other-session", "owner", "project")
+	other.ThreadID = "another-thread"
+	if _, _, err := store.Start(other); err != nil {
+		t.Fatalf("independent session blocked: %v", err)
 	}
-	cleared, err := store.ClearQueued("owner")
-	if err != nil || cleared != MaxQueuedPerOwner {
-		t.Fatalf("cleared=%d err=%v", cleared, err)
-	}
-	if status := store.Status("owner"); status.Queued != 0 || status.Cancelled != MaxTerminalPerOwner {
-		t.Fatalf("status after clear = %#v", status)
-	}
+
 }
 
 func TestStoreCleansAbandonedStagingAndOrphanTaskDirectory(t *testing.T) {
@@ -382,13 +255,13 @@ func TestStoreCleansAbandonedStagingAndOrphanTaskDirectory(t *testing.T) {
 	}
 }
 
-func TestStoreRejectsMissingQueuedPayload(t *testing.T) {
+func TestStoreRejectsMissingActivePayload(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
 	store, err := NewStore(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := mustEnqueue(t, store, testEnqueueInput("account:missing", "owner", "project"))
+	task := mustStart(t, store, testStartInput("account:missing", "owner", "project"))
 	if err := os.RemoveAll(filepath.Join(root, task.ID)); err != nil {
 		t.Fatal(err)
 	}
@@ -404,10 +277,7 @@ func TestStoreCleansExpiredPayloadWhileRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := mustEnqueue(t, store, testEnqueueInput("account:old", "owner", "project"))
-	if _, ok, err := store.ClaimNext(nil); err != nil || !ok {
-		t.Fatalf("claim ok=%v err=%v", ok, err)
-	}
+	task := mustStart(t, store, testStartInput("account:old", "owner", "project"))
 	if _, err := store.Finish("owner", task.ID, StateFailed, ReasonCodexFailed); err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +285,7 @@ func TestStoreCleansExpiredPayloadWhileRunning(t *testing.T) {
 	if err := store.CleanupExpired(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, task.ID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, task.ID, "request.json")); !os.IsNotExist(err) {
 		t.Fatalf("expired payload still exists: %v", err)
 	}
 	if _, err := store.LoadRequest("owner", task.ID); err == nil {
@@ -423,32 +293,29 @@ func TestStoreCleansExpiredPayloadWhileRunning(t *testing.T) {
 	}
 }
 
-func TestStoreRetryCreatesNewTaskAndDeleteRemovesTerminalRecord(t *testing.T) {
+func TestStoreRetryCreatesNewTaskAndReleaseRemovesTerminalRecord(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "tasks"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := testEnqueueInput("source:original", "owner", "project")
+	input := testStartInput("source:original", "owner", "project")
 	input.Files = []InputAttachment{{Name: "notes.md", ContentType: "text/plain", Data: []byte("retained")}}
-	original := mustEnqueue(t, store, input)
-	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
-		t.Fatalf("claim original: claimed=%v err=%v", claimed, err)
-	}
+	original := mustStart(t, store, input)
 	if _, err := store.Finish("owner", original.ID, StateFailed, ReasonCodexFailed); err != nil {
 		t.Fatal(err)
 	}
-	retried, err := store.Retry("owner", original.ID, "source:retry", "new-context", false)
+	retried, err := store.Retry("owner", original.ID, "source:retry", "new-context")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retried.ID == original.ID || retried.RetryOf != original.ID || retried.State != StateQueued {
+	if retried.ID == original.ID || retried.RetryOf != original.ID || retried.State != StateRunning {
 		t.Fatalf("retried task = %#v", retried)
 	}
 	loaded, err := store.LoadRequest("owner", retried.ID)
 	if err != nil || loaded.ContextToken != "new-context" || len(loaded.Files) != 1 {
 		t.Fatalf("retried request = %#v err=%v", loaded, err)
 	}
-	if err := store.Delete("owner", original.ID); err != nil {
+	if err := store.Release("owner", original.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := store.Find("owner", original.ID); ok {
@@ -461,10 +328,7 @@ func TestStoreFreezesResultAndPersistsDeliveryReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := mustEnqueue(t, store, testEnqueueInput("source:delivery", "owner", "project"))
-	if _, claimed, err := store.ClaimNext(nil); err != nil || !claimed {
-		t.Fatalf("claim task: claimed=%v err=%v", claimed, err)
-	}
+	task := mustStart(t, store, testStartInput("source:delivery", "owner", "project"))
 	outbox, err := store.PrepareOutbox("owner", task.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -505,17 +369,17 @@ func TestStoreFreezesResultAndPersistsDeliveryReceipt(t *testing.T) {
 	}
 }
 
-func testEnqueueInput(source, owner, project string) EnqueueInput {
-	return EnqueueInput{
+func testStartInput(source, owner, project string) StartInput {
+	return StartInput{
 		SourceMessageKey: source, OwnerID: owner, ProjectID: project,
 		Summary: "测试任务", Text: "执行测试任务",
 		ResponseMode: presentation.ResponseAdaptive, VisualStyle: presentation.StyleEditorial,
 	}
 }
 
-func mustEnqueue(t *testing.T, store *Store, input EnqueueInput) Task {
+func mustStart(t *testing.T, store *Store, input StartInput) Task {
 	t.Helper()
-	task, existed, err := store.Enqueue(input)
+	task, existed, err := store.Start(input)
 	if err != nil || existed {
 		t.Fatalf("enqueue = %#v existed=%v err=%v", task, existed, err)
 	}

@@ -13,7 +13,7 @@ import (
 	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
 )
 
-func (store *Store) stagePayloadLocked(input EnqueueInput, taskID string) (Request, int64, error) {
+func (store *Store) stagePayloadLocked(input StartInput, taskID string) (Request, int64, error) {
 	stagingPath, err := os.MkdirTemp(store.root, ".staging-")
 	if err != nil {
 		return Request{}, 0, fmt.Errorf("create task staging directory: %w", err)
@@ -36,11 +36,11 @@ func (store *Store) stagePayloadLocked(input EnqueueInput, taskID string) (Reque
 	}
 
 	request := Request{
-		Version: requestVersion, SourceMessageKey: input.SourceMessageKey,
+		SourceData: input.SourceData, Version: requestVersion, SourceMessageKey: input.SourceMessageKey,
 		Text: input.Text, ContextToken: input.ContextToken,
 		Images: make([]Attachment, 0, len(input.Images)), Files: make([]Attachment, 0, len(input.Files)),
 	}
-	var payloadBytes int64
+	payloadBytes := int64(len(input.Text) + len(input.ContextToken) + len(input.SourceData))
 	for index, attachment := range input.Images {
 		stored, writeErr := writeInputAttachment(inboxPath, "image", index+1, attachment)
 		if writeErr != nil {
@@ -59,13 +59,6 @@ func (store *Store) stagePayloadLocked(input EnqueueInput, taskID string) (Reque
 	}
 	if err := writeJSONSync(filepath.Join(stagingPath, "request.json"), request); err != nil {
 		return Request{}, 0, fmt.Errorf("write task request: %w", err)
-	}
-	// 成功任务只允许复用纯文字原始意图；上下文令牌、附件信息和回答不会进入该副本。
-	if reusablePromptEligible(input) {
-		prompt := reusablePrompt{Version: reusablePromptVersion, Text: strings.TrimSpace(input.Text)}
-		if err := writeJSONSync(filepath.Join(stagingPath, reusablePromptFile), prompt); err != nil {
-			return Request{}, 0, fmt.Errorf("write reusable task prompt: %w", err)
-		}
 	}
 	if err := syncDirectory(inboxPath); err != nil {
 		return Request{}, 0, fmt.Errorf("sync task inbox: %w", err)
@@ -141,10 +134,16 @@ func (store *Store) LoadRequest(ownerID, taskID string) (LoadedRequest, error) {
 	if !ok {
 		return LoadedRequest{}, fmt.Errorf("task not found")
 	}
-	if task.State == StateSucceeded || task.State == StateCancelled || task.PayloadExpiresAt > 0 && store.now().Unix() >= task.PayloadExpiresAt {
+	if !taskHasPayload(task, store.now().Unix()) {
 		return LoadedRequest{}, fmt.Errorf("task payload is unavailable")
 	}
 	requestPath := filepath.Join(store.taskPath(taskID), "request.json")
+	prepared := filepath.Join(store.taskPath(taskID), "prepared.json")
+	if _, err := os.Lstat(prepared); err == nil {
+		requestPath = prepared
+	} else if !os.IsNotExist(err) {
+		return LoadedRequest{}, err
+	}
 	var request Request
 	found, err := statefile.ReadJSON(requestPath, &request, statefile.Options{
 		MaxBytes: 2 << 20,
@@ -156,15 +155,18 @@ func (store *Store) LoadRequest(ownerID, taskID string) (LoadedRequest, error) {
 	if !found {
 		return LoadedRequest{}, fmt.Errorf("task request file is missing")
 	}
-	if request.SourceMessageKey != task.SourceMessageKey || len(request.Images) != task.ImageCount || len(request.Files) != task.FileCount {
+	if !task.InputPending && (len(request.SourceData) > 0 || len(request.Images) != task.ImageCount || len(request.Files) != task.FileCount) {
+		return LoadedRequest{}, fmt.Errorf("prepared input does not match its index")
+	}
+	if request.SourceMessageKey != task.SourceMessageKey {
 		return LoadedRequest{}, fmt.Errorf("task request does not match its index")
 	}
 	loaded := LoadedRequest{
-		SourceMessageKey: request.SourceMessageKey,
-		Text:             request.Text, ContextToken: request.ContextToken,
+		SourceData: request.SourceData, SourceMessageKey: request.SourceMessageKey,
+		Text: request.Text, ContextToken: request.ContextToken,
 		Images: make([]LoadedAttachment, 0, len(request.Images)), Files: make([]LoadedAttachment, 0, len(request.Files)),
 	}
-	var total int64
+	total := int64(len(request.Text) + len(request.ContextToken) + len(request.SourceData))
 	for _, attachment := range request.Images {
 		resolved, resolveErr := store.verifyAttachment(taskID, attachment)
 		if resolveErr != nil {
@@ -181,7 +183,10 @@ func (store *Store) LoadRequest(ownerID, taskID string) (LoadedRequest, error) {
 		loaded.Files = append(loaded.Files, LoadedAttachment{Attachment: attachment, AbsolutePath: resolved})
 		total += attachment.Size
 	}
-	if total != task.PayloadBytes {
+	if len(request.SourceData) > 0 {
+		total += MaxTaskBytes
+	}
+	if total > task.PayloadBytes {
 		return LoadedRequest{}, fmt.Errorf("task payload size does not match its index")
 	}
 	return loaded, nil

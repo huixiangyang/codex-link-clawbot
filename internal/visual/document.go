@@ -74,7 +74,7 @@ func PaginateMarkdown(markdown string) []Document {
 		}
 		footer := ""
 		if lastPage {
-			footer = "回复“文字版”获取可复制原文"
+			footer = "回复 0，再选 5 查看结果原文"
 		}
 		documents = append(documents, Document{
 			Title: title, Blocks: page, PageNumber: index + 1, TotalPages: len(pages),

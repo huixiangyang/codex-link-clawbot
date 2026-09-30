@@ -23,7 +23,7 @@ func TestPendingNoticeStorePersistsDeduplicatesAndCompletes(t *testing.T) {
 	}
 	input := delivery.NoticeInput{
 		Kind: delivery.NoticeTaskRecovery, DedupKey: "task:daily:slot", ReferenceID: "daily",
-		Title: "结果待取回", Body: "打开请求队列", TTL: 24 * time.Hour,
+		Title: "结果待取回", Body: "打开执行记录", TTL: 24 * time.Hour,
 	}
 	first, duplicate, err := store.Enqueue("owner", input)
 	if err != nil || duplicate || first.ID == "" {
@@ -87,7 +87,7 @@ func TestPendingNoticeDefiniteRejectionRemainsDeferred(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := store.Enqueue("owner", delivery.NoticeInput{
-		Kind: delivery.NoticeTaskRecovery, DedupKey: "task:one", Title: "结果待取回", Body: "打开请求队列", TTL: time.Hour,
+		Kind: delivery.NoticeTaskRecovery, DedupKey: "task:one", Title: "结果待取回", Body: "打开执行记录", TTL: time.Hour,
 	}); err != nil {
 		t.Fatal(err)
 	}

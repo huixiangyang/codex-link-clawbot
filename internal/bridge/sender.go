@@ -55,12 +55,14 @@ func SendTypingState(ctx context.Context, client *ilink.Client, userID, contextT
 // SendTextReply sends a text reply to a user through the iLink API.
 // If clientID is empty, a new one is generated.
 func SendTextReply(ctx context.Context, client *ilink.Client, toUserID, text, contextToken, clientID string) error {
+	return sendPlainTextReply(ctx, client, toUserID, MarkdownToPlainText(text), contextToken, clientID)
+}
+
+// sendPlainTextReply 用于已经排版的数字菜单与文字分页，避免二次 Markdown 转换损坏内容。
+func sendPlainTextReply(ctx context.Context, client *ilink.Client, toUserID, plainText, contextToken, clientID string) error {
 	if clientID == "" {
 		clientID = NewClientID()
 	}
-
-	// Convert markdown to plain text for WeChat display
-	plainText := MarkdownToPlainText(text)
 
 	req := &ilink.SendMessageRequest{
 		Msg: ilink.SendMsg{

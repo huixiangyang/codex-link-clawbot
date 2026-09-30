@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/delivery"
 	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 	"github.com/huixiangyang/codex-link-clawbot/internal/request"
 )
@@ -21,7 +20,7 @@ func TestDeliveryReportDistinguishesExplicitFailureAndAmbiguousPartialDelivery(t
 	explicitClient := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot", ILinkUserID: "owner", BaseURL: explicitServer.URL})
 	message := ilink.WeixinMessage{FromUserID: "owner", ContextToken: "context"}
 	report := handler.deliverReplyPlan(
-		context.Background(), explicitClient, message, "回答", nil, nil, nil, "client-explicit", delivery.Source{},
+		context.Background(), explicitClient, message, "回答", nil, nil, nil, "client-explicit",
 		presentation.ResponseAdaptive, presentation.StyleEditorial, "Project",
 	)
 	if report.Outcome != request.DeliveryExplicitFailure || report.TextSent || report.MediaSent != 0 {
@@ -34,7 +33,7 @@ func TestDeliveryReportDistinguishesExplicitFailureAndAmbiguousPartialDelivery(t
 	defer successServer.Close()
 	successClient := ilink.NewClient(&ilink.Credentials{BotToken: "token", ILinkBotID: "bot", ILinkUserID: "owner", BaseURL: successServer.URL})
 	report = handler.deliverReplyPlan(
-		context.Background(), successClient, message, "回答", nil, nil, []string{"http://127.0.0.1:1/unavailable.png"}, "client-partial", delivery.Source{},
+		context.Background(), successClient, message, "回答", nil, nil, []string{"http://127.0.0.1:1/unavailable.png"}, "client-partial",
 		presentation.ResponseAdaptive, presentation.StyleEditorial, "Project",
 	)
 	if report.Outcome != request.DeliveryAmbiguous || !report.TextSent || report.Failure != request.ReasonDeliveryAmbiguous {

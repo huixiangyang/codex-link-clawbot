@@ -127,7 +127,7 @@ func TestMigrateStateRejectsPreRenameConfigurations(t *testing.T) {
 
 func TestMigrateStateAcceptsCurrentConfigurationV7(t *testing.T) {
 	root := t.TempDir()
-	current := `{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[],"reply":{},"security":{},"management":{"listen":"127.0.0.1:18120"}}}`
+	current := `{"schema_version":7,"codex":{"command":"codex"},"codex-link-clawbot":{"project_entries":[{"id":"workspace","name":"Workspace","root":"/srv/workspace"}],"reply":{},"security":{},"management":{"listen":"127.0.0.1:18120"}}}`
 	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte(current), 0o640); err != nil {
 		t.Fatal(err)
@@ -194,12 +194,8 @@ func TestMigrateStateResetsLegacyDeliveryRecords(t *testing.T) {
 	if err := migrateState(root); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"version": 3`) || !strings.Contains(string(data), `"owners": {}`) || strings.Contains(string(data), `"id": "file"`) {
-		t.Fatalf("migrated delivery library = %s", data)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retired library still exists: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "deliveries")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy delivery archive still exists: %v", err)

@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -71,20 +72,6 @@ type UsageProvider interface {
 	RateLimits() (RateLimits, bool)
 }
 
-type AccountInfo struct {
-	Type               string `json:"type"`
-	Email              string `json:"email"`
-	PlanType           string `json:"planType"`
-	CredentialSource   string `json:"credentialSource"`
-	RequiresOpenAIAuth bool   `json:"requiresOpenaiAuth"`
-}
-
-// GlobalControlClient 暴露不依赖某个目标线程的 App Server 控制信息。
-type GlobalControlClient interface {
-	ListLoadedThreadIDs(context.Context) ([]string, error)
-	ReadAccount(context.Context) (AccountInfo, error)
-}
-
 // LocalFile 是微信文件落盘后的受控本机引用。
 // Codex 只能把它当作不可信数据读取，不能直接执行其中的内容。
 type LocalFile struct {
@@ -103,7 +90,7 @@ type ChatRequest struct {
 	ArtifactDir string
 	// WorkspaceRoot 是本轮唯一受信任的执行根目录；调用方必须显式传递，客户端不保存共享目录状态。
 	WorkspaceRoot string
-	// Model 与 Effort 是当前线程的 Codex 执行设置，由微信控制面显式选择。
+	// Model 与 Effort 是当前线程的 Codex 执行设置，由运行配置显式指定。
 	Model  string
 	Effort string
 }
@@ -131,7 +118,7 @@ func (r ChatRequest) PromptText() string {
 			"[codex-link-clawbot 交付物回传]",
 			"如果需要把报告、补丁、压缩包、图片或其他文件发送回微信，请只把最终交付文件写入下面的专属目录：",
 			artifactDir,
-			"该目录内的受支持常规文件会在本次任务结束后自动发送；不要把缓存、依赖或临时文件写入该目录。",
+			"该目录内的受支持常规文件会在本次任务结束后保存，用户可从结果菜单取回；不要把缓存、依赖或临时文件写入该目录。",
 		}, "\n"))
 	}
 	return strings.Join(sections, "\n\n")
@@ -185,86 +172,6 @@ type ThreadPage struct {
 	NextCursor string
 }
 
-// ThreadGoal 对应 Codex 的持久线程目标，不在 codex-link-clawbot 中另造用户概念。
-type ThreadGoal struct {
-	ThreadID        string `json:"threadId"`
-	Objective       string `json:"objective"`
-	Status          string `json:"status"`
-	TokenBudget     *int64 `json:"tokenBudget"`
-	TokensUsed      int64  `json:"tokensUsed"`
-	TimeUsedSeconds int64  `json:"timeUsedSeconds"`
-	CreatedAt       int64  `json:"createdAt"`
-	UpdatedAt       int64  `json:"updatedAt"`
-}
-
-type ReasoningEffort struct {
-	Effort      string `json:"reasoningEffort"`
-	Description string `json:"description"`
-}
-
-type ModelInfo struct {
-	ID                        string            `json:"id"`
-	Model                     string            `json:"model"`
-	DisplayName               string            `json:"displayName"`
-	DefaultReasoningEffort    string            `json:"defaultReasoningEffort"`
-	SupportedReasoningEfforts []ReasoningEffort `json:"supportedReasoningEfforts"`
-	InputModalities           []string          `json:"inputModalities"`
-	SupportsPersonality       bool              `json:"supportsPersonality"`
-	IsDefault                 bool              `json:"isDefault"`
-}
-
-type SkillInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	Interface   struct {
-		DisplayName string `json:"displayName"`
-	} `json:"interface"`
-}
-
-type ProjectCapabilities struct {
-	Skills      []SkillInfo
-	SkillErrors []string
-	MCPServers  int
-	MCPReady    int
-}
-
-type ReviewTarget struct {
-	Type         string `json:"type"`
-	BaseBranch   string `json:"branch,omitempty"`
-	SHA          string `json:"sha,omitempty"`
-	Title        string `json:"title,omitempty"`
-	Instructions string `json:"instructions,omitempty"`
-}
-
-// VerificationKind 是线程历史中可安全呈现的验证类别。
-// 原始命令和终端输出不离开 Codex 客户端边界。
-type VerificationKind string
-
-const (
-	VerificationTest  VerificationKind = "test"
-	VerificationCheck VerificationKind = "check"
-	VerificationBuild VerificationKind = "build"
-)
-
-// ThreadVerificationFacts 是最近一次包含验证命令的线程轮次摘要。
-// Available 表示线程历史读取成功；Total 为零时表示未识别到结构化验证命令。
-type ThreadVerificationFacts struct {
-	Available   bool
-	TurnID      string
-	CompletedAt int64
-	Total       int
-	Passed      int
-	Failed      int
-	Incomplete  int
-	Kinds       []VerificationKind
-}
-
-// ThreadFactClient 读取线程中的结构化验证事实，不返回命令或终端内容。
-type ThreadFactClient interface {
-	ReadThreadVerificationFacts(context.Context, string) (ThreadVerificationFacts, error)
-}
-
 // ThreadClient 暴露 Codex App Server 的显式线程生命周期。
 // 微信消息层必须先完成受信任工作空间校验，再把 threadID 交给这些方法。
 type ThreadClient interface {
@@ -274,33 +181,7 @@ type ThreadClient interface {
 	ListThreads(ctx context.Context, options ThreadListOptions) (ThreadPage, error)
 	SetThreadName(ctx context.Context, threadID, name string) error
 	ArchiveThread(ctx context.Context, threadID string) error
-	UnarchiveThread(ctx context.Context, threadID string) (ThreadInfo, error)
-	UnsubscribeThread(ctx context.Context, threadID string) error
 	ChatThread(ctx context.Context, threadID string, request ChatRequest) (string, error)
-}
-
-// AdvancedThreadClient 是 Codex 线程的高级原生控制面。
-type AdvancedThreadClient interface {
-	ForkThread(ctx context.Context, threadID string) (ThreadInfo, error)
-	SetThreadPinned(ctx context.Context, threadID string, pinned bool) (ThreadInfo, error)
-	CompactThread(ctx context.Context, threadID string) error
-	DeleteThread(ctx context.Context, threadID string) error
-	SetThreadGoal(ctx context.Context, threadID, objective string, tokenBudget *int64) (ThreadGoal, error)
-	GetThreadGoal(ctx context.Context, threadID string) (ThreadGoal, bool, error)
-	ClearThreadGoal(ctx context.Context, threadID string) error
-	SteerThread(ctx context.Context, threadID string, request ChatRequest) error
-	ReviewThread(ctx context.Context, threadID, workspaceRoot string, target ReviewTarget, onPhase TurnPhaseHandler) (string, error)
-}
-
-// GoalStatusClient 暴露 /goal pause 与 /goal resume 使用的原生目标状态更新。
-type GoalStatusClient interface {
-	UpdateThreadGoalStatus(ctx context.Context, threadID, status string) (ThreadGoal, error)
-}
-
-// CapabilityClient 用于构建 Codex 原生模型选择器与项目能力面板。
-type CapabilityClient interface {
-	ListModels(ctx context.Context) ([]ModelInfo, error)
-	InspectProject(ctx context.Context, cwd string) (ProjectCapabilities, error)
 }
 
 // TurnProgressClient 是支持结构化轮次阶段的 Codex 客户端。
@@ -322,3 +203,20 @@ func (i RuntimeInfo) String() string {
 	}
 	return s
 }
+
+// SessionControl 只控制明确观察到的原生轮次，不向忙碌会话追加工作。
+type SessionControl interface {
+	ActiveTurn(context.Context, string) (string, error)
+	InterruptTurn(context.Context, string, string) error
+}
+
+var ErrThreadBusy = errors.New("本会话正在执行，本条指令未提交")
+
+// TurnResult 是指定原生轮次的事实，不按当前目标猜测结果。
+type TurnResult struct{ ID, Status, Reply string }
+type TurnReader interface {
+	ReadTurn(context.Context, string, string) (TurnResult, error)
+}
+
+var ErrTurnInterrupted = errors.New("指定轮次已停止")
+var ErrInterruptUnconfirmed = errors.New("尚未确认停止，请刷新会话状态或再次打断")

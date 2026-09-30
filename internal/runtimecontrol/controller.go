@@ -35,7 +35,6 @@ type WeChatStatus struct {
 
 type TaskStatus struct {
 	Running    int `json:"running"`
-	Queued     int `json:"queued"`
 	Delivering int `json:"delivering"`
 }
 
@@ -152,9 +151,9 @@ func (controller *Controller) Snapshot() Snapshot {
 	}
 	lastWeChatSuccess := controller.lastWeChatSuccess
 	controller.mu.Unlock()
-	queue := request.QueueStatus{}
+	activity := request.ExecutionStatus{}
 	if controller.tasks != nil {
-		queue = controller.tasks.QueueStatus()
+		activity = controller.tasks.ExecutionStatus()
 	}
 	uptime := int64(time.Since(startedAt).Seconds())
 	if uptime < 0 {
@@ -181,9 +180,9 @@ func (controller *Controller) Snapshot() Snapshot {
 			Monitors: monitors, Healthy: healthy, PendingBatches: pendingSync,
 			OldestPendingSeconds: oldestPendingSeconds, LastSuccessSecondsAgo: lastSuccessSecondsAgo,
 		},
-		Tasks:         TaskStatus{Running: queue.Running, Queued: queue.Queued, Delivering: queue.Delivering},
+		Tasks:         TaskStatus{Running: activity.Running, Delivering: activity.Delivering},
 		Draining:      draining,
-		DrainComplete: draining && queue.Running == 0 && queue.Delivering == 0 && staging == 0 && pendingSync == 0,
+		DrainComplete: draining && activity.Running == 0 && activity.Delivering == 0 && staging == 0 && pendingSync == 0,
 	}
 }
 

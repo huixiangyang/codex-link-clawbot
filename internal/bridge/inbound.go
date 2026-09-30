@@ -4,16 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+
 	"net/http"
-	"os"
+
 	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/codex"
 	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
 )
 
@@ -46,141 +45,6 @@ var inboundBinaryExtensions = map[string]bool{
 type inboundDownloaders struct {
 	image func(context.Context, *ilink.ImageItem) ([]byte, error)
 	file  func(context.Context, *ilink.FileItem) ([]byte, error)
-}
-
-// prepareCodexInput 为一次 turn 创建私有 inbox/outbox，并把微信媒体整理为本机结构化输入。
-// cleanup 必须在最终回复及附件发送完成后调用。
-func prepareCodexInput(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem, root string) (codex.ChatRequest, func(), error) {
-	return prepareCodexInputWithDownloaders(ctx, text, images, files, root, inboundDownloaders{
-		image: downloadInboundImage,
-		file:  downloadInboundFile,
-	})
-}
-
-func prepareCodexInputWithDownloaders(ctx context.Context, text string, images []*ilink.ImageItem, files []*ilink.FileItem, root string, downloaders inboundDownloaders) (codex.ChatRequest, func(), error) {
-	request := codex.ChatRequest{Text: strings.TrimSpace(text)}
-	cleanup := func() {}
-	if len(images) > maxInboundImages {
-		return request, cleanup, fmt.Errorf("单条消息最多支持 %d 张图片", maxInboundImages)
-	}
-	if len(files) > maxInboundFiles {
-		return request, cleanup, fmt.Errorf("单条消息最多支持 %d 个文件", maxInboundFiles)
-	}
-	if request.Text == "" {
-		switch {
-		case len(images) > 0 && len(files) > 0:
-			request.Text = defaultFilePrompt + "同时结合随附图片中的信息。"
-		case len(images) > 0:
-			request.Text = defaultImagePrompt
-		case len(files) > 0:
-			request.Text = defaultFilePrompt
-		}
-	}
-
-	if root == "" {
-		var err error
-		root, err = turnRoot()
-		if err != nil {
-			return request, cleanup, err
-		}
-	}
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return request, cleanup, fmt.Errorf("解析 turn 临时目录: %w", err)
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return request, cleanup, fmt.Errorf("创建 turn 临时目录: %w", err)
-	}
-	if err := os.Chmod(root, 0o700); err != nil {
-		return request, cleanup, fmt.Errorf("收紧 turn 临时目录权限: %w", err)
-	}
-	taskDir, err := os.MkdirTemp(root, "turn-")
-	if err != nil {
-		return request, cleanup, fmt.Errorf("创建请求目录：%w", err)
-	}
-	cleanup = func() {
-		if err := os.RemoveAll(taskDir); err != nil {
-			log.Printf("[turn] failed to clean private turn directory %s: %v", taskDir, err)
-		}
-	}
-	inboxDir := filepath.Join(taskDir, "inbox")
-	artifactDir := filepath.Join(taskDir, "outbox")
-	for _, dir := range []string{inboxDir, artifactDir} {
-		if err := os.Mkdir(dir, 0o700); err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("创建 turn 子目录: %w", err)
-		}
-	}
-	request.ArtifactDir = artifactDir
-
-	var totalBytes int64
-	for index, image := range images {
-		data, err := downloaders.image(ctx, image)
-		if err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("接收第 %d 张图片: %w", index+1, err)
-		}
-		totalBytes += int64(len(data))
-		if totalBytes > maxInboundTotalBytes {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("单条消息的附件总大小超过 100 MiB")
-		}
-		ext, err := validatedImageExtension(data)
-		if err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 张图片: %w", index+1, err)
-		}
-		path := filepath.Join(inboxDir, fmt.Sprintf("image-%02d%s", index+1, ext))
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("保存第 %d 张图片: %w", index+1, err)
-		}
-		request.LocalImages = append(request.LocalImages, path)
-	}
-
-	for index, file := range files {
-		if err := validateInboundFileMetadata(file); err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 个文件: %w", index+1, err)
-		}
-		data, err := downloaders.file(ctx, file)
-		if err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("接收第 %d 个文件: %w", index+1, err)
-		}
-		totalBytes += int64(len(data))
-		if totalBytes > maxInboundTotalBytes {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("单条消息的附件总大小超过 100 MiB")
-		}
-		name, contentType, err := validateInboundFile(file.FileName, data)
-		if err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("校验第 %d 个文件: %w", index+1, err)
-		}
-		path := filepath.Join(inboxDir, fmt.Sprintf("file-%02d-%s", index+1, name))
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			cleanup()
-			return codex.ChatRequest{}, func() {}, fmt.Errorf("保存第 %d 个文件: %w", index+1, err)
-		}
-		request.LocalFiles = append(request.LocalFiles, codex.LocalFile{
-			Path:        path,
-			Name:        name,
-			ContentType: contentType,
-			Size:        int64(len(data)),
-		})
-	}
-
-	log.Printf("[turn] prepared images=%d files=%d in %s", len(request.LocalImages), len(request.LocalFiles), taskDir)
-	return request, cleanup, nil
-}
-
-func turnRoot() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("获取用户目录: %w", err)
-	}
-	return filepath.Join(home, ".codex-link-clawbot", "turns"), nil
 }
 
 func downloadInboundImage(ctx context.Context, image *ilink.ImageItem) ([]byte, error) {

@@ -15,11 +15,12 @@ import (
 )
 
 type Store struct {
-	mu        sync.RWMutex
-	root      string
-	indexPath string
-	state     indexFile
-	now       func() time.Time
+	mu              sync.RWMutex
+	root            string
+	indexPath       string
+	state           indexFile
+	now             func() time.Time
+	resultSummaries sync.Map // 只缓存列表所需回执，不缓存回答正文或文件内容。
 }
 
 func NewStore(root string) (*Store, error) {
@@ -33,16 +34,16 @@ func newStore(root string, now func() time.Time) (*Store, error) {
 	if strings.TrimSpace(root) == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("resolve task queue root: %w", err)
+			return nil, fmt.Errorf("resolve request root: %w", err)
 		}
 		root = filepath.Join(home, ".codex-link-clawbot", "tasks")
 	}
 	root = filepath.Clean(root)
 	if !filepath.IsAbs(root) {
-		return nil, fmt.Errorf("task queue root must be an absolute path")
+		return nil, fmt.Errorf("request root must be an absolute path")
 	}
 	if err := statefile.EnsurePrivateDirectory(root); err != nil {
-		return nil, fmt.Errorf("protect task queue root: %w", err)
+		return nil, fmt.Errorf("protect request root: %w", err)
 	}
 	store := &Store{
 		root: root, indexPath: filepath.Join(root, "index.json"),
@@ -53,11 +54,11 @@ func newStore(root string, now func() time.Time) (*Store, error) {
 		Validate: func() error { return validateIndex(store.state) },
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load task queue index: %w", err)
+		return nil, fmt.Errorf("load request index (旧格式请运行 migrate-business): %w", err)
 	}
 	if !found {
 		if err := store.saveLocked(); err != nil {
-			return nil, fmt.Errorf("initialize task queue index: %w", err)
+			return nil, fmt.Errorf("initialize request index: %w", err)
 		}
 	}
 	changed, err := store.recoverLocked()
@@ -66,7 +67,7 @@ func newStore(root string, now func() time.Time) (*Store, error) {
 	}
 	if changed {
 		if err := store.saveLocked(); err != nil {
-			return nil, fmt.Errorf("persist recovered task queue: %w", err)
+			return nil, fmt.Errorf("persist recovered request: %w", err)
 		}
 	}
 	return store, nil
@@ -76,14 +77,14 @@ func (store *Store) Root() string {
 	return store.root
 }
 
-func (store *Store) Enqueue(input EnqueueInput) (Task, bool, error) {
+func (store *Store) Start(input StartInput) (Task, bool, error) {
 	input.SourceMessageKey = strings.TrimSpace(input.SourceMessageKey)
 	input.OwnerID = strings.TrimSpace(input.OwnerID)
 	input.ProjectID = strings.TrimSpace(input.ProjectID)
 	input.ThreadID = strings.TrimSpace(input.ThreadID)
 	input.Summary = strings.TrimSpace(input.Summary)
 	input.RetryOf = strings.TrimSpace(input.RetryOf)
-	if err := validateEnqueueInput(input); err != nil {
+	if err := validateStartInput(input); err != nil {
 		return Task{}, false, err
 	}
 
@@ -95,13 +96,34 @@ func (store *Store) Enqueue(input EnqueueInput) (Task, bool, error) {
 	if existing, exists := store.findBySourceLocked(input.SourceMessageKey); exists {
 		return existing, true, nil
 	}
+	if _, cleared := store.state.Cleared[input.SourceMessageKey]; cleared {
+		return Task{}, false, ErrCleared
+	}
 	owner := store.state.Owners[input.OwnerID]
-	if countState(owner.Tasks, StateQueued) >= MaxQueuedPerOwner {
-		return Task{}, false, fmt.Errorf("task queue already contains %d waiting tasks", MaxQueuedPerOwner)
+	if len(owner.Tasks) >= MaxRecordsPerOwner {
+		return Task{}, false, fmt.Errorf("%w：记录达到 %d 条上限", ErrCapacity, MaxRecordsPerOwner)
+	}
+	if _, rejected := store.state.Rejected[input.SourceMessageKey]; rejected {
+		return Task{}, false, ErrRejected
+	}
+	for _, records := range store.state.Owners {
+		for _, running := range records.Tasks {
+			if !running.State.Terminal() && SessionKey(running.OwnerID, running.TargetID, running.ThreadID) == SessionKey(input.OwnerID, input.TargetID, input.ThreadID) {
+				receipt := Rejection{Source: input.SourceMessageKey, OwnerID: input.OwnerID,
+					TargetID: input.TargetID, ThreadID: running.ThreadID, TaskID: running.ID}
+				if err := store.rejectLocked(receipt); err != nil {
+					return Task{}, false, err
+				}
+				return Task{}, false, ErrSessionBusy
+			}
+		}
+	}
+	if store.resultBytesLocked()+maxResultReservation > MaxResultStoreBytes {
+		return Task{}, false, fmt.Errorf("%w：结果可用空间不足，请先清理历史结果或等待当前执行结束", ErrCapacity)
 	}
 	payloadBytes := inputPayloadBytes(input)
-	if store.payloadBytesLocked()+payloadBytes > MaxQueueBytes {
-		return Task{}, false, fmt.Errorf("task queue attachment storage exceeds %d bytes", MaxQueueBytes)
+	if store.payloadBytesLocked()+payloadBytes > MaxInputStoreBytes {
+		return Task{}, false, fmt.Errorf("%w：输入存储达到 %d MiB 上限", ErrCapacity, MaxInputStoreBytes/(1<<20))
 	}
 	taskID, err := newTaskID()
 	if err != nil {
@@ -115,13 +137,16 @@ func (store *Store) Enqueue(input EnqueueInput) (Task, bool, error) {
 		now = 1
 	}
 	task := Task{
+		InputPending: len(input.SourceData) > 0, TargetID: input.TargetID,
 		ID: taskID, SourceMessageKey: input.SourceMessageKey,
 		OwnerID: input.OwnerID, ProjectID: input.ProjectID, ThreadID: input.ThreadID,
-		Summary: input.Summary, State: StateQueued, Stage: "等待执行",
-		AwaitingAcknowledgement: input.RequireAcknowledgement,
-		ResponseMode:            input.ResponseMode, VisualStyle: input.VisualStyle,
-		Order: store.state.NextOrder, CreatedAt: now, RetryOf: input.RetryOf,
+		Summary: input.Summary, State: StateRunning, Stage: "准备执行",
+		ResponseMode: input.ResponseMode, VisualStyle: input.VisualStyle,
+		Order: store.state.NextOrder, CreatedAt: now, StartedAt: now, RetryOf: input.RetryOf,
 		ImageCount: len(input.Images), FileCount: len(input.Files), PayloadBytes: payloadBytes,
+	}
+	if task.InputPending {
+		task.Stage = "正在接收附件，可打断"
 	}
 	previousOwner, ownerExisted := store.state.Owners[input.OwnerID]
 	previousNextOrder := store.state.NextOrder
@@ -137,7 +162,7 @@ func (store *Store) Enqueue(input EnqueueInput) (Task, bool, error) {
 		store.state.NextOrder = previousNextOrder
 		_ = os.RemoveAll(store.taskPath(taskID))
 		_ = syncDirectory(store.root)
-		return Task{}, false, fmt.Errorf("persist queued task: %w", err)
+		return Task{}, false, fmt.Errorf("persist active request: %w", err)
 	}
 	return task, false, nil
 }
@@ -167,11 +192,9 @@ func (store *Store) Status(ownerID string) OwnerStatus {
 	store.mu.RLock()
 	owner := store.state.Owners[strings.TrimSpace(ownerID)]
 	store.mu.RUnlock()
-	status := OwnerStatus{Paused: owner.Paused}
+	status := OwnerStatus{}
 	for _, task := range owner.Tasks {
 		switch task.State {
-		case StateQueued:
-			status.Queued++
 		case StateRunning:
 			status.Running++
 		case StateDelivering:
@@ -189,26 +212,13 @@ func (store *Store) Status(ownerID string) OwnerStatus {
 	return status
 }
 
-func (store *Store) Owners() []string {
-	store.mu.RLock()
-	owners := make([]string, 0, len(store.state.Owners))
-	for ownerID := range store.state.Owners {
-		owners = append(owners, ownerID)
-	}
-	store.mu.RUnlock()
-	sort.Strings(owners)
-	return owners
-}
-
-func (store *Store) QueueStatus() QueueStatus {
+func (store *Store) ExecutionStatus() ExecutionStatus {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
-	var status QueueStatus
+	var status ExecutionStatus
 	for _, owner := range store.state.Owners {
 		for _, task := range owner.Tasks {
 			switch task.State {
-			case StateQueued:
-				status.Queued++
 			case StateRunning:
 				status.Running++
 			case StateDelivering:
@@ -217,31 +227,6 @@ func (store *Store) QueueStatus() QueueStatus {
 		}
 	}
 	return status
-}
-
-func (store *Store) QueuePosition(ownerID, taskID string) (int, bool) {
-	store.mu.RLock()
-	var queued []Task
-	for _, owner := range store.state.Owners {
-		for _, task := range owner.Tasks {
-			if task.State == StateQueued {
-				queued = append(queued, task)
-			}
-		}
-	}
-	store.mu.RUnlock()
-	sort.SliceStable(queued, func(left, right int) bool {
-		if queued[left].Order == queued[right].Order {
-			return queued[left].ID < queued[right].ID
-		}
-		return queued[left].Order < queued[right].Order
-	})
-	for index, task := range queued {
-		if task.OwnerID == strings.TrimSpace(ownerID) && task.ID == strings.TrimSpace(taskID) {
-			return index + 1, true
-		}
-	}
-	return 0, false
 }
 
 func (store *Store) TotalPayloadBytes() int64 {
@@ -298,14 +283,14 @@ func (store *Store) payloadBytesLocked() int64 {
 }
 
 func taskHasPayload(task Task, now int64) bool {
-	if task.State == StateSucceeded || task.State == StateCancelled {
-		return false
-	}
-	return task.PayloadExpiresAt == 0 || now < task.PayloadExpiresAt
+	return !task.State.Terminal() || task.PayloadExpiresAt > now
 }
 
-func inputPayloadBytes(input EnqueueInput) int64 {
-	var total int64
+func inputPayloadBytes(input StartInput) int64 {
+	total := int64(len(input.Text) + len(input.ContextToken) + len(input.SourceData))
+	if len(input.SourceData) > 0 {
+		total += MaxTaskBytes
+	}
 	for _, attachment := range input.Images {
 		total += int64(len(attachment.Data))
 	}
@@ -313,16 +298,6 @@ func inputPayloadBytes(input EnqueueInput) int64 {
 		total += int64(len(attachment.Data))
 	}
 	return total
-}
-
-func countState(tasks []Task, state State) int {
-	count := 0
-	for _, task := range tasks {
-		if task.State == state {
-			count++
-		}
-	}
-	return count
 }
 
 func newTaskID() (string, error) {
@@ -333,22 +308,20 @@ func newTaskID() (string, error) {
 	return "task-" + hex.EncodeToString(random), nil
 }
 
+// 活动会话并列展示，按创建顺序稳定排序；历史按结束时间倒序。
 func sortTasksForDisplay(tasks []Task) {
 	sort.SliceStable(tasks, func(left, right int) bool {
-		leftActive := !tasks[left].State.Terminal()
-		rightActive := !tasks[right].State.Terminal()
-		if leftActive != rightActive {
-			return leftActive
+		a, b := tasks[left], tasks[right]
+		activeA, activeB := !a.State.Terminal(), !b.State.Terminal()
+		if activeA != activeB {
+			return activeA
 		}
-		if leftActive {
-			if tasks[left].State == StateRunning || tasks[left].State == StateDelivering {
-				return true
-			}
-			if tasks[right].State == StateRunning || tasks[right].State == StateDelivering {
-				return false
-			}
-			return tasks[left].Order < tasks[right].Order
+		if activeA {
+			return a.Order < b.Order
 		}
-		return tasks[left].FinishedAt > tasks[right].FinishedAt
+		if a.FinishedAt != b.FinishedAt {
+			return a.FinishedAt > b.FinishedAt
+		}
+		return a.Order > b.Order
 	})
 }

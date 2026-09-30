@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"github.com/huixiangyang/codex-link-clawbot/internal/request"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +64,7 @@ func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	handler := newBareHandler(capture)
 	attachTestSessionManager(t, handler)
 	handler.progress = execution.ProgressConfig{Enabled: false}
-	store, stop := attachTestTaskQueue(t, handler, client, "user-1")
+	store, stop := attachTestExecution(t, handler, client, "user-1")
 	defer stop()
 
 	if err := handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
@@ -83,18 +84,18 @@ func TestHandleMessagePassesWechatFileToAgent(t *testing.T) {
 	if string(capture.data) != string(fileData) {
 		t.Fatalf("agent file data = %q", capture.data)
 	}
-	if _, err := os.Stat(capture.request.LocalFiles[0].Path); !os.IsNotExist(err) {
-		t.Fatalf("inbound file was not cleaned after turn: %v", err)
+	if _, err := os.Stat(capture.request.LocalFiles[0].Path); err != nil {
+		t.Fatalf("inbound file was not retained after turn: %v", err)
 	}
 	sentMu.Lock()
 	defer sentMu.Unlock()
 	if len(sent) != 2 {
-		t.Fatalf("sent messages = %d, want queue confirmation and final reply", len(sent))
+		t.Fatalf("sent messages = %d, want execution receipt and final reply", len(sent))
 	}
-	if item := sent[0].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "请求已接收") {
-		t.Fatalf("first message is not queue confirmation: %#v", item)
+	if item := sent[0].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "已开始处理") {
+		t.Fatalf("first message is not execution receipt: %#v", item)
 	}
-	if item := sent[1].Msg.ItemList[0]; item.TextItem == nil || item.TextItem.Text != "文件检查完成" {
+	if item := sent[1].Msg.ItemList[0]; item.TextItem == nil || !strings.HasSuffix(item.TextItem.Text, "文件检查完成") {
 		t.Fatalf("second message is not final reply: %#v", item)
 	}
 }
@@ -113,7 +114,7 @@ func (a *artifactAgent) ChatThread(_ context.Context, _ string, request codex.Ch
 	return "补丁已经生成。", nil
 }
 
-func TestHandleMessageAutomaticallyReturnsTurnArtifacts(t *testing.T) {
+func TestCompletedArtifactsAreRetrievedOnDemand(t *testing.T) {
 	var mu sync.Mutex
 	var sent []ilink.SendMessageRequest
 	var encryptedUpload []byte
@@ -146,7 +147,7 @@ func TestHandleMessageAutomaticallyReturnsTurnArtifacts(t *testing.T) {
 	handler := newBareHandler(ag)
 	attachTestSessionManager(t, handler)
 	handler.progress = execution.ProgressConfig{Enabled: false}
-	store, stop := attachTestTaskQueue(t, handler, client, "user-1")
+	store, stop := attachTestExecution(t, handler, client, "user-1")
 	defer stop()
 	if err := handler.HandleMessage(context.Background(), client, ilink.WeixinMessage{
 		MessageID: 3, FromUserID: "user-1", MessageType: ilink.MessageTypeUser,
@@ -155,23 +156,37 @@ func TestHandleMessageAutomaticallyReturnsTurnArtifacts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	waitForTerminalTask(t, store, "user-1")
+	task := waitForTerminalTask(t, store, "user-1")
+	mu.Lock()
+	if len(encryptedUpload) != 0 || len(sent) != 2 {
+		t.Fatalf("completion should send receipt and short notice only: uploads=%d messages=%d", len(encryptedUpload), len(sent))
+	}
+	sent = nil
+	mu.Unlock()
+	result, err := store.LoadResult("user-1", task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := handler.sendReplyWithMediaForTask(context.Background(), client, ilink.WeixinMessage{FromUserID: "user-1", ContextToken: "fresh"}, task, result, NewClientID())
+	if report.Outcome != request.DeliverySucceeded {
+		t.Fatalf("explicit retrieval: %#v", report)
+	}
 
 	if len(encryptedUpload) == 0 {
 		t.Fatal("artifact was not uploaded")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(sent) != 3 {
-		t.Fatalf("sent messages = %d, want queue confirmation, file and text", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("sent messages = %d, want explicitly requested file and text", len(sent))
 	}
-	if item := sent[1].Msg.ItemList[0]; item.FileItem == nil || item.FileItem.FileName != "changes.patch" {
+	if item := sent[0].Msg.ItemList[0]; item.FileItem == nil || item.FileItem.FileName != "changes.patch" {
 		t.Fatalf("second message is not patch attachment: %#v", item)
 	}
-	if item := sent[2].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "已发送附件：changes.patch") {
+	if item := sent[1].Msg.ItemList[0]; item.TextItem == nil || !strings.Contains(item.TextItem.Text, "已发送附件：changes.patch") {
 		t.Fatalf("third message missing artifact summary: %#v", item)
 	}
-	if _, err := os.Stat(ag.artifactDir); !os.IsNotExist(err) {
-		t.Fatalf("artifact directory was not cleaned: %v", err)
+	if _, err := os.Stat(ag.artifactDir); err != nil {
+		t.Fatalf("artifact directory was not retained: %v", err)
 	}
 }

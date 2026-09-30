@@ -9,15 +9,15 @@ const (
 )
 
 type ResponseModeDefinition struct {
-	ID          ResponseMode
-	Name        string
-	Description string
+	ID          ResponseMode `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
 }
 
 var responseModeDefinitions = []ResponseModeDefinition{
-	{ID: ResponseAdaptive, Name: "自适应", Description: "短答文字，长答阅读卡"},
+	{ID: ResponseAdaptive, Name: "简洁通知", Description: "短答直接读，长答与文件按数字取回"},
 	{ID: ResponseReading, Name: "阅读", Description: "所有回答优先阅读卡"},
-	{ID: ResponseVoice, Name: "语音", Description: "阅读卡与 MP3 配套交付"},
+	{ID: ResponseVoice, Name: "语音", Description: "MP3 朗读，长回答读节选，全文按需取回"},
 }
 
 func ResponseModes() []ResponseModeDefinition {

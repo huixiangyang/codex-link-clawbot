@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -418,180 +419,11 @@ func (a *Client) ListThreads(ctx context.Context, options codex.ThreadListOption
 	return page, nil
 }
 
-func (a *Client) ListLoadedThreadIDs(ctx context.Context) ([]string, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return nil, err
-	}
-	result, err := a.rpc(ctx, "thread/loaded/list", nil)
-	if err != nil {
-		return nil, err
-	}
-	var response struct {
-		Data []string `json:"data"`
-	}
-	if err := json.Unmarshal(result, &response); err != nil {
-		return nil, fmt.Errorf("parse thread/loaded/list result: %w", err)
-	}
-	return append([]string(nil), response.Data...), nil
-}
-
-func (a *Client) ReadAccount(ctx context.Context) (codex.AccountInfo, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.AccountInfo{}, err
-	}
-	result, err := a.rpc(ctx, "account/read", map[string]bool{"refreshToken": false})
-	if err != nil {
-		return codex.AccountInfo{}, err
-	}
-	var response struct {
-		Account            *codex.AccountInfo `json:"account"`
-		RequiresOpenAIAuth bool               `json:"requiresOpenaiAuth"`
-	}
-	if err := json.Unmarshal(result, &response); err != nil {
-		return codex.AccountInfo{}, fmt.Errorf("parse account/read result: %w", err)
-	}
-	if response.Account == nil {
-		return codex.AccountInfo{RequiresOpenAIAuth: response.RequiresOpenAIAuth}, nil
-	}
-	account := *response.Account
-	account.RequiresOpenAIAuth = response.RequiresOpenAIAuth
-	return account, nil
-}
-
 func (a *Client) SetThreadName(ctx context.Context, threadID, name string) error {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return err
 	}
 	_, err := a.rpc(ctx, "thread/name/set", map[string]string{"threadId": threadID, "name": name})
-	return err
-}
-
-// ForkThread 使用 Client 原生历史分叉，生成新的持久线程。
-func (a *Client) ForkThread(ctx context.Context, threadID string) (codex.ThreadInfo, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	result, err := a.rpc(ctx, "thread/fork", map[string]string{"threadId": threadID})
-	if err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	thread, instructions, err := decodeOpenedThread(result, "thread/fork")
-	if err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	a.mu.Lock()
-	if a.instructions == nil {
-		a.instructions = make(map[string][]string)
-	}
-	a.loadedThreads[thread.ID] = true
-	a.threadStatus[thread.ID] = thread.Status
-	a.instructions[thread.ID] = append([]string(nil), instructions...)
-	a.mu.Unlock()
-	thread.InstructionSources = instructions
-	return thread, nil
-}
-
-func (a *Client) SetThreadPinned(ctx context.Context, threadID string, pinned bool) (codex.ThreadInfo, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	result, err := a.rpc(ctx, "thread/metadata/update", map[string]interface{}{
-		"threadId": threadID,
-		"isPinned": pinned,
-	})
-	if err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	return decodeCodexThread(result, "thread/metadata/update")
-}
-
-func (a *Client) CompactThread(ctx context.Context, threadID string) error {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return err
-	}
-	_, err := a.rpc(ctx, "thread/compact/start", map[string]string{"threadId": threadID})
-	return err
-}
-
-func (a *Client) DeleteThread(ctx context.Context, threadID string) error {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return err
-	}
-	_, err := a.rpc(ctx, "thread/delete", map[string]string{"threadId": threadID})
-	if err == nil {
-		a.mu.Lock()
-		delete(a.loadedThreads, threadID)
-		delete(a.threadStatus, threadID)
-		delete(a.threadUsage, threadID)
-		delete(a.activeTurns, threadID)
-		delete(a.instructions, threadID)
-		a.mu.Unlock()
-	}
-	return err
-}
-
-func (a *Client) SetThreadGoal(ctx context.Context, threadID, objective string, tokenBudget *int64) (codex.ThreadGoal, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ThreadGoal{}, err
-	}
-	params := map[string]interface{}{
-		"threadId":  threadID,
-		"objective": strings.TrimSpace(objective),
-		"status":    "active",
-	}
-	if tokenBudget != nil {
-		params["tokenBudget"] = *tokenBudget
-	}
-	result, err := a.rpc(ctx, "thread/goal/set", params)
-	if err != nil {
-		return codex.ThreadGoal{}, err
-	}
-	return decodeThreadGoal(result, "thread/goal/set")
-}
-
-func (a *Client) UpdateThreadGoalStatus(ctx context.Context, threadID, status string) (codex.ThreadGoal, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ThreadGoal{}, err
-	}
-	status = strings.TrimSpace(status)
-	if status != "active" && status != "paused" {
-		return codex.ThreadGoal{}, fmt.Errorf("unsupported thread goal status %q", status)
-	}
-	result, err := a.rpc(ctx, "thread/goal/set", map[string]interface{}{
-		"threadId": threadID,
-		"status":   status,
-	})
-	if err != nil {
-		return codex.ThreadGoal{}, err
-	}
-	return decodeThreadGoal(result, "thread/goal/set")
-}
-
-func (a *Client) GetThreadGoal(ctx context.Context, threadID string) (codex.ThreadGoal, bool, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ThreadGoal{}, false, err
-	}
-	result, err := a.rpc(ctx, "thread/goal/get", map[string]string{"threadId": threadID})
-	if err != nil {
-		return codex.ThreadGoal{}, false, err
-	}
-	var response struct {
-		Goal *codex.ThreadGoal `json:"goal"`
-	}
-	if err := json.Unmarshal(result, &response); err != nil {
-		return codex.ThreadGoal{}, false, fmt.Errorf("parse thread/goal/get result: %w", err)
-	}
-	if response.Goal == nil {
-		return codex.ThreadGoal{}, false, nil
-	}
-	return *response.Goal, true, nil
-}
-
-func (a *Client) ClearThreadGoal(ctx context.Context, threadID string) error {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return err
-	}
-	_, err := a.rpc(ctx, "thread/goal/clear", map[string]string{"threadId": threadID})
 	return err
 }
 
@@ -604,30 +436,6 @@ func (a *Client) ArchiveThread(ctx context.Context, threadID string) error {
 		a.mu.Lock()
 		delete(a.loadedThreads, threadID)
 		delete(a.threadStatus, threadID)
-		a.mu.Unlock()
-	}
-	return err
-}
-
-func (a *Client) UnarchiveThread(ctx context.Context, threadID string) (codex.ThreadInfo, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	result, err := a.rpc(ctx, "thread/unarchive", map[string]string{"threadId": threadID})
-	if err != nil {
-		return codex.ThreadInfo{}, err
-	}
-	return decodeCodexThread(result, "thread/unarchive")
-}
-
-func (a *Client) UnsubscribeThread(ctx context.Context, threadID string) error {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return err
-	}
-	_, err := a.rpc(ctx, "thread/unsubscribe", map[string]string{"threadId": threadID})
-	if err == nil {
-		a.mu.Lock()
-		delete(a.loadedThreads, threadID)
 		a.mu.Unlock()
 	}
 	return err
@@ -679,89 +487,6 @@ func decodeOpenedThread(result json.RawMessage, method string) (codex.ThreadInfo
 	return response.Thread, response.InstructionSources, nil
 }
 
-func decodeThreadGoal(result json.RawMessage, method string) (codex.ThreadGoal, error) {
-	var response struct {
-		Goal codex.ThreadGoal `json:"goal"`
-	}
-	if err := json.Unmarshal(result, &response); err != nil {
-		return codex.ThreadGoal{}, fmt.Errorf("parse %s result: %w", method, err)
-	}
-	if response.Goal.ThreadID == "" {
-		return codex.ThreadGoal{}, fmt.Errorf("%s returned empty goal", method)
-	}
-	return response.Goal, nil
-}
-
-func (a *Client) ListModels(ctx context.Context) ([]codex.ModelInfo, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return nil, err
-	}
-	result, err := a.rpc(ctx, "model/list", map[string]interface{}{"limit": 100, "includeHidden": false})
-	if err != nil {
-		return nil, err
-	}
-	var response struct {
-		Data []codex.ModelInfo `json:"data"`
-	}
-	if err := json.Unmarshal(result, &response); err != nil {
-		return nil, fmt.Errorf("parse model/list result: %w", err)
-	}
-	return response.Data, nil
-}
-
-// InspectProject 只读取 Client 已发现的技能与外部工具摘要，不执行工具或修改配置。
-func (a *Client) InspectProject(ctx context.Context, cwd string) (codex.ProjectCapabilities, error) {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return codex.ProjectCapabilities{}, err
-	}
-	result, err := a.rpc(ctx, "skills/list", map[string]interface{}{"cwds": []string{cwd}, "forceReload": false})
-	if err != nil {
-		return codex.ProjectCapabilities{}, err
-	}
-	var skillResponse struct {
-		Data []struct {
-			Skills []codex.SkillInfo `json:"skills"`
-			Errors []struct {
-				Message string `json:"message"`
-			} `json:"errors"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(result, &skillResponse); err != nil {
-		return codex.ProjectCapabilities{}, fmt.Errorf("parse skills/list result: %w", err)
-	}
-	capabilities := codex.ProjectCapabilities{}
-	for _, group := range skillResponse.Data {
-		capabilities.Skills = append(capabilities.Skills, group.Skills...)
-		for _, skillErr := range group.Errors {
-			if message := strings.TrimSpace(skillErr.Message); message != "" {
-				capabilities.SkillErrors = append(capabilities.SkillErrors, message)
-			}
-		}
-	}
-	// 外部工具状态属于进程级摘要；读取失败不应遮蔽已经成功取得的项目技能。
-	mcpResult, mcpErr := a.rpc(ctx, "mcpServerStatus/list", map[string]interface{}{
-		"limit":  100,
-		"detail": "toolsAndAuthOnly",
-	})
-	if mcpErr == nil {
-		var mcpResponse struct {
-			Data []struct {
-				AuthStatus string `json:"authStatus"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(mcpResult, &mcpResponse) == nil {
-			capabilities.MCPServers = len(mcpResponse.Data)
-			for _, server := range mcpResponse.Data {
-				// notLoggedIn 表示连接存在但尚不能使用；其他协议值均表示当前无需再登录。
-				if server.AuthStatus != "notLoggedIn" {
-					capabilities.MCPReady++
-				}
-			}
-		}
-	}
-	return capabilities, nil
-}
-
 func (a *Client) ensureThreadLoaded(ctx context.Context, threadID, workspaceRoot string) error {
 	a.mu.Lock()
 	loaded := a.loadedThreads[threadID]
@@ -781,6 +506,13 @@ func (a *Client) chatTurn(ctx context.Context, threadID string, request codex.Ch
 		return "", fmt.Errorf("resume thread: %w", err)
 	}
 
+	a.mu.Lock()
+	busy := a.threadStatus[threadID].Type == "active"
+	a.mu.Unlock()
+	if busy {
+		return "", codex.ErrThreadBusy
+	}
+
 	pid := 0
 	a.mu.Lock()
 	if a.cmd != nil && a.cmd.Process != nil {
@@ -791,10 +523,13 @@ func (a *Client) chatTurn(ctx context.Context, threadID string, request codex.Ch
 	log.Printf("[codex] using explicit thread (pid=%d, thread=%s)", pid, threadID)
 
 	turnCh, release := a.registerTurnChannel(threadID)
+	if turnCh == nil {
+		return "", codex.ErrThreadBusy
+	}
 	defer release()
 
 	// 轮次启动会立即返回轮次 ID；取消时必须携带它调用中断接口。
-	// 短暂脱离队列取消信号，确保即使用户立刻取消也能拿到轮次 ID 后完成中断。
+	// 短暂脱离用户取消信号，确保即使用户立刻取消也能拿到轮次 ID 后完成中断。
 	input := codexInput(request)
 	if len(input) == 0 {
 		return "", fmt.Errorf("turn input is empty")
@@ -866,6 +601,10 @@ func codexInput(request codex.ChatRequest) []codexUserInput {
 func (a *Client) registerTurnChannel(threadID string) (chan *codexTurnEvent, func()) {
 	turnCh := make(chan *codexTurnEvent, 256)
 	a.notifyMu.Lock()
+	if a.turnCh[threadID] != nil {
+		a.notifyMu.Unlock()
+		return nil, func() {}
+	}
 	a.turnCh[threadID] = turnCh
 	a.notifyMu.Unlock()
 	return turnCh, func() {
@@ -899,17 +638,35 @@ func (a *Client) collectTurn(ctx context.Context, threadID, turnID string, turnC
 		messageOrder = append(messageOrder, itemID)
 		return state
 	}
+	startedReported := false
 	report := func(event codex.TurnPhaseEvent) {
+		if event.Phase == codex.TurnPhaseStarted {
+			if startedReported {
+				return
+			}
+			startedReported = true
+		}
 		if onPhase != nil {
 			onPhase(event)
 		}
 	}
 
+	// turn/start 的响应即确定本轮编号，无需等待可能缺失的 started 通知。
+	report(codex.TurnPhaseEvent{TurnID: turnID, Phase: codex.TurnPhaseStarted})
 	for {
 		select {
 		case <-ctx.Done():
-			a.interruptCodexTurn(threadID, turnID)
-			return "", ctx.Err()
+			outcome, err := a.interruptCodexTurn(threadID, turnID)
+			if err != nil {
+				return "", err
+			}
+			if outcome.Status == "completed" {
+				return outcome.Reply, nil
+			}
+			if outcome.Status == "interrupted" {
+				return "", errors.Join(codex.ErrTurnInterrupted, context.Canceled)
+			}
+			return "", fmt.Errorf("codex turn failed")
 		case evt := <-turnCh:
 			// 同一线程可能被其他 Client 客户端继续使用；只消费本次显式轮次的事件。
 			if evt == nil || evt.TurnID != turnID {
@@ -960,7 +717,7 @@ func (a *Client) collectTurn(ctx context.Context, threadID, turnID string, turnC
 					return "", fmt.Errorf("codex turn failed: %s", evt.Text)
 				}
 				if terminal == codex.TurnPhaseInterrupted {
-					return "", fmt.Errorf("codex turn interrupted")
+					return "", codex.ErrTurnInterrupted
 				}
 				if terminal != codex.TurnPhaseCompleted {
 					return "", fmt.Errorf("codex returned invalid terminal turn status %q", terminal)
@@ -988,93 +745,108 @@ func (a *Client) collectTurn(ctx context.Context, threadID, turnID string, turnC
 	}
 }
 
-// SteerThread 把新输入追加到当前进行中的轮次；没有活动轮次时明确失败。
-func (a *Client) SteerThread(ctx context.Context, threadID string, request codex.ChatRequest) error {
-	if err := a.ensureCodexReady(ctx); err != nil {
-		return err
-	}
-	a.mu.Lock()
-	turnID := a.activeTurns[threadID]
-	a.mu.Unlock()
-	if turnID == "" {
-		return fmt.Errorf("thread has no active turn")
-	}
-	input := codexInput(request)
-	if len(input) == 0 {
-		return fmt.Errorf("turn steer input is empty")
-	}
-	result, err := a.rpc(ctx, "turn/steer", map[string]interface{}{
-		"threadId":       threadID,
-		"expectedTurnId": turnID,
-		"input":          input,
-	})
-	if err != nil {
-		return err
-	}
-	var response struct {
-		TurnID string `json:"turnId"`
-	}
-	if err := json.Unmarshal(result, &response); err != nil || response.TurnID != turnID {
-		return fmt.Errorf("turn/steer returned an unexpected turn id")
-	}
-	return nil
-}
-
-// ReviewThread 使用 Client 原生审查器审查当前线程对应项目，并等待审查结论。
-func (a *Client) ReviewThread(ctx context.Context, threadID, workspaceRoot string, target codex.ReviewTarget, onPhase codex.TurnPhaseHandler) (string, error) {
+// ActiveTurn 读取原生轮次 ID，供实时状态和精确打断使用。
+func (a *Client) ActiveTurn(ctx context.Context, threadID string) (string, error) {
 	if err := a.ensureCodexReady(ctx); err != nil {
 		return "", err
 	}
-	if err := a.ensureThreadLoaded(ctx, threadID, workspaceRoot); err != nil {
-		return "", fmt.Errorf("resume thread: %w", err)
-	}
-	turnCh, release := a.registerTurnChannel(threadID)
-	defer release()
-	result, err := a.rpc(ctx, "review/start", map[string]interface{}{
-		"threadId": threadID,
-		"delivery": "inline",
-		"target":   target,
-	})
+	result, err := a.rpc(ctx, "thread/read", map[string]interface{}{"threadId": threadID, "includeTurns": true})
 	if err != nil {
 		return "", err
 	}
 	var response struct {
-		Turn struct {
-			ID string `json:"id"`
-		} `json:"turn"`
+		Thread struct {
+			Turns []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"turns"`
+		} `json:"thread"`
 	}
-	if err := json.Unmarshal(result, &response); err != nil || response.Turn.ID == "" {
-		return "", fmt.Errorf("review/start returned an invalid turn")
+	if err := json.Unmarshal(result, &response); err != nil {
+		return "", err
 	}
-	a.mu.Lock()
-	if a.activeTurns == nil {
-		a.activeTurns = make(map[string]string)
-	}
-	a.activeTurns[threadID] = response.Turn.ID
-	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		if a.activeTurns[threadID] == response.Turn.ID {
-			delete(a.activeTurns, threadID)
+	for _, turn := range response.Thread.Turns {
+		if turn.Status == "inProgress" {
+			return turn.ID, nil
 		}
-		a.mu.Unlock()
-	}()
-	return a.collectTurn(ctx, threadID, response.Turn.ID, turnCh, onPhase)
+	}
+	return "", nil
 }
 
-func (a *Client) interruptCodexTurn(threadID, turnID string) {
-	interruptCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (a *Client) InterruptTurn(ctx context.Context, threadID, turnID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-
-	_, err := a.rpc(interruptCtx, "turn/interrupt", map[string]string{
-		"threadId": threadID,
-		"turnId":   turnID,
-	})
+	current, err := a.ActiveTurn(ctx, threadID)
 	if err != nil {
-		log.Printf("[codex] failed to interrupt turn (thread=%s, turn=%s): %v", threadID, turnID, err)
-		return
+		return err
 	}
-	log.Printf("[codex] interrupted turn (thread=%s, turn=%s)", threadID, turnID)
+	if current == "" || current != turnID {
+		return fmt.Errorf("这次执行已结束，未打断其他轮次")
+	}
+	_, err = a.interruptAndConfirm(ctx, threadID, turnID)
+	return err
+}
+
+func (a *Client) interruptCodexTurn(threadID, turnID string) (codex.TurnResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	return a.interruptAndConfirm(ctx, threadID, turnID)
+}
+
+// RPC 接受打断不等于轮次已停止，必须再读指定轮次的终态。
+func (a *Client) interruptAndConfirm(ctx context.Context, threadID, turnID string) (codex.TurnResult, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, sendErr := a.rpc(rpcCtx, "turn/interrupt", map[string]string{"threadId": threadID, "turnId": turnID})
+	cancel()
+	for {
+		result, err := a.ReadTurn(ctx, threadID, turnID)
+		if err == nil && (result.Status == "interrupted" || result.Status == "completed" || result.Status == "failed") {
+			return result, nil
+		}
+		if sendErr != nil || err != nil {
+			return result, fmt.Errorf("%w: %v", codex.ErrInterruptUnconfirmed, errors.Join(sendErr, err))
+		}
+		select {
+		case <-ctx.Done():
+			return result, fmt.Errorf("%w: %v", codex.ErrInterruptUnconfirmed, ctx.Err())
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+}
+
+func (a *Client) ReadTurn(ctx context.Context, threadID, turnID string) (codex.TurnResult, error) {
+	raw, err := a.rpc(ctx, "thread/read", map[string]interface{}{"threadId": threadID, "includeTurns": true})
+	if err != nil {
+		return codex.TurnResult{}, err
+	}
+	var response struct {
+		Thread struct {
+			Turns []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+				Items  []struct {
+					Type  string `json:"type"`
+					Phase string `json:"phase"`
+					Text  string `json:"text"`
+				} `json:"items"`
+			} `json:"turns"`
+		} `json:"thread"`
+	}
+	if err = json.Unmarshal(raw, &response); err != nil {
+		return codex.TurnResult{}, err
+	}
+	for _, turn := range response.Thread.Turns {
+		if turn.ID == turnID {
+			var reply []string
+			for _, item := range turn.Items {
+				if item.Type == "agentMessage" && item.Phase != "commentary" {
+					reply = append(reply, item.Text)
+				}
+			}
+			return codex.TurnResult{ID: turn.ID, Status: turn.Status, Reply: strings.Join(reply, "\n\n")}, nil
+		}
+	}
+	return codex.TurnResult{}, fmt.Errorf("指定轮次不可用")
 }
 
 func (a *Client) rpc(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {

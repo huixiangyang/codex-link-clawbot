@@ -307,7 +307,7 @@ func TestSecurityAndVoiceConfigurationIsStrict(t *testing.T) {
 	}
 }
 
-func TestVoiceRequiresVisualDelivery(t *testing.T) {
+func TestVoiceDoesNotRequireVisualDelivery(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Clawbot.Reply.Visual.Enabled = false
 	cfg.Clawbot.Reply.Voice = VoiceConfig{
@@ -319,8 +319,8 @@ func TestVoiceRequiresVisualDelivery(t *testing.T) {
 			},
 		}},
 	}
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "visual.enabled") {
-		t.Fatalf("validation error = %v, want paired visual requirement", err)
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("voice should be independent of reading cards: %v", err)
 	}
 }
 
