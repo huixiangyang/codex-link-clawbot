@@ -3,7 +3,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,23 +12,23 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/access"
-	"github.com/huixiangyang/codex-link-clawbot/internal/bridge"
-	"github.com/huixiangyang/codex-link-clawbot/internal/businessmigration"
-	"github.com/huixiangyang/codex-link-clawbot/internal/codex/appserver"
-	"github.com/huixiangyang/codex-link-clawbot/internal/config"
-	"github.com/huixiangyang/codex-link-clawbot/internal/delivery"
-	"github.com/huixiangyang/codex-link-clawbot/internal/execution"
-	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
-	"github.com/huixiangyang/codex-link-clawbot/internal/management"
-	"github.com/huixiangyang/codex-link-clawbot/internal/preference"
-	"github.com/huixiangyang/codex-link-clawbot/internal/request"
-	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
-	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
-	"github.com/huixiangyang/codex-link-clawbot/internal/target"
-	"github.com/huixiangyang/codex-link-clawbot/internal/thread"
-	"github.com/huixiangyang/codex-link-clawbot/internal/visual"
-	"github.com/huixiangyang/codex-link-clawbot/internal/workspace"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/appserver"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/management"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/wechat"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/wechat/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/wechat/visual"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/wechat/voice"
+	"github.com/huixiangyang/codex-link-clawbot/internal/app/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/access"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/delivery"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/execution"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/preference"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/request"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/target"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/thread"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/workspace"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/storage"
 )
 
 type Options struct {
@@ -47,7 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 			return fmt.Errorf("account owner is missing")
 		}
 	}
-	if err := businessmigration.CheckReady(options.StateRoot); err != nil {
+	if err := storage.CheckReady(options.StateRoot); err != nil {
 		return err
 	}
 	entries := cfg.Clawbot.ProjectEntries
@@ -65,7 +64,14 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	if err != nil {
 		return fmt.Errorf("initialize workspace manager: %w", err)
 	}
-	targets, err := target.Open(filepath.Join(options.StateRoot, "targets.json"), workspaces.List()[0].ID)
+	layout, err := storage.NewLayout(options.StateRoot)
+	if err != nil {
+		return err
+	}
+	if err := layout.CleanupTemporary(); err != nil {
+		return err
+	}
+	targets, err := target.Open(options.StateRoot, workspaces.List()[0].ID)
 	if err != nil {
 		return fmt.Errorf("initialize conversation targets: %w", err)
 	}
@@ -77,13 +83,13 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	}
 	defer codexClient.Stop()
 
-	preferences, err := preference.NewStore(filepath.Join(options.StateRoot, "preferences.json"))
+	preferences, err := preference.NewStore(options.StateRoot)
 	if err != nil {
 		return fmt.Errorf("initialize owner preferences: %w", err)
 	}
-	var visualRenderer bridge.VisualRenderer
+	var visualRenderer wechat.VisualRenderer
 	if replyConfig.Visual.Enabled {
-		renderer, renderErr := visual.NewRenderer(visual.Config{BrowserCommand: replyConfig.Visual.BrowserCommand})
+		renderer, renderErr := visual.NewRenderer(visual.Config{BrowserCommand: replyConfig.Visual.BrowserCommand, RootDir: layout.Temporary("render")})
 		if renderErr != nil {
 			return fmt.Errorf("initialize visual control cards: %w", renderErr)
 		}
@@ -94,11 +100,11 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	if err != nil {
 		return fmt.Errorf("initialize thread manager: %w", err)
 	}
-	requests, err := request.NewStore(filepath.Join(options.StateRoot, "tasks"))
+	requests, err := request.NewStore(options.StateRoot)
 	if err != nil {
 		return fmt.Errorf("initialize execution records: %w", err)
 	}
-	notices, err := delivery.OpenNoticeStore(filepath.Join(options.StateRoot, "pending-notices.json"), time.Now)
+	notices, err := delivery.OpenNoticeStore(options.StateRoot, time.Now)
 	if err != nil {
 		return fmt.Errorf("initialize pending notice store: %w", err)
 	}
@@ -110,7 +116,7 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	runtimeController.SetCodexReady(true)
 	defer runtimeController.SetStopping()
 
-	remoteLock, err := access.NewRemoteLock(filepath.Join(options.StateRoot, "remote-lock.json"), cfg.Clawbot.Security.RemoteLockCode)
+	remoteLock, err := access.NewRemoteLock(options.StateRoot, cfg.Clawbot.Security.RemoteLockCode)
 	if err != nil {
 		return fmt.Errorf("initialize remote lock: %w", err)
 	}
@@ -118,12 +124,12 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	if managementURL == "" {
 		managementURL = "http://" + cfg.Clawbot.Management.Listen
 	}
-	bridgeRuntime, err := bridge.NewRuntime(bridge.Dependencies{
+	wechatRuntime, err := wechat.NewRuntime(wechat.Dependencies{
 		Targets:    targets,
 		Codex:      codexClient,
 		Workspaces: workspaces, Threads: threads, Visual: visualRenderer, Preferences: preferences,
 		Requests: requests, Lifecycle: runtimeController, PendingNotices: notices,
-		RemoteLock: remoteLock, Voice: buildVoice(replyConfig), ManagementURL: managementURL,
+		RemoteLock: remoteLock, Voice: buildVoice(replyConfig, layout.Temporary("voice")), ManagementURL: managementURL,
 		VisualReplyEnabled: replyConfig.Visual.LongReplies, VisualReplyMinRunes: replyConfig.Visual.LongReplyMinRunes,
 		Progress: execution.ProgressConfig{
 			Enabled:           replyConfig.Progress.Enabled,
@@ -134,25 +140,25 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	if err != nil {
 		return fmt.Errorf("initialize message bridge: %w", err)
 	}
-	handler := bridgeRuntime.Handler
-	coordinator := bridgeRuntime.Coordinator
+	handler := wechatRuntime.Handler
+	coordinator := wechatRuntime.Coordinator
 	drainer.coordinator = coordinator
 	if options.Draining {
 		runtimeController.Drain()
 	}
 
 	for _, credentials := range accounts {
-		bridgeRuntime.RegisterClient(ilink.NewClient(credentials))
+		wechatRuntime.RegisterClient(ilink.NewClient(credentials))
 	}
 	consoleToken, err := management.EnsureConsoleToken(options.StateRoot)
 	if err != nil {
 		return fmt.Errorf("initialize management console token: %w", err)
 	}
 	consoleServer, err := management.NewConsoleServer(cfg.Clawbot.Management.Listen, consoleToken, management.ConsoleDependencies{
-		Targets: targets, Recovery: bridgeRuntime, VisualEnabled: replyConfig.Visual.Enabled, VoiceEnabled: replyConfig.Voice.Enabled,
+		Targets: targets, Recovery: wechatRuntime, Conversations: wechatRuntime.Conversations, VisualEnabled: replyConfig.Visual.Enabled, VoiceEnabled: replyConfig.Voice.Enabled,
 		Runtime: runtimeController, Workspaces: workspaces, Threads: threads, Requests: requests,
 		Preferences: preferences, RemoteLock: remoteLock, Codex: codexClient,
-		Execution: coordinator, OwnerID: accounts[0].ILinkUserID, PublicURL: cfg.Clawbot.Management.PublicURL,
+		OwnerID: accounts[0].ILinkUserID, PublicURL: cfg.Clawbot.Management.PublicURL,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize management console: %w", err)
@@ -160,7 +166,6 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	managementServer := management.NewManagementServer(
 		runtimeController,
 		filepath.Join(options.StateRoot, management.ManagementSocketName),
-		deploymentNotifier(accounts, notices),
 	)
 	services := newServiceGroup(ctx)
 	defer services.Stop()
@@ -182,7 +187,6 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	}
 	log.Printf("Management console listening on %s", cfg.Clawbot.Management.Listen)
 
-	statefile.ClearLastFailure()
 	services.Go("request coordinator", coordinator.Run)
 	services.Go("retention cleanup", func(ctx context.Context) error {
 		ticker := time.NewTicker(time.Minute)
@@ -192,7 +196,7 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-ticker.C:
-				bridgeRuntime.ExpireMessageContexts()
+				wechatRuntime.ExpireMessageContexts()
 				if err := requests.CleanupExpired(); err != nil {
 					return fmt.Errorf("清理到期请求数据: %w", err)
 				}
@@ -206,70 +210,47 @@ func Run(ctx context.Context, cfg *config.Config, accounts []*ilink.Credentials,
 	}
 	runtimeController.SetReady()
 	services.Go("message monitors", func(ctx context.Context) error {
-		<-runMonitors(ctx, accounts, handler, probes, &messageHold)
+		<-runMonitors(ctx, options.StateRoot, accounts, handler, probes, &messageHold)
 		return ctx.Err()
 	})
 	return services.Wait()
 }
 
-func buildVoice(reply config.ReplyConfig) *bridge.VoiceBriefing {
+func buildVoice(reply config.ReplyConfig, temporaryRoot string) *voice.Briefing {
 	if !reply.Voice.Enabled {
 		return nil
 	}
-	providers := make([]bridge.VoiceProviderEntry, 0, len(reply.Voice.Providers))
+	providers := make([]voice.Entry, 0, len(reply.Voice.Providers))
 	providerIDs := make([]string, 0, len(reply.Voice.Providers))
 	for _, providerConfig := range reply.Voice.Providers {
-		var provider bridge.VoiceProvider
+		var provider voice.Provider
 		switch providerConfig.Type {
 		case "piper":
-			provider = bridge.NewPiperVoiceProvider(providerConfig.ID, bridge.PiperVoiceProviderConfig{
-				Command: providerConfig.Piper.Command, Model: providerConfig.Piper.Model,
+			provider = voice.NewPiper(providerConfig.ID, voice.PiperConfig{
+				TemporaryRoot: temporaryRoot,
+				Command:       providerConfig.Piper.Command, Model: providerConfig.Piper.Model,
 				ModelConfig: providerConfig.Piper.ModelConfig, LengthScale: providerConfig.Piper.LengthScale,
 			})
 		case "mimo":
-			provider = bridge.NewMiMoVoiceProvider(providerConfig.ID, bridge.MiMoVoiceProviderConfig{
+			provider = voice.NewMiMo(providerConfig.ID, voice.MiMoConfig{
 				BaseURL: providerConfig.MiMo.BaseURL, APIKey: providerConfig.MiMo.APIKey, Model: providerConfig.MiMo.Model,
 				Voice: providerConfig.MiMo.Voice, StylePrompt: providerConfig.MiMo.StylePrompt,
 			})
 		}
-		providers = append(providers, bridge.VoiceProviderEntry{Provider: provider, Timeout: time.Duration(providerConfig.TimeoutSeconds) * time.Second})
+		providers = append(providers, voice.Entry{Provider: provider, Timeout: time.Duration(providerConfig.TimeoutSeconds) * time.Second})
 		providerIDs = append(providerIDs, providerConfig.ID)
 	}
 	log.Printf("Voice briefing enabled (providers=%s, delivery=mp3-file)", strings.Join(providerIDs, ","))
-	return bridge.NewVoiceBriefing(reply.Voice.FFmpegCommand, providers)
+	return voice.NewBriefing(reply.Voice.FFmpegCommand, providers)
 }
 
-func deploymentNotifier(accounts []*ilink.Credentials, notices *delivery.NoticeStore) management.DeploymentNotifier {
-	return func(_ context.Context, notice management.DeploymentNotice) (management.DeploymentNotificationResult, error) {
-		message := fmt.Sprintf("codex-link-clawbot 已完成部署并恢复服务。\n版本：%s → %s\n服务：%s\n状态：已就绪", notice.FromVersion, notice.ToVersion, notice.Service)
-		var failures []error
-		for _, credentials := range accounts {
-			ownerID := strings.TrimSpace(credentials.ILinkUserID)
-			if ownerID == "" {
-				failures = append(failures, fmt.Errorf("account owner is missing"))
-				continue
-			}
-			if _, _, err := notices.Enqueue(ownerID, delivery.NoticeInput{
-				Kind: delivery.NoticeDeployment, DedupKey: "deployment:" + notice.ToVersion + ":" + notice.Service,
-				Title: "codex-link-clawbot 部署完成", Body: message, TTL: 7 * 24 * time.Hour,
-			}); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		if err := errors.Join(failures...); err != nil {
-			return management.DeploymentNotificationResult{}, err
-		}
-		return management.DeploymentNotificationResult{Status: management.DeploymentNotificationDeferred}, nil
-	}
-}
-
-func runMonitors(ctx context.Context, accounts []*ilink.Credentials, handler *bridge.Handler, probes []ilink.MonitorObserver, messageHold *atomic.Bool) <-chan struct{} {
+func runMonitors(ctx context.Context, root string, accounts []*ilink.Credentials, handler *wechat.Handler, probes []ilink.MonitorObserver, messageHold *atomic.Bool) <-chan struct{} {
 	var waitGroup sync.WaitGroup
 	for index, credentials := range accounts {
 		waitGroup.Add(1)
 		go func(account *ilink.Credentials, observer ilink.MonitorObserver) {
 			defer waitGroup.Done()
-			runMonitorWithRestart(ctx, account, handler, observer, messageHold)
+			runMonitorWithRestart(ctx, root, account, handler, observer, messageHold)
 		}(credentials, probes[index])
 	}
 	done := make(chan struct{})
@@ -280,13 +261,13 @@ func runMonitors(ctx context.Context, accounts []*ilink.Credentials, handler *br
 	return done
 }
 
-func runMonitorWithRestart(ctx context.Context, credentials *ilink.Credentials, handler *bridge.Handler, observer ilink.MonitorObserver, messageHold *atomic.Bool) {
+func runMonitorWithRestart(ctx context.Context, root string, credentials *ilink.Credentials, handler *wechat.Handler, observer ilink.MonitorObserver, messageHold *atomic.Bool) {
 	const maxRestartDelay = 30 * time.Second
 	restartDelay := 3 * time.Second
 	for {
 		log.Printf("[%s] Starting monitor...", ilink.LogLabel(credentials.ILinkBotID))
 		client := ilink.NewClient(credentials)
-		monitor, err := ilink.NewMonitor(client, handler.HandleMessage, observer)
+		monitor, err := ilink.NewMonitor(root, client, handler.HandleMessage, observer)
 		if err != nil {
 			log.Printf("[%s] Failed to create monitor: %v", ilink.LogLabel(credentials.ILinkBotID), err)
 		} else {

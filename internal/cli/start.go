@@ -2,18 +2,20 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	qrterminal "github.com/mdp/qrterminal/v3"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/wechat/ilink"
 	"github.com/huixiangyang/codex-link-clawbot/internal/app"
-	"github.com/huixiangyang/codex-link-clawbot/internal/config"
-	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
-	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
-
+	"github.com/huixiangyang/codex-link-clawbot/internal/app/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/logging"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/statefile"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +33,7 @@ var startCmd = &cobra.Command{
 	RunE:  runStart,
 }
 
-func runStart(_ *cobra.Command, _ []string) error {
+func runStart(_ *cobra.Command, _ []string) (runErr error) {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	stateRoot, err := statefile.DefaultRoot()
@@ -47,6 +49,26 @@ func runStart(_ *cobra.Command, _ []string) error {
 			log.Printf("release runtime state lease: %v", closeErr)
 		}
 	}()
+	writer, err := logging.Open(stateRoot, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("initialize service log: %w", err)
+	}
+	previousOutput, previousFlags, previousPrefix := log.Writer(), log.Flags(), log.Prefix()
+	log.SetOutput(writer)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
+	log.SetPrefix(fmt.Sprintf("[pid=%d] ", os.Getpid()))
+	defer func() {
+		if runErr != nil {
+			log.Printf("[service] stopped with error: %v", runErr)
+		} else {
+			log.Print("[service] stopped")
+		}
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+		runErr = writer.SanitizeError(errors.Join(runErr, writer.Close()))
+	}()
+	log.Printf("[service] starting version=%s", Version)
 
 	accounts, err := ilink.LoadAllCredentials()
 	if err != nil {
@@ -60,6 +82,9 @@ func runStart(_ *cobra.Command, _ []string) error {
 		}
 		accounts = append(accounts, credentials)
 	}
+	for _, account := range accounts {
+		writer.Protect(account.BotToken)
+	}
 	account, err := ilink.ActiveBinding(stateRoot, accounts)
 	if err != nil {
 		return err
@@ -69,7 +94,29 @@ func runStart(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
+	writer.Protect(cfg.Clawbot.Security.RemoteLockCode)
+	for _, provider := range cfg.Clawbot.Reply.Voice.Providers {
+		if provider.MiMo != nil {
+			writer.Protect(provider.MiMo.APIKey)
+		}
+	}
+	for key, value := range cfg.Codex.Env {
+		if sensitiveEnvironmentKey(key) {
+			writer.Protect(value)
+		}
+	}
+	for _, item := range os.Environ() {
+		key, value, _ := strings.Cut(item, "=")
+		if sensitiveEnvironmentKey(key) {
+			writer.Protect(value)
+		}
+	}
 	return app.Run(ctx, cfg, accounts, app.Options{Version: Version, StateRoot: stateRoot, Draining: startDrainingFlag})
+}
+
+func sensitiveEnvironmentKey(key string) bool {
+	key = strings.ToUpper(key)
+	return strings.Contains(key, "TOKEN") || strings.Contains(key, "KEY") || strings.Contains(key, "SECRET") || strings.Contains(key, "PASSWORD")
 }
 
 // doLogin 运行交互式二维码登录，只负责 CLI 输入输出。

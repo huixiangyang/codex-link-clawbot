@@ -30,15 +30,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package: ./internal/config
+          - package: ./internal/app/config
             target: FuzzDecodeConfig
-          - package: ./internal/ilink
+          - package: ./internal/adapters/wechat/ilink
             target: FuzzDecodeGetUpdatesResponse
-          - package: ./internal/bridge
+          - package: ./internal/adapters/wechat
             target: FuzzValidateInboundFile
-          - package: ./internal/bridge
+          - package: ./internal/adapters/wechat
             target: FuzzValidatedImageExtension
-          - package: ./internal/codex/appserver
+          - package: ./internal/adapters/appserver
             target: FuzzCodexEventDecoders
     steps:
       - uses: actions/checkout@v4
@@ -54,11 +54,7 @@ jobs:
   build:
     needs: [quality, fuzz-smoke]
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        goarch: [amd64, arm64]
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -76,16 +72,14 @@ jobs:
       - name: Build Linux binary
         env:
           CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
         run: |
           go build -trimpath \
             -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${{ steps.version.outputs.version }}" \
-            -o codex-link-clawbot_linux_${GOARCH} ./cmd/codex-link-clawbot
+            -o codex-link-clawbot ./cmd/codex-link-clawbot
 
       - uses: actions/upload-artifact@v4
         with:
-          name: codex-link-clawbot_linux_${{ matrix.goarch }}
-          path: codex-link-clawbot_linux_${{ matrix.goarch }}
+          name: codex-link-clawbot
+          path: codex-link-clawbot
           if-no-files-found: error
           retention-days: 7

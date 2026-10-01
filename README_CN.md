@@ -1,124 +1,62 @@
 # codex-link-clawbot
 
-把个人微信连接到 Codex，用单个数字在手机上管理会话、请求和结果。
+个人自托管的 Codex 远程工作台，通过微信继续本机会话、提交附件、查看进度和取回成果。
 
-它是个人自托管的 Codex 远程工作台：接收绑定者的微信文字、图片和文件；把请求可靠送入当前 Codex 工作空间与线程；把结果和交付物发回微信。微信提供适合小屏的数字菜单；Web 提供搜索、详细管理和运行维护。
+微信承担日常输入与手机操作，网页提供搜索、请求详情、文件下载和异常恢复，本机 CLI 负责配置与运维。
 
-> 本项目不是微信官方项目，也不隶属于腾讯或 OpenAI。微信接入参考公开 iLink 实现，仅用于个人学习和自托管使用。
+[English](README.md) · [文档导航](docs/README.md)
 
-> 本项目基于 [WeClaw](https://github.com/fastclaw-ai/weclaw) 改造，保留 MIT 许可证、原始版权声明和 Git 历史。详细来源见[上游关系](docs/architecture/upstream.md)。
+## 核心规则
 
-[English](README.md) · [完整文档](docs/README.md)
+- 一个实例只启用一个明确选定的微信绑定，工作空间由本机配置。
+- 每条请求固定接收时的目标；同一会话忙碌则拒绝新工作，没有等待队列。
+- 执行、结果保存和微信投递分别记录。发送失败不推翻执行成功，重投不重新调用 Codex。
+- 配置、凭据和业务元数据统一存入 SQLite，附件保留为私有文件，诊断日志使用轮转文本文件。
 
-## 产品边界
+不提供团队权限、任务审批、定时调度、网页工作提交或任意远程 Shell 入口。
 
-| 入口 | 能力 |
+## 从源码启动
+
+需要 Go 1.25+，以及已安装、完成认证的 `codex`。在本仓库执行：
+
+```bash
+go build -o codex-link-clawbot ./cmd/codex-link-clawbot
+./codex-link-clawbot config set visual.enabled false
+./codex-link-clawbot login
+./codex-link-clawbot start
+```
+
+这组最小命令关闭图片渲染，使用文字菜单与默认目录 `~/.codex-link-clawbot/workspace`。另开终端运行 `./codex-link-clawbot console` 获取管理地址和私有令牌。处理真实项目之前，先按[首次使用](docs/guides/getting-started.md)配置工作空间。
+
+已有 JSON 状态的实例必须先完成[离线迁移](docs/operations/migration.md)，不能直接套用首次安装步骤。配置字段和可选的阅读图、语音能力见[配置指南](docs/guides/configuration.md)。
+
+## 微信操作
+
+| 输入 | 行为 |
 | --- | --- |
-| 微信 | `0` / `菜单` 打开数字菜单；新建与切换对话、工作空间、会话状态、结果和回复设置均可用数字操作；普通内容作为 Codex 请求 |
-| 管理台 | 工作空间切换、会话搜索/分页/新建/选择/改名/归档、请求与结果中心、显式恢复、能力偏好、进程排空/恢复、远程锁定 |
-| 本机 CLI | 登录、单绑定选择、启动、状态、离线迁移、部署、读取管理台入口 |
+| 普通文字，包含裸数字 | 提交工作；有附件草稿时补充说明 |
+| `#` 或 `/` | 打开菜单，用 `#1` 至 `#6` 选择 |
+| `草稿` / `提交` / `丢弃草稿` | 查看、显式提交或清空附件草稿 |
+| `停止` / `取消` | 请求打断当前观察到的执行 |
+| `全文 编号` / `文件 编号` | 阅读已保存文字或取回文件 |
+| `继续会话 编号` | 选择结果所属的原会话 |
 
-数字菜单使用新的单键分页交互，不兼容旧多位数字编号、自然语言控制意图或旧菜单状态文件。完整边界见[能力边界](docs/guides/capability-boundary.md)。
+附件不自动执行。新用户默认完整文字，阅读图和 MP3 为可选输出方式。菜单、结果保留和异常恢复的完整规则见[工作台指南](docs/guides/workbench.md)。
 
-## 工作链路
+## 安全与维护
 
-```text
-绑定者微信
-  → iLink 私聊校验与附件检查
-  → 按会话即时准入（忙碌则拒绝）
-  → Codex App Server
-  → 冻结最终结果与交付物
-  → 微信文字 / 阅读图 / 文件 / MP3
+当前 Codex 执行使用免审批和完整宿主访问权限。工作空间白名单约束会话选择，不是文件系统沙箱；请使用专用系统账号并只绑定可信使用者。网页管理端口只允许回环监听，远程访问须经过 HTTPS 反向代理，并继续使用管理令牌。上线前阅读[安全模型](docs/architecture/management-security.md)。
 
-浏览器
-  → 管理令牌
-  → 127.0.0.1:18120 管理 API
-  → 线程 / 工作空间 / 实时会话管理 / 设置
-```
-
-普通输入会在确认前完整落盘；执行使用接收时固定的工作空间、线程和回复偏好。Codex App Server 不可用时进程直接失败，不回退到其他模型或协议。
-
-## 快速开始
-
-要求 Go 1.25+、已安装并登录的 `codex`。视觉回复启用时还需要可用的非 Snap Chromium。
-
-```bash
-go install github.com/huixiangyang/codex-link-clawbot/cmd/codex-link-clawbot@main
-codex-link-clawbot login
-codex-link-clawbot start
-```
-
-首次启动会在 `~/.codex-link-clawbot/management-token` 生成权限为 `0600` 的随机管理令牌。读取管理入口：
-
-```bash
-codex-link-clawbot console
-```
-
-命令会输出管理地址、令牌和令牌文件路径。令牌属于敏感信息，只应粘贴到可信浏览器；页面仅将它保存在当前标签页的 `sessionStorage`。
-
-## 配置
-
-配置文件位于 `~/.codex-link-clawbot/config.json`，当前结构版本为 7。最小示例：
-
-```json
-{
-  "schema_version": 7,
-  "codex": {
-    "command": "codex",
-    "model": "",
-    "env": {}
-  },
-  "codex-link-clawbot": {
-    "project_entries": [
-      {"id": "workspace", "name": "主工作区", "root": "/srv/workspace"}
-    ],
-    "reply": {},
-    "security": {},
-    "management": {
-      "listen": "127.0.0.1:18120",
-      "public_url": "https://codex-link.example.com"
-    }
-  }
-}
-```
-
-管理服务强制只监听回环地址。公网访问应由 Cloudflare Tunnel 或反向代理把 HTTPS 域名转发到 `http://127.0.0.1:18120`；`public_url` 只用于页面状态和微信链接提示，不负责创建隧道。完整字段见[配置指南](docs/guides/configuration.md)。
-
-## 微信交互
-
-发送 `0`、`菜单`、`Codex` 或 `Codex Link` 打开数字菜单。首页 `1–6` 依次为新建对话、切换会话、工作空间、会话状态、最近结果、回复设置。列表每页最多四项，`7/8` 翻页，`0` 回首页，`9` 退出。正常只发一张图，图片不可用时发送同编号文字。见[数字菜单设计](docs/design/wechat-menu.md)。
-
-菜单有效期为十分钟，数字只对应当前展示的选项。过期或重启后的旧编号不会执行操作。普通文字、图片和文件会退出菜单并提交到当前目标；显式退出后，普通数字也可作为任务内容，`0` 仍是菜单快捷入口。解锁码输入页例外：输入只用于解锁。打断、重跑、重发和锁定均有数字确认页。
-
-## 运维与安全
-
-生产环境使用 systemd 用户服务。本机生命周期操作仍通过仅属主可访问的 Unix socket：
-
-```bash
-codex-link-clawbot status
-codex-link-clawbot restart
-codex-link-clawbot stop
-```
-
-Web 管理 API 需要固定长度的随机令牌、拒绝跨站框架嵌入，并设置严格 CSP。管理端口不允许直接监听公网网卡。绑定者能够驱动本机 Codex，因此只应绑定可信个人账号，并把工作空间白名单限制到必要目录。详见[管理安全模型](docs/architecture/management-security.md)。
+发布只提供一个 Linux 程序 `codex-link-clawbot` 及 `checksums.txt`，由固定 Ubuntu runner 原生构建，不维护多 CPU 发布设计。服务安装、事务升级及回滚边界见[部署指南](docs/operations/deployment.md)。
 
 ## 开发
 
 ```bash
-make check-fast   # 日常开发检查
 make check
 ```
 
-`make check` 与 CI 共用同一入口，包含文档链接、格式、`go vet ./...`、race 测试和二进制构建。按包测试、热重载与模块分工见[开发指南](docs/guides/development.md)，设计取舍见[架构调整记录](docs/architecture/refactoring.md)，联调步骤见[验收清单](docs/operations/acceptance.md)。
+检查文档链接、格式、vet、全量 race 测试及本机构建。模块职责见[架构总览](docs/architecture/overview.md)，测试和预览方法见[开发指南](docs/guides/development.md)。文档描述当前源码，不代表某台服务器已经部署或通过[真实验收](docs/operations/acceptance.md)。
 
-## License
+## 来源与许可
 
-MIT。
-
-## 业务重整
-
-首条消息建立会话，连续消息持续同一上下文。请求冻结提交时的目标，之后切换不会改变正在执行的工作。同一会话忙碌时再次下令会立即失败，并展示数字操作菜单；被拒指令不会稍后执行。执行完成与微信投递分别记录；已完成的回答和文件在发送失败时仍可由网页取回。
-
-输入保留 24 小时、结果 7 天、记录 30 天。重跑创建关联原请求的新记录，重投只发送已有结果；两者均需显式确认和近期真实微信上下文。实例只启用一个明确选择的绑定。
-
-使用流程见[工作台指南](docs/guides/workbench.md)。旧实例升级需要[离线迁移](docs/operations/migration.md)，运行时不兼容旧请求索引或旧结果格式。
+基于 [WeClaw](https://github.com/fastclaw-ai/weclaw) 改造，保留原始 [MIT 许可证](LICENSE)及版权声明。本项目独立维护，不隶属于微信、腾讯、OpenAI 或上游维护者。详见[项目来源](docs/architecture/upstream.md)。

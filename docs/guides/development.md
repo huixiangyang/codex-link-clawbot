@@ -1,51 +1,82 @@
 # 开发指南
 
-## 环境与命令
+需要 Go 1.25+ 和 Make。前端使用 Go embed 与原生 JavaScript/CSS，没有独立的前端构建步骤。先阅读[架构总览](../architecture/overview.md)，再按职责修改对应模块。
 
-需要 Go 1.25+ 与 Make。热重载额外需要已安装的 Air；运行桥接服务还需要完成 Codex 登录与微信绑定。
+## 检查与构建
 
 | 命令 | 用途 |
 | --- | --- |
 | `make fmt` | 格式化 Go 源码 |
-| `make test-fast PACKAGES=./internal/execution` | 只运行指定包的测试，不启用 race |
-| `make test PACKAGES='./internal/bridge ./internal/execution'` | 对相关包运行 race 测试 |
-| `make check-fast` | 文档、格式、vet、全量普通测试和构建 |
-| `make check` | 提交前完整检查，与 CI 使用同一入口 |
-| `make fuzz-smoke` | 协议和输入校验的短时 fuzz 检查 |
-| `make dev` | 通过 Air 构建并运行 `start`，监控 Go 与嵌入静态资源 |
+| `make docs-check` | 检查 README 与文档的 Markdown 文件链接 |
+| `make test-fast PACKAGES=./internal/core/request` | 指定包的普通测试 |
+| `make test PACKAGES='./internal/core/request ./internal/adapters/management'` | 指定包的 race 测试 |
+| `make check-fast` | 文档、格式、vet、全量普通测试和本机构建 |
+| `make check` | 文档、格式、vet、全量 race 和本机构建 |
+| `make fuzz-smoke` | 配置、微信协议、附件和 Codex 事件的五项短时 fuzz |
+| `make build` | 仓库根目录生成 `codex-link-clawbot` |
 
-测试默认通过 Makefile 将 `TMPDIR` 指向 `/tmp` 的真实路径。直接执行 `go test` 时，macOS 默认路径可能因符号链接安全检查或 Unix socket 路径长度而失败；可使用：
+Makefile 使用 `/tmp` 的真实路径作为测试临时目录，避开 macOS 默认路径的符号链接及 Unix socket 长度限制。直接运行测试时使用：
 
 ```bash
-TMPDIR="$(cd /tmp && pwd -P)" go test ./internal/execution -race
+TMPDIR="$(cd /tmp && pwd -P)" go test ./internal/core/request -count=1 -race
 ```
 
-`make dev` 使用当前用户的配置与微信凭据，会真正启动消息服务；不要同时运行占用相同状态租约的生产实例。保存 JS/CSS/HTML 或视觉 WebP 资源后也会重建。Air 在重启前发送中断，最多等待 10 秒；编译失败停止运行旧构建。
+CI 的质量任务运行 `make check`，另有 fuzz 任务。日常构建只使用本机架构；发布固定为一份 Linux 程序，规则见[部署](../operations/deployment.md#发布契约)。
 
 ## 修改位置
 
-- 入站消息与交付：`internal/bridge`。
-- 即时准入、打断、排空与会话互斥：`internal/execution/coordinator.go`；不要引入微信或 HTTP 客户端。
-- 当前目标与延迟创建线程：`internal/target`；旧请求解析自身意图，不能覆盖当前选择。
-- 离线业务迁移：`internal/businessmigration`；先备份和验证，再发布，运行时禁止兼容旧格式。
-- 持久请求状态机：`internal/request`；业务状态必须在发送确认或交付前落盘。
-- 管理 API 与网页：`internal/management` 和 `internal/management/web`。
-- 进程装配与故障退出：`internal/app`；新增后台循环必须加入 `serviceGroup`。
-- Codex 协议：`internal/codex/appserver`；上层面向 `internal/codex` 的接口。
+| 需求 | 主要入口 |
+| --- | --- |
+| 消息路由、草稿、菜单和微信反馈 | `adapters/wechat/handler.go`、`draft.go`、`conversation_commands.go`、`number_menu*.go` |
+| 会话准入、取消、执行与恢复归档 | `core/execution/coordinator.go`、`runner.go` |
+| 跨微信和网页的会话操作 | `core/conversation/service.go` |
+| 请求状态、文件校验、SQL 分页 | `core/request` |
+| 当前目标、可信线程目录 | `core/target`、`core/thread`、`core/workspace` |
+| 管理 API 与界面 | `adapters/management`、其 `web/` 资源 |
+| Codex JSON-RPC 与子进程 | `adapters/appserver` |
+| 图片、语音及媒体发送 | `adapters/wechat/visual`、`voice`、`reply_*.go` |
+| 配置与进程装配 | `app/config`、`app/app.go` |
+| 数据库 schema、日志、文件安全 | `platform/storage`、`logging`、`statefile` |
+| 命令、部署及离线迁移 | `cli`、`app/migration` |
 
-功能变化同步更新对应指南。验证优先复用已有集成测试，仅为新的业务边界或并发风险补充必要用例。架构边界与设计取舍见[架构调整记录](../architecture/refactoring.md)。
+上述路径均位于 `internal/`。核心业务不导入适配器；不为搬移目录新增转发包或兼容别名。页面和菜单复用会话服务，不各自复制归属与取消规则。
 
-## 隔离管理台预览
+展示原文、回答和清单使用 `InspectRequest` / `InspectResult`，列表使用 `ListSummaries`，下载使用 `OpenArtifact`；执行和投递保留完整附件校验。不要在视图映射函数里查询数据库或扫描文件。持久化变更必须保持事务失败时内存状态不前移，首次投递回执与终态使用 `CompleteDelivery` 一次提交。
 
-无需真实微信或 Codex，可以启动带 16 条请求、26 个会话的真实 HTTP 夹具：
+## 热重载
+
+安装 Air 后运行 `make dev`。它构建仓库根目录程序并执行 `start`，监控 Go 和嵌入资源，重启前发送中断并等待最多十秒，编译失败停止旧构建。编译错误日志位于 `tmp/build-errors.log`。
+
+该命令使用当前用户的真实配置和凭据，会连接微信并启动 Codex，不是隔离预览；不要与生产实例共用同一状态根。仅检查网页时使用下面的夹具。
+
+## 隔离预览
+
+管理台夹具使用临时数据库、16 条请求、26 个模拟会话，不连接真实微信或 Codex：
 
 ```bash
 CLAWBOT_BROWSER_FIXTURE=/private/tmp/clawbot-preview.json \
-TMPDIR=/private/tmp go test ./internal/management -run '^TestBrowserWorkbench$' -count=1 -v
+TMPDIR=/private/tmp go test ./internal/adapters/management -run '^TestBrowserWorkbench$' -count=1 -v
 ```
 
-该路径适用于 macOS；Linux 可改用 `/tmp`。就绪后指定 JSON 文件包含临时 URL 与仅限测试的令牌。夹具最多运行 5 分钟，在同一路径后追加 `.stop` 创建空文件可提前结束。全部状态位于测试临时目录。启动前确保上次 `.stop` 文件已经移除。
+就绪文件包含临时 URL 和测试令牌。夹具最多运行五分钟；创建 `/private/tmp/clawbot-preview.json.stop` 可提前结束，下一次启动前移除旧停止文件。该 JSON 是测试接口，不是应用持久状态。Linux 可把示例中的 `/private/tmp` 改成 `/tmp`。
 
-页面无前端构建依赖，使用原生 JS/CSS 和 Go embed；修改资源后重启夹具。浏览器验收与生产联调边界见[验证记录](../operations/business-validation.md)。
+已安装 Chromium 时可生成菜单图片与 HTML，检查 320 px 手机宽度、192 px 缩略图以及长名称：
 
-微信菜单图片有独立的 Chromium 渲染夹具，见[图片菜单预览](../design/wechat-menu.md#预览与验证)。`CLAWBOT_VISUAL_PREVIEW_DIR` 可导出图片；菜单测试同时导出 HTML，便于检查长名称与手机尺寸下的排版。
+```bash
+CLAWBOT_VISUAL_PREVIEW_DIR=/private/tmp/clawbot-menu-preview \
+TMPDIR=/private/tmp go test ./internal/adapters/wechat/visual -run '^TestMenuRendersWithInstalledChromium$' -count=1 -v
+```
+
+浏览器缺失会跳过相应渲染测试，不能把普通测试通过解释成视觉已验收。静态旧截图不作为现行界面的证据。
+
+## 测试与交付
+
+优先复用现有夹具，只为新的业务边界、数据一致性或并发风险补必要测试。涉及请求和投递时至少检查所有者隔离、到期、重复来源、失败恢复及事务回滚。协议解析变化再补 fuzz，不为文档修改增加单元测试。
+
+列表微基准可独立复测，不把测试夹具数字写成生产性能：
+
+```bash
+TMPDIR="$(cd /tmp && pwd -P)" go test ./internal/adapters/management -run '^$' -bench '^BenchmarkRequestList$' -benchtime=10x -count=3
+```
+
+功能变化同步更新[对应文档](../README.md)。本地检查、视觉验证、真实渠道联调和部署按[验收](../operations/acceptance.md)分别记录；不要用历史“通过”状态代替当前运行结果。

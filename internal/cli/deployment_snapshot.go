@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -8,15 +9,23 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/storage"
 )
 
 const snapshotManifestVersion = 1
 
-var snapshotStateDirectories = map[string]bool{
-	"accounts":   true,
-	"deliveries": true,
-	"inbox":      true,
-	"tasks":      true,
+// 只接管当前 data 和离线导入器会改写的旧状态；日志、备份和用户文件不参与回滚。
+func managedStateEntry(name string) bool {
+	switch name {
+	case "data", ".sqlite-import", "accounts", "tasks", "renders",
+		"config.json", "binding.json", "targets.json", "preferences.json",
+		"remote-lock.json", "pending-notices.json", "conversation-drafts.json",
+		"menu-receipts.json", "management-token":
+		return true
+	default:
+		return false
+	}
 }
 
 type snapshotEntry struct {
@@ -85,14 +94,15 @@ func createDeploymentSnapshot(deploymentDir, stateRoot, binaryPath, unitPath str
 	if err := snapshotState(stateRoot, snapshot.StatePath, &snapshot.Manifest); err != nil {
 		return deploymentSnapshot{}, err
 	}
-	if err := writePrivateJSONAtomic(filepath.Join(deploymentDir, "manifest.json"), snapshot.Manifest); err != nil {
-		return deploymentSnapshot{}, err
-	}
-	configPath := filepath.Join(stateRoot, "config.json")
-	if _, err := checkedRegularFile(configPath); err == nil {
-		if err := copyRegularFile(configPath, filepath.Join(deploymentDir, "config.old"), 0o600); err != nil {
-			return deploymentSnapshot{}, err
+	if err := storage.Update(deploymentDir, func(tx *sql.Tx) error {
+		for _, entry := range snapshot.Manifest.Entries {
+			if err := storage.Put(tx, "snapshot_entries", entry); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return deploymentSnapshot{}, err
 	}
 	return snapshot, nil
 }
@@ -109,32 +119,23 @@ func snapshotState(stateRoot, destination string, manifest *snapshotManifest) er
 	}
 	for _, entry := range entries {
 		name := entry.Name()
+		if !managedStateEntry(name) {
+			continue
+		}
 		source := filepath.Join(stateRoot, name)
 		target := filepath.Join(destination, name)
-		entryInfo, err := entry.Info()
-		if err != nil {
+		if err := snapshotTreeEntry(stateRoot, source, target, manifest); err != nil {
 			return err
-		}
-		switch {
-		case entryInfo.Mode().IsRegular() && snapshotTopLevelFile(name):
-			if err := snapshotTreeEntry(stateRoot, source, target, manifest); err != nil {
-				return err
-			}
-		case entryInfo.IsDir() && snapshotStateDirectories[name]:
-			if err := snapshotTreeEntry(stateRoot, source, target, manifest); err != nil {
-				return err
-			}
 		}
 	}
 	sort.Slice(manifest.Entries, func(i, j int) bool { return manifest.Entries[i].Path < manifest.Entries[j].Path })
 	return syncDirectoryPath(destination)
 }
 
-func snapshotTopLevelFile(name string) bool {
-	return name != "codex-link-clawbot.log" && name != "cutover-status.log" && name != ".state.lock"
-}
-
 func snapshotTreeEntry(root, source, destination string, manifest *snapshotManifest) error {
+	if filepath.Dir(source) == filepath.Join(root, "data") && (filepath.Base(source) == "clawbot.db-wal" || filepath.Base(source) == "clawbot.db-shm") {
+		return nil
+	}
 	info, err := os.Lstat(source)
 	if err != nil {
 		return err
@@ -165,7 +166,15 @@ func snapshotTreeEntry(root, source, destination string, manifest *snapshotManif
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("state snapshot rejects non-regular file %s", relative)
 	}
-	if err := copyRegularFile(source, destination, 0o600); err != nil {
+	if relative == filepath.Join("data", "clawbot.db") {
+		if err := storage.Backup(root, destination); err != nil {
+			return err
+		}
+		info, err = os.Stat(destination)
+		if err != nil {
+			return err
+		}
+	} else if err := copyRegularFile(source, destination, 0o600); err != nil {
 		return err
 	}
 	hash, err := fileSHA256(destination)
@@ -252,12 +261,16 @@ func clearManagedState(stateRoot string) error {
 	if !filepath.IsAbs(stateRoot) || stateRoot == string(filepath.Separator) {
 		return fmt.Errorf("refusing unsafe state root")
 	}
+	info, err := os.Lstat(stateRoot)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("state root must be a real directory")
+	}
 	entries, err := os.ReadDir(stateRoot)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Type().IsRegular() && snapshotTopLevelFile(entry.Name()) || entry.IsDir() && snapshotStateDirectories[entry.Name()] {
+		if managedStateEntry(entry.Name()) {
 			target := filepath.Join(stateRoot, entry.Name())
 			if err := os.RemoveAll(target); err != nil {
 				return err

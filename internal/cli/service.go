@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/management"
-	"github.com/huixiangyang/codex-link-clawbot/internal/runtimecontrol"
-	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/management"
+	"github.com/huixiangyang/codex-link-clawbot/internal/core/runtimecontrol"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/statefile"
 )
 
 const (
@@ -129,44 +129,6 @@ func requestAdmin(ctx context.Context, socketPath, action string) (runtimecontro
 		return runtimecontrol.Snapshot{}, fmt.Errorf("decode admin response: trailing data")
 	}
 	return snapshot, nil
-}
-
-func requestDeploymentNotification(ctx context.Context, socketPath string, notice management.DeploymentNotice) (string, error) {
-	client, err := newManagementHTTPClient(socketPath)
-	if err != nil {
-		return "", err
-	}
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(notice); err != nil {
-		return "", err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://codex-link-clawbot.local/admin/deployment-notification", &body)
-	if err != nil {
-		return "", err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
-		return "", fmt.Errorf("deployment notification returned HTTP %d", response.StatusCode)
-	}
-	var result management.DeploymentNotificationResult
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		return "", err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("decode deployment notification: trailing data")
-	}
-	if result.Status != management.DeploymentNotificationSent && result.Status != management.DeploymentNotificationDeferred {
-		return "", fmt.Errorf("deployment notification returned invalid status %q", result.Status)
-	}
-	return result.Status, nil
 }
 
 func waitForDrain(ctx context.Context, socketPath string, timeout time.Duration) (runtimecontrol.Snapshot, error) {

@@ -1,0 +1,50 @@
+{{define "menu"}}<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=640, initial-scale=1">
+<title>Codex Link 数字菜单</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:640px;height:calc({{.Height}}px * 2);overflow:hidden}
+body{--sea:#143f46;--paper:#f5f9f8;--ink:#173236;--muted:#526c70;--accent:#e5a06d;background:var(--paper);color:var(--ink);font-family:"Noto Sans CJK SC","Source Han Sans SC","PingFang SC",sans-serif;-webkit-font-smoothing:antialiased}
+.menu{width:320px;height:{{.Height}}px;transform:scale(2);transform-origin:top left;background:var(--paper)}
+svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+header{height:100px;background:var(--sea);color:var(--paper);padding:14px 18px 12px;position:relative}
+.brand{display:flex;align-items:center;gap:6px;font:600 12px/1 "Avenir Next",sans-serif;letter-spacing:.2px;opacity:.85}
+.heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:9px 0 6px}
+h1{font-size:25px;line-height:1.1;letter-spacing:0;margin:0;font-weight:650;white-space:nowrap}
+.page{font:500 13px/1.2 "Menlo",monospace;white-space:nowrap;opacity:.85}
+.context{font-size:12px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.85}
+.notice{height:72px;margin:0;padding:7px 18px;font-size:12px;line-height:1.6;background:#e5a06d26;display:flex;align-items:center;overflow:hidden;overflow-wrap:anywhere}
+.active{padding:0 18px;background:#fff;box-shadow:inset 0 -1px #17323620}
+.active h2{height:32px;margin:0;display:flex;align-items:center;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:0}
+.preview{height:60px;padding:8px 0;border-top:1px solid #17323612}
+.preview-heading{display:flex;align-items:center;gap:6px;height:22px}
+.preview-title{flex:1;min-width:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preview-time{flex:none;font-size:11px;line-height:18px;color:var(--muted);white-space:nowrap}
+.preview .selected,.preview .selected svg{width:14px;height:14px}
+.preview .detail{font-size:11px;line-height:18px;margin-top:3px}
+.active-notice{height:30px;margin:0;display:flex;align-items:center;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden}
+.options{padding:0 18px}
+.option{height:44px;display:flex;align-items:center;gap:13px;border-bottom:1px solid #17323620;position:relative}
+.option.detailed{height:64px}
+.number{width:40px;flex:none;font:700 25px/1 "Menlo",monospace;color:var(--sea);text-align:left}
+.copy{flex:1;min-width:0;padding:3px 0}
+.label{font-size:23px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0}
+.detailed .label{font-size:19px}
+.detail{font-size:12px;line-height:1.5;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.selected{width:17px;height:17px;flex:none;color:var(--sea)}
+.paging{height:30px;display:flex;justify-content:space-between;align-items:center;padding:0 18px;font-size:16px;font-weight:650}
+.paging span:only-child{margin-left:auto}
+footer{height:36px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;color:var(--ink);font-size:14px;background:#143f460a;white-space:nowrap}
+footer b{font:700 20px/1 "Menlo",monospace;color:var(--ink);margin-right:3px}
+.hint{font-size:11px;color:var(--muted)}
+</style></head><body>
+<main class="menu">
+<header><div class="brand">{{lucide "terminal"}}Codex Link</div><div class="heading"><h1>{{.Title}}</h1>{{if .Page}}<span class="page">{{.Page}}</span>{{end}}</div><div class="context">{{.Context}}</div></header>
+{{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+{{if .ActiveTitle}}<section class="active"><h2>{{.ActiveTitle}}</h2>{{range .Active}}<div class="preview"><div class="preview-heading"><div class="preview-title">{{.Title}}</div>{{if .Current}}<span class="selected">{{lucide "circle-check-big"}}</span>{{end}}<span class="preview-time">{{.Time}}</span></div><div class="detail">{{.Detail}}</div></div>{{end}}{{if .ActiveNotice}}<p class="active-notice">{{.ActiveNotice}}</p>{{end}}</section>{{end}}
+<section class="options">{{range .Options}}<div class="option {{if .Detail}}detailed{{end}}"><div class="number">#{{.Number}}</div><div class="copy"><div class="label">{{.Label}}</div>{{if .Detail}}<div class="detail">{{.Detail}}</div>{{end}}</div>{{if .Current}}<span class="selected">{{lucide "circle-check-big"}}</span>{{end}}</div>{{end}}</section>
+{{if or .Previous .Next}}<nav class="paging">{{if .Previous}}<span>#7 上一页</span>{{end}}{{if .Next}}<span>#8 下一页</span>{{end}}</nav>{{end}}
+<footer><span><b>#</b> 或 <b>/</b> 首页</span><span class="hint">Codex Link</span><span><b>#9</b>退出</span></footer>
+</main></body></html>{{end}}

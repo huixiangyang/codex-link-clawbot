@@ -13,9 +13,6 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/codex-link-clawbot.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/codex-link-clawbot.log</string>
+    <!-- 应用自行写入用户状态目录 logs/service.log，不再创建 /tmp 固定日志。 -->
 </dict>
 </plist>

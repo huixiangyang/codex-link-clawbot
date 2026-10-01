@@ -2,8 +2,8 @@ package cli
 
 import (
 	"fmt"
-	"github.com/huixiangyang/codex-link-clawbot/internal/ilink"
-	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/wechat/ilink"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/statefile"
 	"github.com/spf13/cobra"
 )
 

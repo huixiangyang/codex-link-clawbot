@@ -8,17 +8,28 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/storage"
 )
 
 const (
 	githubRepo            = "huixiangyang/codex-link-clawbot"
+	releaseBinaryName     = "codex-link-clawbot"
 	maxReleaseBinaryBytes = 100 << 20
 	maxChecksumBytes      = 1 << 20
 )
 
 var deployHTTPClient = &http.Client{Timeout: 2 * time.Minute}
 
-func downloadReleaseFile(url string, maxBytes int64, executable bool) (string, error) {
+func downloadReleaseFile(root, url string, maxBytes int64, executable bool) (string, error) {
+	layout, err := storage.NewLayout(root)
+	if err != nil {
+		return "", err
+	}
+	if err := statefile.EnsurePrivateDirectory(layout.Temporary("download")); err != nil {
+		return "", err
+	}
 	response, err := deployHTTPClient.Get(url)
 	if err != nil {
 		return "", err
@@ -27,7 +38,7 @@ func downloadReleaseFile(url string, maxBytes int64, executable bool) (string, e
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d", response.StatusCode)
 	}
-	temporary, err := os.CreateTemp("", "codex-link-clawbot-deploy-download-*")
+	temporary, err := os.CreateTemp(layout.Temporary("download"), "release-*")
 	if err != nil {
 		return "", err
 	}
@@ -63,25 +74,25 @@ func downloadReleaseFile(url string, maxBytes int64, executable bool) (string, e
 	return path, nil
 }
 
-func verifyReleaseChecksum(path, filename string, manifest []byte) (string, error) {
+func verifyReleaseChecksum(path string, manifest []byte) (string, error) {
 	want := ""
 	for _, line := range strings.Split(string(manifest), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != filename {
+		if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != releaseBinaryName {
 			continue
 		}
 		want = strings.ToLower(fields[0])
 		break
 	}
 	if len(want) != sha256.Size*2 {
-		return "", fmt.Errorf("checksum for %s is missing or invalid", filename)
+		return "", fmt.Errorf("checksum for %s is missing or invalid", releaseBinaryName)
 	}
 	got, err := fileSHA256(path)
 	if err != nil {
 		return "", err
 	}
 	if got != want {
-		return "", fmt.Errorf("checksum mismatch for %s", filename)
+		return "", fmt.Errorf("checksum mismatch for %s", releaseBinaryName)
 	}
 	return got, nil
 }

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	appconfig "github.com/huixiangyang/codex-link-clawbot/internal/config"
-	"github.com/huixiangyang/codex-link-clawbot/internal/management"
-	"github.com/huixiangyang/codex-link-clawbot/internal/statefile"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/management"
+	appconfig "github.com/huixiangyang/codex-link-clawbot/internal/app/config"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/statefile"
 	"github.com/spf13/cobra"
 )
 

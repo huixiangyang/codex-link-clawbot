@@ -54,15 +54,11 @@ jobs:
         run: go test ./... -count=1 -race
 
       - name: Verify fuzz seed corpus
-        run: go test ./internal/config ./internal/ilink ./internal/bridge ./internal/codex/appserver -count=1
+        run: go test ./internal/app/config ./internal/adapters/wechat/ilink ./internal/adapters/wechat ./internal/adapters/appserver -count=1
 
   build:
     needs: quality
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        goarch: [amd64, arm64]
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -75,17 +71,15 @@ jobs:
       - name: Build Linux release binary
         env:
           CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
         run: |
           go build -trimpath \
             -ldflags="-s -w -X github.com/huixiangyang/codex-link-clawbot/internal/cli.Version=${GITHUB_REF_NAME}" \
-            -o codex-link-clawbot_linux_${GOARCH} ./cmd/codex-link-clawbot
+            -o codex-link-clawbot ./cmd/codex-link-clawbot
 
       - uses: actions/upload-artifact@v4
         with:
-          name: codex-link-clawbot_linux_${{ matrix.goarch }}
-          path: codex-link-clawbot_linux_${{ matrix.goarch }}
+          name: codex-link-clawbot
+          path: codex-link-clawbot
           if-no-files-found: error
 
   release:
@@ -98,8 +92,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
+          name: codex-link-clawbot
           path: dist
-          merge-multiple: true
 
       - name: Refuse to overwrite an existing release
         env:
@@ -113,7 +107,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum codex-link-clawbot_* > checksums.txt
+        run: sha256sum codex-link-clawbot > checksums.txt
 
       - name: Create immutable release
         uses: softprops/action-gh-release@v2
@@ -123,5 +117,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/codex-link-clawbot_*
+            dist/codex-link-clawbot
             dist/checksums.txt

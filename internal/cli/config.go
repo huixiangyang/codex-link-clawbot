@@ -3,7 +3,7 @@ package cli
 import (
 	"encoding/json"
 
-	appconfig "github.com/huixiangyang/codex-link-clawbot/internal/config"
+	appconfig "github.com/huixiangyang/codex-link-clawbot/internal/app/config"
 	"github.com/spf13/cobra"
 )
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,11 +18,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huixiangyang/codex-link-clawbot/internal/management"
+	"github.com/huixiangyang/codex-link-clawbot/internal/adapters/management"
+	"github.com/huixiangyang/codex-link-clawbot/internal/platform/storage"
 	"github.com/spf13/cobra"
 )
 
 const deploymentReceiptVersion = 1
+
+func writeDeploymentReceipt(root string, receipt deploymentReceipt) error {
+	return storage.Update(root, func(tx *sql.Tx) error { return storage.Put(tx, "deployment_receipts", receipt) })
+}
 
 var deployVersionPattern = regexp.MustCompile(`^[vV]?[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`)
 
@@ -102,8 +108,8 @@ var deployCmd = &cobra.Command{
 }
 
 func runDeploy(ctx context.Context, options deployOptions) error {
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
-		return fmt.Errorf("deployment supports only linux/amd64 and linux/arm64")
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("deployment requires Linux")
 	}
 	if err := validateDeployOptions(options); err != nil {
 		return err
@@ -146,8 +152,8 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	if err != nil {
 		return err
 	}
-	receiptPath := filepath.Join(deploymentDir, "receipt.json")
-	writeReceipt := func() error { return writePrivateJSONAtomic(receiptPath, receipt) }
+	receiptPath := deploymentDir
+	writeReceipt := func() error { return writeDeploymentReceipt(receiptPath, receipt) }
 	if err := writeReceipt(); err != nil {
 		return err
 	}
@@ -215,17 +221,7 @@ func runDeploy(ctx context.Context, options deployOptions) error {
 	}
 
 	receipt.Status, receipt.Phase, receipt.FinishedAt = "succeeded", "ready", time.Now().Unix()
-	notificationStatus, notifyErr := requestDeploymentNotification(ctx, controlSocket, management.DeploymentNotice{
-		FromVersion: current.Version,
-		ToVersion:   candidate.Version,
-		Service:     options.Service,
-	})
-	if notifyErr != nil {
-		receipt.NotificationStatus = "failed"
-		fmt.Fprintf(os.Stderr, "warning: deployment notification failed: %v\n", notifyErr)
-	} else {
-		receipt.NotificationStatus = notificationStatus
-	}
+	receipt.NotificationStatus = "disabled"
 	if err := writeReceipt(); err != nil {
 		return fmt.Errorf("persist successful deployment receipt: %w", err)
 	}
@@ -302,13 +298,13 @@ func prepareDeploymentCandidate(ctx context.Context, options deployOptions) (dep
 	path := options.Binary
 	cleanup := func() {}
 	if path == "" {
-		filename := fmt.Sprintf("codex-link-clawbot_linux_%s", runtime.GOARCH)
+		// 每个版本只发布一份程序，不再按 CPU 选择产物或回退到旧命名。
 		baseURL := fmt.Sprintf("https://github.com/%s/releases/download/%s", githubRepo, options.ReleaseVersion)
-		checksumPath, err := downloadReleaseFile(baseURL+"/checksums.txt", maxChecksumBytes, false)
+		checksumPath, err := downloadReleaseFile(options.StateRoot, baseURL+"/checksums.txt", maxChecksumBytes, false)
 		if err != nil {
 			return deploymentCandidate{}, fmt.Errorf("download release checksums: %w", err)
 		}
-		binaryPath, err := downloadReleaseFile(baseURL+"/"+filename, maxReleaseBinaryBytes, true)
+		binaryPath, err := downloadReleaseFile(options.StateRoot, baseURL+"/"+releaseBinaryName, maxReleaseBinaryBytes, true)
 		if err != nil {
 			_ = os.Remove(checksumPath)
 			return deploymentCandidate{}, fmt.Errorf("download release binary: %w", err)
@@ -319,7 +315,7 @@ func prepareDeploymentCandidate(ctx context.Context, options deployOptions) (dep
 			cleanup()
 			return deploymentCandidate{}, err
 		}
-		hash, err := verifyReleaseChecksum(binaryPath, filename, manifest)
+		hash, err := verifyReleaseChecksum(binaryPath, manifest)
 		if err != nil {
 			cleanup()
 			return deploymentCandidate{}, err
@@ -395,7 +391,7 @@ func newDeploymentDirectory(options deployOptions, fromVersion string, candidate
 		return "", deploymentReceipt{}, err
 	}
 	id := fmt.Sprintf("%d-%s", time.Now().Unix(), hex.EncodeToString(idBytes))
-	directory := filepath.Join(options.StateRoot, "deployments", id)
+	directory := filepath.Join(options.StateRoot, "backups", "deploy-"+id)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", deploymentReceipt{}, err
 	}
@@ -411,7 +407,7 @@ func newDeploymentDirectory(options deployOptions, fromVersion string, candidate
 
 func failAndRollback(options deployOptions, oldVersion string, snapshot deploymentSnapshot, unitPath string, receipt *deploymentReceipt, receiptPath string, cause error) error {
 	receipt.Status, receipt.Phase, receipt.Failure = "rolling_back", "rollback", safeFailure(cause)
-	_ = writePrivateJSONAtomic(receiptPath, receipt)
+	_ = writeDeploymentReceipt(receiptPath, *receipt)
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), options.Timeout)
 	defer cancel()
 	stopErr := runSystemctl(rollbackCtx, options.Service, "stop")
@@ -431,16 +427,16 @@ func failAndRollback(options deployOptions, oldVersion string, snapshot deployme
 	if rollbackErr != nil {
 		receipt.Status, receipt.Phase = "rollback_failed", "rollback_failed"
 		receipt.Failure = safeFailure(errors.Join(cause, rollbackErr))
-		_ = writePrivateJSONAtomic(receiptPath, receipt)
+		_ = writeDeploymentReceipt(receiptPath, *receipt)
 		return fmt.Errorf("deployment failed and rollback did not recover the old service: %w", errors.Join(cause, rollbackErr))
 	}
 	receipt.Status, receipt.Phase = "rolled_back", "rolled_back"
 	if cleanupErr := removeSnapshotState(snapshot); cleanupErr != nil {
 		receipt.Status, receipt.Phase, receipt.Failure = "rollback_cleanup_failed", "rollback_cleanup", safeFailure(cleanupErr)
-		_ = writePrivateJSONAtomic(receiptPath, receipt)
+		_ = writeDeploymentReceipt(receiptPath, *receipt)
 		return fmt.Errorf("deployment failed and old version %s was restored, but the sensitive snapshot could not be removed: %w", oldVersion, errors.Join(cause, cleanupErr))
 	}
-	_ = writePrivateJSONAtomic(receiptPath, receipt)
+	_ = writeDeploymentReceipt(receiptPath, *receipt)
 	return fmt.Errorf("deployment failed; old version %s was restored: %w", oldVersion, cause)
 }
 

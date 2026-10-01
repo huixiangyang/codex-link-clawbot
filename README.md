@@ -1,85 +1,62 @@
 # codex-link-clawbot
 
-Connect a personal WeChat account to Codex with single-digit menus designed for small phone screens.
+A personal, self-hosted bridge from WeChat to local Codex workspaces and conversations.
 
-The bridge has one narrow job: accept text, images, and files from the bound owner; durably route them to the selected Codex workspace and thread; and return the result and artifacts to WeChat. Numbered WeChat menus handle everyday conversations, workspaces, live sessions, results, preferences, and locking. The web console provides search, detailed management, and runtime maintenance.
-
-> This is not an official WeChat, Tencent, or OpenAI project. The iLink integration is intended for personal, self-hosted use.
-
-> This project is derived from [WeClaw](https://github.com/fastclaw-ai/weclaw) and retains its MIT license, original copyright notice, and Git history. See the [upstream relationship](docs/architecture/upstream.md).
+Send text to continue a conversation, stage attachments before submitting them, and use compact phone menus to manage sessions and retrieve results. The web console provides search, request details, authenticated downloads, and recovery controls.
 
 [中文](README_CN.md) · [Documentation](docs/README.md)
 
-## Product boundary
+## What It Does
 
-| Surface | Responsibility |
-| --- | --- |
-| WeChat | `0` or `菜单` opens numbered menus for conversations, workspaces, requests, results, and preferences; ordinary content becomes a Codex request |
-| Web console | Workspace and thread targeting, live session controls, response preferences, deliveries, drain/resume, and remote lock |
-| Local CLI | Login, process lifecycle, deployment, and retrieval of the console URL and token |
+- Runs one selected WeChat binding against explicitly configured workspaces.
+- Keeps the target fixed for each accepted request. Busy sessions reject additional work; there is no waiting queue.
+- Separates execution, result storage, and WeChat delivery. Redelivery does not rerun Codex.
+- Stores configuration, credentials, and business metadata in SQLite; keeps attachments as private files and diagnostics as rotating text logs.
 
-The new menu uses single digits and four-item pages. Legacy multi-digit commands, natural-language control intents, and old menu state files have no compatibility path.
+This is not a team platform, scheduler, web prompt interface, or general-purpose remote shell.
 
-## Data flow
+## Start From Source
 
-```text
-bound WeChat owner
-  → private-message and attachment validation
-  → immediate per-session admission (busy → reject)
-  → Codex App Server
-  → frozen result and artifacts
-  → WeChat text / reading images / files / MP3
-
-browser
-  → management token
-  → 127.0.0.1:18120 management API
-  → threads / workspaces / live sessions / settings
-```
-
-Inputs are persisted before acknowledgement. Execution uses the workspace, thread, and presentation preferences captured at acceptance. There is no fallback protocol or model when Codex App Server is unavailable.
-
-## Quick start
-
-Requirements: Go 1.25+, an installed and authenticated `codex`, and a non-Snap Chromium when visual delivery is enabled.
+Requires Go 1.25+ and an installed, authenticated `codex`. In this checkout:
 
 ```bash
-go install github.com/huixiangyang/codex-link-clawbot/cmd/codex-link-clawbot@main
-codex-link-clawbot login
-codex-link-clawbot start
-codex-link-clawbot console
+go build -o codex-link-clawbot ./cmd/codex-link-clawbot
+./codex-link-clawbot config set visual.enabled false
+./codex-link-clawbot login
+./codex-link-clawbot start
 ```
 
-The first start creates a random `0600` token at `~/.codex-link-clawbot/management-token`. The `console` command prints the URL, token, and token path. Treat the token as a secret; the browser keeps it only in the current tab's `sessionStorage`.
+This minimal setup uses text menus and the default workspace at `~/.codex-link-clawbot/workspace`. In another terminal, run `./codex-link-clawbot console` to retrieve the URL and private management token. Configure real project directories before sending project work. See [setup](docs/guides/getting-started.md) and [configuration](docs/guides/configuration.md).
 
-Configuration uses schema version 7. The management server must listen on loopback, normally `127.0.0.1:18120`. Publish it through an HTTPS reverse proxy or Cloudflare Tunnel and set `management.public_url` to the resulting URL. See the Chinese [configuration guide](docs/guides/configuration.md).
+Existing JSON-based installations must complete the [offline migration](docs/operations/migration.md) before normal commands can run. The runtime does not read legacy state.
 
-## WeChat behavior
+## Using WeChat
 
-Send `0`, `菜单`, `Codex`, or `Codex Link` to open the menu. Choose `1–6` on the home page; lists show up to four entries. Use `7/8` to page, `0` for home, and `9` to exit. Ordinary content exits the menu and becomes a request. Unlock input is handled separately and never sent to Codex.
+| Input | Action |
+| --- | --- |
+| Ordinary text, including bare numbers | Submit work, or append instructions to an attachment draft |
+| `#` or `/` | Open the menu; choose with `#1` through `#6` |
+| `草稿` / `提交` / `丢弃草稿` | Inspect, submit, or discard attachments |
+| `停止` / `取消` | Request interruption of the observed current execution |
+| `全文 ID` / `文件 ID` | Read saved text or retrieve files |
+| `继续会话 ID` | Select the result's original conversation |
 
-## Security
+Attachments never execute automatically. New users receive full-text replies; reading images and MP3 are optional. The [workbench guide](docs/guides/workbench.md) defines menus, retention, and recovery behavior.
 
-The web API requires a 256-bit token, sets a strict CSP, rejects framing, and cannot bind to a public interface. The process still uses an owner-only Unix socket for local lifecycle operations. A bound owner can drive local Codex tools, so use a dedicated OS account and a minimal workspace allowlist.
+## Security And Operations
+
+Codex execution currently uses `approvalPolicy=never` and full host access. The workspace allowlist controls conversation selection, not OS-level file access. Use a dedicated OS account and a trusted binding. The web API requires a management token and listens only on loopback; remote access needs an HTTPS reverse proxy. Read the [security model](docs/architecture/management-security.md) before exposing an instance.
+
+Releases provide one Linux binary, `codex-link-clawbot`, plus `checksums.txt`, built natively on the fixed Ubuntu runner. There is no CPU release matrix or architecture-based asset selection. Linux service installation, transactional updates, and rollback boundaries are covered in [deployment](docs/operations/deployment.md).
 
 ## Development
 
 ```bash
-make check-fast
 make check
 ```
 
-CI runs the same `make check` target. See the [development guide](docs/guides/development.md), [architecture](docs/architecture/overview.md), [refactoring decisions](docs/architecture/refactoring.md), and [acceptance checklist](docs/operations/acceptance.md).
+This checks documentation links, formatting, vet, race tests, and a native build. See [development](docs/guides/development.md), [architecture](docs/architecture/overview.md), and [acceptance](docs/operations/acceptance.md). Documentation describes the current source tree, not the version running on any particular server.
 
-## License
+## Attribution
 
-MIT.
-
-## Personal workbench
-
-Menus send one compact numbered image, with matching text as a fallback. Numbers bind to the displayed IDs, expire after ten minutes, and cannot silently select a different task when lists change. Long saved answers use 500-character pages. See the [menu design](docs/design/wechat-menu.md).
-
-The first request establishes a persistent conversation intent, shared by subsequent messages. Each active request keeps its original workspace, target, and preferences. A second command to a busy session is rejected immediately with an action menu; it is never deferred. Users can interrupt that execution or switch to another session. Execution completion and WeChat delivery have separate outcomes; saved answers and artifacts remain accessible from the authenticated console even when delivery fails.
-
-Inputs are retained for 24 hours after completion, results for 7 days, and records for 30 days. Explicit retry creates a linked request; redelivery sends the frozen result without rerunning Codex. Only one explicitly selected WeChat binding is active.
-
-See the [workbench guide](docs/guides/workbench.md) and [offline migration instructions](docs/operations/migration.md). Existing installations must migrate to request index v4, input manifest v2 and result format v2 before startup.
+Derived from [WeClaw](https://github.com/fastclaw-ai/weclaw), retaining its [MIT license](LICENSE) and copyright notice. This independent project is not affiliated with WeChat, Tencent, OpenAI, or the upstream maintainers. See [provenance](docs/architecture/upstream.md).
